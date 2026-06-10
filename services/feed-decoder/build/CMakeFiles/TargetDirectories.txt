@@ -1,0 +1,3 @@
+/home/ubuntu/Desktop/api_gs/trading-platform/services/feed-decoder/build/CMakeFiles/feed-decoder.dir
+/home/ubuntu/Desktop/api_gs/trading-platform/services/feed-decoder/build/CMakeFiles/edit_cache.dir
+/home/ubuntu/Desktop/api_gs/trading-platform/services/feed-decoder/build/CMakeFiles/rebuild_cache.dir

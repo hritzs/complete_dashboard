@@ -1,0 +1,13 @@
+{"time":"2026-06-03T13:39:05.351837315+05:30","level":"INFO","msg":"🚀 Starting Go Snapshot Service (WebSocket Hub)"}
+{"time":"2026-06-03T13:39:05.351982795+05:30","level":"INFO","msg":"Snapshot Service ZMQ Subscriber connected to C++ Feed","endpoint":"tcp://localhost:5556"}
+{"time":"2026-06-03T13:39:05.352022614+05:30","level":"INFO","msg":"🌐 WebSocket Server listening","port":"8003"}
+{"time":"2026-06-03T13:39:06.290669104+05:30","level":"INFO","msg":"New WebSocket UI client connected","addr":"127.0.0.1:49048"}
+{"time":"2026-06-03T13:39:06.408105243+05:30","level":"INFO","msg":"WebSocket UI client disconnected"}
+{"time":"2026-06-03T13:39:06.612188954+05:30","level":"INFO","msg":"New WebSocket UI client connected","addr":"127.0.0.1:49060"}
+{"time":"2026-06-03T13:39:14.814871337+05:30","level":"INFO","msg":"WebSocket UI client disconnected"}
+{"time":"2026-06-03T13:39:14.840919781+05:30","level":"INFO","msg":"New WebSocket UI client connected","addr":"127.0.0.1:52498"}
+{"time":"2026-06-03T14:15:52.280743652+05:30","level":"INFO","msg":"WebSocket UI client disconnected"}
+{"time":"2026-06-03T14:15:52.31574236+05:30","level":"INFO","msg":"New WebSocket UI client connected","addr":"127.0.0.1:56826"}
+{"time":"2026-06-03T14:31:42.460642071+05:30","level":"INFO","msg":"WebSocket UI client disconnected"}
+{"time":"2026-06-03T14:31:42.487523609+05:30","level":"INFO","msg":"New WebSocket UI client connected","addr":"127.0.0.1:55416"}
+signal: killed

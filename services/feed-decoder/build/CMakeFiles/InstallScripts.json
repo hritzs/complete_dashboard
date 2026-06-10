@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/ubuntu/Desktop/api_gs/trading-platform/services/feed-decoder/build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

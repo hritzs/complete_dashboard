@@ -1,0 +1,50 @@
+.App {
+  text-align: left;
+}
+
+.App-header {
+  margin-bottom: 2rem;
+  border-bottom: 1px solid #444;
+  padding-bottom: 1rem;
+}
+
+h1 {
+  margin: 0;
+}
+
+.connected {
+  color: #4caf50;
+  font-weight: bold;
+}
+
+.disconnected {
+  color: #f44336;
+  font-weight: bold;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th, td {
+  border: 1px solid #333;
+  padding: 8px 12px;
+  text-align: left;
+}
+
+thead {
+  background-color: #2a2a2a;
+}
+
+tbody tr:nth-child(odd) {
+  background-color: #222;
+}
+
+.pnl-positive {
+  color: #4caf50;
+}
+
+.pnl-negative {
+  color: #f44336;
+}

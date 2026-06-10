@@ -1,0 +1,17 @@
+{
+  "name": "trading-platform-ui",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "serve": "vite preview"
+  },
+  "dependencies": {
+    "solid-js": "^1.8.17"
+  },
+  "devDependencies": {
+    "vite": "^5.2.11",
+    "vite-plugin-solid": "^2.10.2"
+  }
+}

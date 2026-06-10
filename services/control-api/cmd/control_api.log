@@ -1,0 +1,16 @@
+{"time":"2026-06-03T13:39:05.35209065+05:30","level":"INFO","msg":"🚀 Starting Go Control API"}
+{"time":"2026-06-03T13:39:24.161402127+05:30","level":"INFO","msg":"Initiating Trade Deployment","symbol":"NIFTY","lots":1,"uid":"ny030626133924a"}
+{"time":"2026-06-03T13:39:24.161481139+05:30","level":"INFO","msg":"🚀 Pushed OrderIntent to Execution Gateway via ZMQ","trade_uid":"ny030626133924a"}
+{"time":"2026-06-03T13:40:21.602410646+05:30","level":"INFO","msg":"Initiating Trade Deployment","symbol":"NIFTY","lots":1,"uid":"ny030626134021a"}
+{"time":"2026-06-03T13:40:21.602451538+05:30","level":"INFO","msg":"🚀 Pushed OrderIntent to Execution Gateway via ZMQ","trade_uid":"ny030626134021a"}
+{"time":"2026-06-03T13:40:22.209206529+05:30","level":"INFO","msg":"Initiating Trade Deployment","symbol":"NIFTY","lots":1,"uid":"ny030626134022a"}
+{"time":"2026-06-03T13:40:22.209287885+05:30","level":"INFO","msg":"🚀 Pushed OrderIntent to Execution Gateway via ZMQ","trade_uid":"ny030626134022a"}
+{"time":"2026-06-03T13:40:23.537120028+05:30","level":"INFO","msg":"Initiating Trade Deployment","symbol":"NIFTY","lots":1,"uid":"ny030626134023a"}
+{"time":"2026-06-03T13:40:23.537167661+05:30","level":"INFO","msg":"🚀 Pushed OrderIntent to Execution Gateway via ZMQ","trade_uid":"ny030626134023a"}
+{"time":"2026-06-03T13:40:23.970124266+05:30","level":"INFO","msg":"Initiating Trade Deployment","symbol":"NIFTY","lots":1,"uid":"ny030626134023a"}
+{"time":"2026-06-03T13:40:23.970240457+05:30","level":"INFO","msg":"🚀 Pushed OrderIntent to Execution Gateway via ZMQ","trade_uid":"ny030626134023a"}
+{"time":"2026-06-03T13:40:24.416073588+05:30","level":"INFO","msg":"Initiating Trade Deployment","symbol":"NIFTY","lots":1,"uid":"ny030626134024a"}
+{"time":"2026-06-03T13:40:24.416144229+05:30","level":"INFO","msg":"🚀 Pushed OrderIntent to Execution Gateway via ZMQ","trade_uid":"ny030626134024a"}
+{"time":"2026-06-03T14:15:16.704016451+05:30","level":"INFO","msg":"Initiating Trade Deployment","symbol":"NIFTY","lots":0,"uid":"ny030626141516a"}
+{"time":"2026-06-03T14:15:16.704067146+05:30","level":"INFO","msg":"🚀 Pushed OrderIntent to Execution Gateway via ZMQ","trade_uid":"ny030626141516a"}
+signal: killed

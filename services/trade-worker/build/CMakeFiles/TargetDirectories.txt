@@ -1,0 +1,3 @@
+/home/ubuntu/Desktop/api_gs/trading-platform/services/trade-worker/build/CMakeFiles/trade-worker.dir
+/home/ubuntu/Desktop/api_gs/trading-platform/services/trade-worker/build/CMakeFiles/edit_cache.dir
+/home/ubuntu/Desktop/api_gs/trading-platform/services/trade-worker/build/CMakeFiles/rebuild_cache.dir

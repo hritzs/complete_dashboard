@@ -1,0 +1,15 @@
+brokers:
+  xts_main:
+    broker_type: "xts"
+    name: "XTS Interactive"
+    base_url: "https://developers.symphonyfintech.in"
+    api_key: "${XTS_API_KEY}"
+    api_secret: "${XTS_API_SECRET}"
+    source: "WEBAPI"
+    timeout: "3s"
+
+  greeksoft_main:
+    broker_type: "greeksoft"
+    name: "Greeksoft REST"
+    base_url: "http://localhost:8080"
+    timeout: "3s"

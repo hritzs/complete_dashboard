@@ -1,0 +1,1323 @@
+[Feed Decoder] Starting Ultra-Low Latency Feed Decoder...
+[SocketReader] 🟢 PRIMARY: Connecting to UDP Multicast Feed on 233.1.2.4:2004 (NIC: 172.16.1.9)
+[SocketReader] 🟡 FALLBACK: Connecting to Go XTS ZeroMQ Publisher on tcp://127.0.0.1:5555
+[SocketReader] 🟢 PRIMARY: Connecting to UDP Multicast Feed on 233.1.2.5:34330 (NIC: 0.0.0.0)
+[SocketReader] 🟡 FALLBACK: Connecting to Go XTS ZeroMQ Publisher on tcp://127.0.0.1:5555
+[Feed Decoder] 📡 Option Chain ZMQ Publisher bound on tcp://*:5556
+[Feed Decoder] 🐍 Python Analytics ZMQ Publisher bound on tcp://*:5558
+[SocketReader] 🟢 SUCCESS: First UDP Multicast packet received! (512 bytes)
+[Normalizer] ✅ Loaded 11545 contracts into lookup map.
+[Normalizer] ✅ Loaded 0 contracts into lookup map.
+[Feed Decoder] 🔗 Seeded C++ Greeks engine with 406 strikes for BANKNIFTY
+[Feed Decoder] 🔗 Seeded C++ Greeks engine with 261 strikes for FINNIFTY
+[Feed Decoder] 🔗 Seeded C++ Greeks engine with 328 strikes for MIDCPNIFTY
+[Feed Decoder] 🔗 Seeded C++ Greeks engine with 286 strikes for NIFTY
+[Feed Decoder] 🔗 Seeded C++ Greeks engine with 430 strikes for NIFTYNXT50
+[Feed Decoder] Listening and processing packets...
+[Decoder] 📡 UDP TICK | NIFTYCE22350 | LTP: ₹1232.7
+[Decoder] 📡 UDP TICK | BANKNIFTYCE56200 | LTP: ₹1264.5
+[Decoder] 📡 UDP TICK | NIFTYCE21200 | LTP: ₹2330
+[Decoder] 📡 UDP TICK | NIFTYPE20400 | LTP: ₹5.3
+[Decoder] 📡 UDP TICK | NIFTYPE23500 | LTP: ₹394.2
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23615 | SynSpot: ₹23516 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55985 | SynSpot: ₹55485.4 | ATM: 56000 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25524.3 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14225.3 | SynSpot: ₹14265 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYPE57500 | LTP: ₹2220
+[Decoder] 📡 UDP TICK | BANKNIFTYPE54000 | LTP: ₹775.5
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE11975 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE23100 | LTP: ₹452.55
+[Decoder] 📡 UDP TICK | NIFTYPE23500 | LTP: ₹233
+[Decoder] 📡 UDP TICK | NIFTYPE22450 | LTP: ₹33.85
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23606.9 | SynSpot: ₹23542.3 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55985 | SynSpot: ₹55194.3 | ATM: 56000 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25416.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14225.3 | SynSpot: ₹14265 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYPE52400 | LTP: ₹187.15
+[Decoder] 📡 UDP TICK | NIFTYCE24400 | LTP: ₹271
+[Decoder] 📡 UDP TICK | NIFTYPE22400 | LTP: ₹59.35
+[Decoder] 📡 UDP TICK | BANKNIFTYCE49300 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYCE60500 | LTP: ₹121.5
+[Decoder] 📡 UDP TICK | BANKNIFTYPE55000 | LTP: ₹1305.05
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23606.9 | SynSpot: ₹23784.8 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55788 | SynSpot: ₹55489 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25399.9 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14261.3 | SynSpot: ₹14265 | ATM: 14250 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE51700 | LTP: ₹3928.95
+[Decoder] 📡 UDP TICK | NIFTYCE22600 | LTP: ₹820.55
+[Decoder] 📡 UDP TICK | NIFTYCE24350 | LTP: ₹66
+[Decoder] 📡 UDP TICK | NIFTYCE24100 | LTP: ₹82.6
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE13900 | LTP: ₹464
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23606.9 | SynSpot: ₹23536.1 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55499 | SynSpot: ₹54694.7 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25179 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14225.3 | SynSpot: ₹14265 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE24700 | LTP: ₹19.5
+[Decoder] 📡 UDP TICK | BANKNIFTYPE52200 | LTP: ₹166.3
+[Decoder] 📡 UDP TICK | NIFTYPE21900 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE23950 | LTP: ₹70
+[Decoder] 📡 UDP TICK | NIFTYPE21400 | LTP: ₹12.95
+[Decoder] 📡 UDP TICK | NIFTYCE22900 | LTP: ₹900
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23506.4 | SynSpot: ₹23444.5 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55788 | SynSpot: ₹53341.2 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25524.3 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14225.3 | SynSpot: ₹14265 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE54600 | LTP: ₹0
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE14125 | LTP: ₹325
+[Decoder] 📡 UDP TICK | NIFTYCE22400 | LTP: ₹1207.6
+[Decoder] 📡 UDP TICK | NIFTYCE25050 | LTP: ₹17.65
+[Decoder] 📡 UDP TICK | NIFTYFUT | LTP: ₹23413
+[Decoder] 📡 UDP TICK | FINNIFTYPE27800 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23506.4 | SynSpot: ₹23917.9 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55788 | SynSpot: ₹55531.3 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25045.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14225.3 | SynSpot: ₹14265 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE22250 | LTP: ₹21.2
+[Decoder] 📡 UDP TICK | NIFTYPE24100 | LTP: ₹749.7
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE11100 | LTP: ₹0
+[Decoder] 📡 UDP TICK | FINNIFTYPE25500 | LTP: ₹513.65
+[Decoder] 📡 UDP TICK | NIFTYCE22900 | LTP: ₹983.6
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23506 | SynSpot: ₹23403.5 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55485.4 | SynSpot: ₹55808.3 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25318 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14225.3 | SynSpot: ₹14025 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE22950 | LTP: ₹153.8
+[Decoder] 📡 UDP TICK | NIFTYCE24600 | LTP: ₹24.7
+[Decoder] 📡 UDP TICK | NIFTYCE25600 | LTP: ₹57.25
+[Decoder] 📡 UDP TICK | BANKNIFTYPE53700 | LTP: ₹390.4
+[Decoder] 📡 UDP TICK | NIFTYCE21600 | LTP: ₹1914.3
+[Decoder] 📡 UDP TICK | NIFTYCE23600 | LTP: ₹303.5
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.9 | SynSpot: ₹23798.4 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55499 | SynSpot: ₹55503.2 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25049.5 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14225.3 | SynSpot: ₹14264.8 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE26000 | LTP: ₹2562.15
+[Decoder] 📡 UDP TICK | NIFTYCE22900 | LTP: ₹983.6
+[Decoder] 📡 UDP TICK | NIFTYPE25550 | LTP: ₹2034.75
+[Decoder] 📡 UDP TICK | NIFTYNXT50CE66600 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE21150 | LTP: ₹9.6
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.9 | SynSpot: ₹23403.5 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55788 | SynSpot: ₹55501.3 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25392 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14225.3 | SynSpot: ₹14174 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYPE51200 | LTP: ₹91.95
+[Decoder] 📡 UDP TICK | NIFTYCE22300 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE21000 | LTP: ₹2442
+[Decoder] 📡 UDP TICK | NIFTYPE21750 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYPE67500 | LTP: ₹11950
+[Decoder] 📡 UDP TICK | BANKNIFTYPE55800 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.9 | SynSpot: ₹23536.1 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55486.2 | SynSpot: ₹55154.1 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25524.3 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14225.3 | SynSpot: ₹14264.8 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE21600 | LTP: ₹2.65
+[Decoder] 📡 UDP TICK | NIFTYCE24150 | LTP: ₹72.2
+[Decoder] 📡 UDP TICK | NIFTYPE22450 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYPE53500 | LTP: ₹651.2
+[Decoder] 📡 UDP TICK | BANKNIFTYPE52000 | LTP: ₹367.2
+[Decoder] 📡 UDP TICK | BANKNIFTYPE62600 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.9 | SynSpot: ₹23502.8 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55985 | SynSpot: ₹55518.9 | ATM: 56000 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25287.1 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14225.3 | SynSpot: ₹14264.8 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE23450 | LTP: ₹581.6
+[Decoder] 📡 UDP TICK | NIFTYCE30000 | LTP: ₹28.85
+[Decoder] 📡 UDP TICK | NIFTYPE22350 | LTP: ₹221.85
+[Decoder] 📡 UDP TICK | BANKNIFTYCE57000 | LTP: ₹1872.95
+[Decoder] 📡 UDP TICK | NIFTYCE23350 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.9 | SynSpot: ₹23547.9 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55499 | SynSpot: ₹55501.2 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25404.9 | ATM: 25400 | Strikes: 261
+[Decoder] 📡 UDP TICK | NIFTYPE23850 | LTP: ₹520
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14323.5 | SynSpot: ₹14264.8 | ATM: 14325 | Strikes: 328
+[Decoder] 📡 UDP TICK | FINNIFTYCE23750 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE22350 | LTP: ₹7.05
+[Decoder] 📡 UDP TICK | BANKNIFTYPE53000 | LTP: ₹263
+[Decoder] 📡 UDP TICK | BANKNIFTYPE50700 | LTP: ₹68.2
+[Decoder] 📡 UDP TICK | NIFTYPE24250 | LTP: ₹832.85
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23506 | SynSpot: ₹23307.8 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55788 | SynSpot: ₹55478.3 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25406.8 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14323.5 | SynSpot: ₹14071.9 | ATM: 14325 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYPE61800 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYPE55500 | LTP: ₹1300.35
+[Decoder] 📡 UDP TICK | BANKNIFTYCE56800 | LTP: ₹427.95
+[Decoder] 📡 UDP TICK | BANKNIFTYPE53700 | LTP: ₹700
+[Decoder] 📡 UDP TICK | NIFTYCE22850 | LTP: ₹1402.25
+[Decoder] 📡 UDP TICK | MIDCPNIFTYPE12650 | LTP: ₹6.9
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23605.4 | SynSpot: ₹23401.4 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55788 | SynSpot: ₹54949 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25280.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14025 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYPE53100 | LTP: ₹278.95
+[Decoder] 📡 UDP TICK | BANKNIFTYCE53200 | LTP: ₹2615.35
+[Decoder] 📡 UDP TICK | BANKNIFTYCE55300 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE24150 | LTP: ₹1037.8
+[Decoder] 📡 UDP TICK | NIFTYCE22450 | LTP: ₹933.2
+[Decoder] 📡 UDP TICK | NIFTYCE24300 | LTP: ₹80
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23606.9 | SynSpot: ₹23517.7 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55985 | SynSpot: ₹56125 | ATM: 56000 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25411.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14025 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE27000 | LTP: ₹316
+[Decoder] 📡 UDP TICK | NIFTYCE22600 | LTP: ₹820.55
+[Decoder] 📡 UDP TICK | FINNIFTYCE25550 | LTP: ₹358.75
+[Decoder] 📡 UDP TICK | NIFTYPE21750 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE23600 | LTP: ₹442.15
+[Decoder] 📡 UDP TICK | BANKNIFTYCE55500 | LTP: ₹2100
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23605.8 | SynSpot: ₹23444.5 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55788 | SynSpot: ₹55529.6 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25258 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14292.5 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE25100 | LTP: ₹15.5
+[Decoder] 📡 UDP TICK | FINNIFTYCE23950 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE22450 | LTP: ₹252.25
+[Decoder] 📡 UDP TICK | NIFTYCE23400 | LTP: ₹736
+[Decoder] 📡 UDP TICK | BANKNIFTYCE46000 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23605.8 | SynSpot: ₹23536.1 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55488 | SynSpot: ₹55475.4 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25280.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14264.8 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE23650 | LTP: ₹381.65
+[Decoder] 📡 UDP TICK | BANKNIFTYPE58800 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE23900 | LTP: ₹130.2
+[Decoder] 📡 UDP TICK | BANKNIFTYCE60900 | LTP: ₹17.45
+[Decoder] 📡 UDP TICK | NIFTYCE22400 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE22650 | LTP: ₹211.2
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23605.8 | SynSpot: ₹23540.5 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55788 | SynSpot: ₹53341.2 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25049.5 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14264.8 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE22700 | LTP: ₹1126.35
+[Decoder] 📡 UDP TICK | BANKNIFTYCE53400 | LTP: ₹2268.75
+[Decoder] 📡 UDP TICK | NIFTYCE23350 | LTP: ₹588.7
+[Decoder] 📡 UDP TICK | NIFTYCE24250 | LTP: ₹6.15
+[Decoder] 📡 UDP TICK | BANKNIFTYPE52800 | LTP: ₹234.1
+[Decoder] 📡 UDP TICK | NIFTYCE23050 | LTP: ₹754
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23510 | SynSpot: ₹23844.6 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55788 | SynSpot: ₹55186.7 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25382 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14264.8 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE24200 | LTP: ₹211
+[Decoder] 📡 UDP TICK | NIFTYCE20650 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE22500 | LTP: ₹1180
+[Decoder] 📡 UDP TICK | NIFTYPE23200 | LTP: ₹230
+[Decoder] 📡 UDP TICK | BANKNIFTYCE55500 | LTP: ₹2100
+[Decoder] 📡 UDP TICK | BANKNIFTYCE57000 | LTP: ₹1310.8
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23605.8 | SynSpot: ₹23444.5 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55501.6 | SynSpot: ₹55483.3 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25311.6 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14265 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYPE57100 | LTP: ₹1901.55
+[Decoder] 📡 UDP TICK | NIFTYPE25950 | LTP: ₹2427.45
+[Decoder] 📡 UDP TICK | MIDCPNIFTYPE15875 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYPE54300 | LTP: ₹537.65
+[Decoder] 📡 UDP TICK | BANKNIFTYCE53000 | LTP: ₹3324.6
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23605.8 | SynSpot: ₹23531.3 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55788 | SynSpot: ₹54991.9 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25396.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14025 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE21400 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE23900 | LTP: ₹202.35
+[Decoder] 📡 UDP TICK | NIFTYPE22000 | LTP: ₹156.3
+[Decoder] 📡 UDP TICK | NIFTYCE22000 | LTP: ₹1399.5
+[Decoder] 📡 UDP TICK | BANKNIFTYCE51600 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYCE52900 | LTP: ₹2849.9
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23605.8 | SynSpot: ₹23532 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55501.6 | SynSpot: ₹55506.2 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25416.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14261.3 | SynSpot: ₹14265 | ATM: 14250 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE53600 | LTP: ₹2272.4
+[Decoder] 📡 UDP TICK | NIFTYPE24350 | LTP: ₹946.15
+[Decoder] 📡 UDP TICK | BANKNIFTYPE54000 | LTP: ₹1005
+[Decoder] 📡 UDP TICK | NIFTYCE24450 | LTP: ₹0
+[Decoder] 📡 UDP TICK | FINNIFTYPE25350 | LTP: ₹423.65
+[Decoder] 📡 UDP TICK | BANKNIFTYCE59200 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23417 | SynSpot: ₹23444.5 | ATM: 23400 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55788 | SynSpot: ₹55481.2 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25404.8 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14265 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE25500 | LTP: ₹418.3
+[Decoder] 📡 UDP TICK | NIFTYPE22750 | LTP: ₹108.4
+[Decoder] 📡 UDP TICK | NIFTYCE24550 | LTP: ₹10.2
+[Decoder] 📡 UDP TICK | BANKNIFTYCE57300 | LTP: ₹295.35
+[Decoder] 📡 UDP TICK | NIFTYCE22700 | LTP: ₹1025.6
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23605.8 | SynSpot: ₹23401.4 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55501.6 | SynSpot: ₹55495.9 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25382 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14025 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE23500 | LTP: ₹387.8
+[Decoder] 📡 UDP TICK | NIFTYPE22750 | LTP: ₹152.1
+[Decoder] 📡 UDP TICK | NIFTYCE22450 | LTP: ₹933.2
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE14925 | LTP: ₹45.1
+[Decoder] 📡 UDP TICK | BANKNIFTYPE57000 | LTP: ₹2049.5
+[Decoder] 📡 UDP TICK | NIFTYPE24000 | LTP: ₹957.95
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23605.8 | SynSpot: ₹23519.3 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55985 | SynSpot: ₹55751.6 | ATM: 56000 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25411.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14261.3 | SynSpot: ₹14098 | ATM: 14250 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE23100 | LTP: ₹525.3
+[Decoder] 📡 UDP TICK | NIFTYCE22100 | LTP: ₹1076.35
+[Decoder] 📡 UDP TICK | BANKNIFTYCE54100 | LTP: ₹1898
+[Decoder] 📡 UDP TICK | BANKNIFTYCE60000 | LTP: ₹33
+[Decoder] 📡 UDP TICK | MIDCPNIFTYPE13875 | LTP: ₹123.4
+[Decoder] 📡 UDP TICK | BANKNIFTYPE52300 | LTP: ₹409.8
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23605.8 | SynSpot: ₹23522.9 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55788 | SynSpot: ₹55265.2 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25392 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14261.3 | SynSpot: ₹14265 | ATM: 14250 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE21750 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE21550 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE23650 | LTP: ₹550.65
+[Decoder] 📡 UDP TICK | BANKNIFTYCE59300 | LTP: ₹57.3
+[Decoder] 📡 UDP TICK | NIFTYCE22950 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23605.8 | SynSpot: ₹23603.2 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55501.6 | SynSpot: ₹55497 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25318 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14265 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE22150 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYPE55700 | LTP: ₹1410
+[Decoder] 📡 UDP TICK | BANKNIFTYCE55500 | LTP: ₹2600
+[Decoder] 📡 UDP TICK | NIFTYPE21850 | LTP: ₹24.1
+[Decoder] 📡 UDP TICK | NIFTYCE23900 | LTP: ₹202.35
+[Decoder] 📡 UDP TICK | BANKNIFTYCE61500 | LTP: ₹399.45
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23605.8 | SynSpot: ₹23575.8 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55506.4 | SynSpot: ₹55655.5 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25416.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14265 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE23450 | LTP: ₹452.85
+[Decoder] 📡 UDP TICK | FINNIFTYPE28100 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE23250 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYCE46000 | LTP: ₹7910
+[Decoder] 📡 UDP TICK | NIFTYPE23300 | LTP: ₹307
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23605.8 | SynSpot: ₹23522.9 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55788 | SynSpot: ₹55493 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25280.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14025 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE22200 | LTP: ₹186.45
+[Decoder] 📡 UDP TICK | NIFTYPE23500 | LTP: ₹430.35
+[Decoder] 📡 UDP TICK | BANKNIFTYCE57900 | LTP: ₹181.45
+[Decoder] 📡 UDP TICK | NIFTYPE22300 | LTP: ₹202.15
+[Decoder] 📡 UDP TICK | NIFTYPE21600 | LTP: ₹62.4
+[Decoder] 📡 UDP TICK | NIFTYCE22750 | LTP: ₹689
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23514 | SynSpot: ₹23531.3 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55788 | SynSpot: ₹55501.8 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25318 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14232.2 | SynSpot: ₹14265 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE23500 | LTP: ₹353.6
+[Decoder] 📡 UDP TICK | BANKNIFTYCE58100 | LTP: ₹153.65
+[Decoder] 📡 UDP TICK | BANKNIFTYPE52400 | LTP: ₹186.9
+[Decoder] 📡 UDP TICK | NIFTYPE21600 | LTP: ₹16.8
+[Decoder] 📡 UDP TICK | BANKNIFTYPE54600 | LTP: ₹628.15
+[Decoder] 📡 UDP TICK | NIFTYCE23850 | LTP: ₹89.85
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23610.4 | SynSpot: ₹23522.9 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55524.8 | SynSpot: ₹55501.8 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25404.8 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14232.2 | SynSpot: ₹14071.9 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE56100 | LTP: ₹1200
+[Decoder] 📡 UDP TICK | BANKNIFTYPE51600 | LTP: ₹115.8
+[Decoder] 📡 UDP TICK | NIFTYPE24400 | LTP: ₹1008
+[Decoder] 📡 UDP TICK | NIFTYPE24200 | LTP: ₹874.9
+[Decoder] 📡 UDP TICK | NIFTYCE23500 | LTP: ₹673.6
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23610.4 | SynSpot: ₹23563 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55788 | SynSpot: ₹56119.4 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25376.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14232.2 | SynSpot: ₹14190.6 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE23750 | LTP: ₹387.8
+[Decoder] 📡 UDP TICK | BANKNIFTYPE57000 | LTP: ₹2049.5
+[Decoder] 📡 UDP TICK | BANKNIFTYCE53000 | LTP: ₹3324.6
+[Decoder] 📡 UDP TICK | NIFTYCE22750 | LTP: ₹689
+[Decoder] 📡 UDP TICK | NIFTYPE22800 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE21500 | LTP: ₹14.9
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23610.4 | SynSpot: ₹23450.3 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55788 | SynSpot: ₹55533 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25276.3 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14232.2 | SynSpot: ₹14098 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE23350 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE23350 | LTP: ₹365.8
+[Decoder] 📡 UDP TICK | NIFTYPE22500 | LTP: ₹145.1
+[Decoder] 📡 UDP TICK | NIFTYPE22250 | LTP: ₹74.6
+[Decoder] 📡 UDP TICK | NIFTYPE23400 | LTP: ₹256.55
+[Decoder] 📡 UDP TICK | MIDCPNIFTYPE14200 | LTP: ₹254.75
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23515 | SynSpot: ₹23541 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55985 | SynSpot: ₹54692.8 | ATM: 56000 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25280.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14261.3 | SynSpot: ₹14098 | ATM: 14250 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE22300 | LTP: ₹1124.95
+[Decoder] 📡 UDP TICK | NIFTYPE23650 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYCE46000 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE23750 | LTP: ₹454.7
+[Decoder] 📡 UDP TICK | BANKNIFTYCE53500 | LTP: ₹2970
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23610.4 | SynSpot: ₹23784.8 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55788 | SynSpot: ₹55558.7 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25382 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14232.2 | SynSpot: ₹14025 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | MIDCPNIFTYPE13700 | LTP: ₹92.95
+[Decoder] 📡 UDP TICK | NIFTYPE26000 | LTP: ₹1774.7
+[Decoder] 📡 UDP TICK | NIFTYCE23000 | LTP: ₹657.95
+[Decoder] 📡 UDP TICK | BANKNIFTYCE56700 | LTP: ₹461.5
+[Decoder] 📡 UDP TICK | BANKNIFTYCE49100 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE22200 | LTP: ₹1540.55
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23610.4 | SynSpot: ₹23540.7 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55788 | SynSpot: ₹55501 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25280.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14232.2 | SynSpot: ₹14025 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | MIDCPNIFTYPE13200 | LTP: ₹25.75
+[Decoder] 📡 UDP TICK | NIFTYCE24000 | LTP: ₹16.75
+[Decoder] 📡 UDP TICK | NIFTYCE24450 | LTP: ₹3.55
+[Decoder] 📡 UDP TICK | NIFTYCE20400 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYPE53300 | LTP: ₹1280
+[Decoder] 📡 UDP TICK | BANKNIFTYPE54200 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23415 | SynSpot: ₹23347.8 | ATM: 23400 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55788 | SynSpot: ₹55498.8 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25411.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14232.2 | SynSpot: ₹14265 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE21900 | LTP: ₹10.1
+[Decoder] 📡 UDP TICK | NIFTYPE21900 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE21800 | LTP: ₹1950.9
+[Decoder] 📡 UDP TICK | BANKNIFTYPE54900 | LTP: ₹1045
+[Decoder] 📡 UDP TICK | MIDCPNIFTYPE15500 | LTP: ₹1292.1
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23515 | SynSpot: ₹23546.6 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55524.8 | SynSpot: ₹55069.8 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25179 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14232.2 | SynSpot: ₹14190.6 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | MIDCPNIFTYPE15000 | LTP: ₹770
+[Decoder] 📡 UDP TICK | BANKNIFTYCE53200 | LTP: ₹3065.8
+[Decoder] 📡 UDP TICK | NIFTYCE22950 | LTP: ₹611
+[Decoder] 📡 UDP TICK | NIFTYCE25350 | LTP: ₹33.55
+[Decoder] 📡 UDP TICK | BANKNIFTYPE51000 | LTP: ₹246
+[Decoder] 📡 UDP TICK | NIFTYPE24350 | LTP: ₹946.15
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23608.3 | SynSpot: ₹23296.3 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55985 | SynSpot: ₹56077 | ATM: 56000 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25392 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14232.2 | SynSpot: ₹14025 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | FINNIFTYPE23600 | LTP: ₹52.5
+[Decoder] 📡 UDP TICK | NIFTYCE23950 | LTP: ₹299.85
+[Decoder] 📡 UDP TICK | NIFTYNXT50CE67900 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE22850 | LTP: ₹1402.25
+[Decoder] 📡 UDP TICK | NIFTYPE22550 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE25000 | LTP: ₹585.8
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23419.6 | SynSpot: ₹23531.3 | ATM: 23400 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55505.8 | SynSpot: ₹55479.6 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25311.6 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220.5 | SynSpot: ₹14106.9 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE53600 | LTP: ₹2272.4
+[Decoder] 📡 UDP TICK | NIFTYCE23850 | LTP: ₹341.05
+[Decoder] 📡 UDP TICK | NIFTYCE21700 | LTP: ₹1802.5
+[Decoder] 📡 UDP TICK | NIFTYPE21500 | LTP: ₹55.45
+[Decoder] 📡 UDP TICK | FINNIFTYCE25500 | LTP: ₹397.85
+[Decoder] 📡 UDP TICK | BANKNIFTYPE56600 | LTP: ₹1956.6
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23419.6 | SynSpot: ₹23526.4 | ATM: 23400 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55505.8 | SynSpot: ₹54697.3 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25280.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220.5 | SynSpot: ₹14025 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE25700 | LTP: ₹2445
+[Decoder] 📡 UDP TICK | NIFTYCE22400 | LTP: ₹1207.6
+[Decoder] 📡 UDP TICK | NIFTYCE24500 | LTP: ₹3.1
+[Decoder] 📡 UDP TICK | NIFTYPE23100 | LTP: ₹398.6
+[Decoder] 📡 UDP TICK | FINNIFTYCE23550 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE23300 | LTP: ₹234
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23608.3 | SynSpot: ₹23502.3 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55501.6 | SynSpot: ₹54949.5 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25266.5 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220.5 | SynSpot: ₹14106.9 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE22750 | LTP: ₹233.35
+[Decoder] 📡 UDP TICK | NIFTYPE25250 | LTP: ₹1250
+[Decoder] 📡 UDP TICK | NIFTYCE24450 | LTP: ₹242.35
+[Decoder] 📡 UDP TICK | BANKNIFTYPE47000 | LTP: ₹50.5
+[Decoder] 📡 UDP TICK | NIFTYPE24500 | LTP: ₹1109
+[Decoder] 📡 UDP TICK | NIFTYCE24400 | LTP: ₹39.05
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23608.3 | SynSpot: ₹23531.3 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55798 | SynSpot: ₹55479.8 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25404.9 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220.5 | SynSpot: ₹14071.9 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE23800 | LTP: ₹632.3
+[Decoder] 📡 UDP TICK | NIFTYCE20400 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE23250 | LTP: ₹483.5
+[Decoder] 📡 UDP TICK | NIFTYPE22600 | LTP: ₹191.7
+[Decoder] 📡 UDP TICK | NIFTYCE20500 | LTP: ₹2830
+[Decoder] 📡 UDP TICK | BANKNIFTYCE55800 | LTP: ₹820.3
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23419.4 | SynSpot: ₹23512.8 | ATM: 23400 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55985 | SynSpot: ₹55485 | ATM: 56000 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25305.8 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220.5 | SynSpot: ₹14190.6 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYNXT50CE67700 | LTP: ₹2798.8
+[Decoder] 📡 UDP TICK | BANKNIFTYCE55200 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE23300 | LTP: ₹351.3
+[Decoder] 📡 UDP TICK | NIFTYCE23100 | LTP: ₹745
+[Decoder] 📡 UDP TICK | NIFTYCE24900 | LTP: ₹71
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23514 | SynSpot: ₹23721.6 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55798 | SynSpot: ₹55492.7 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25287.1 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220.5 | SynSpot: ₹14292.5 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE23600 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE24000 | LTP: ₹645
+[Decoder] 📡 UDP TICK | NIFTYPE22950 | LTP: ₹282.2
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE14825 | LTP: ₹62
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE12625 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYPE47500 | LTP: ₹13.7
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23608.3 | SynSpot: ₹23526.5 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55798 | SynSpot: ₹55478.9 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25392 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220.5 | SynSpot: ₹14025 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE14175 | LTP: ₹291.35
+[Decoder] 📡 UDP TICK | NIFTYPE24850 | LTP: ₹1352
+[Decoder] 📡 UDP TICK | NIFTYCE25050 | LTP: ₹1.05
+[Decoder] 📡 UDP TICK | MIDCPNIFTYPE13350 | LTP: ₹39
+[Decoder] 📡 UDP TICK | BANKNIFTYCE54100 | LTP: ₹1963.85
+[Decoder] 📡 UDP TICK | NIFTYCE23900 | LTP: ₹471.4
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23608.3 | SynSpot: ₹23525.7 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55985 | SynSpot: ₹55912.4 | ATM: 56000 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25311.6 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220.5 | SynSpot: ₹14265.2 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE23650 | LTP: ₹434.3
+[Decoder] 📡 UDP TICK | NIFTYCE22000 | LTP: ₹1610
+[Decoder] 📡 UDP TICK | NIFTYPE25000 | LTP: ₹1400
+[Decoder] 📡 UDP TICK | NIFTYCE24400 | LTP: ₹159.15
+[Decoder] 📡 UDP TICK | NIFTYCE24500 | LTP: ₹30.55
+[Decoder] 📡 UDP TICK | NIFTYCE22450 | LTP: ₹937
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23514 | SynSpot: ₹23536.1 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55798 | SynSpot: ₹55497.9 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25045.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220.5 | SynSpot: ₹14265.2 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE25700 | LTP: ₹2311
+[Decoder] 📡 UDP TICK | MIDCPNIFTYPE13850 | LTP: ₹126.8
+[Decoder] 📡 UDP TICK | NIFTYPE24400 | LTP: ₹995.85
+[Decoder] 📡 UDP TICK | NIFTYPE24250 | LTP: ₹832.85
+[Decoder] 📡 UDP TICK | NIFTYPE22350 | LTP: ₹7.05
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23608.3 | SynSpot: ₹23502.3 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55500 | SynSpot: ₹53341.2 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25344.1 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220.5 | SynSpot: ₹14025 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE25500 | LTP: ₹2085.25
+[Decoder] 📡 UDP TICK | BANKNIFTYCE55000 | LTP: ₹1248.1
+[Decoder] 📡 UDP TICK | BANKNIFTYCE53300 | LTP: ₹2517.2
+[Decoder] 📡 UDP TICK | NIFTYCE23900 | LTP: ₹471.4
+[Decoder] 📡 UDP TICK | NIFTYPE24350 | LTP: ₹946.15
+[Decoder] 📡 UDP TICK | BANKNIFTYCE50700 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23514 | SynSpot: ₹23443.8 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55798 | SynSpot: ₹55489.9 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25094.5 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14071.9 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE24100 | LTP: ₹749.7
+[Decoder] 📡 UDP TICK | NIFTYCE23300 | LTP: ₹804
+[Decoder] 📡 UDP TICK | BANKNIFTYPE59800 | LTP: ₹4242.8
+[Decoder] 📡 UDP TICK | NIFTYCE22650 | LTP: ₹1175
+[Decoder] 📡 UDP TICK | NIFTYPE24150 | LTP: ₹829.35
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23415 | SynSpot: ₹23542.3 | ATM: 23400 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55798 | SynSpot: ₹55481 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25266.5 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14071.9 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE21850 | LTP: ₹1677.1
+[Decoder] 📡 UDP TICK | NIFTYCE22900 | LTP: ₹673.1
+[Decoder] 📡 UDP TICK | FINNIFTYPE26550 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYCE59900 | LTP: ₹35.15
+[Decoder] 📡 UDP TICK | NIFTYPE23550 | LTP: ₹502.6
+[Decoder] 📡 UDP TICK | BANKNIFTYCE54500 | LTP: ₹1569.95
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23608.3 | SynSpot: ₹23816.6 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55798 | SynSpot: ₹55502.5 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25401.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14265 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE10925 | LTP: ₹0
+[Decoder] 📡 UDP TICK | MIDCPNIFTYPE14250 | LTP: ₹280.25
+[Decoder] 📡 UDP TICK | NIFTYCE21100 | LTP: ₹2412.1
+[Decoder] 📡 UDP TICK | BANKNIFTYPE49000 | LTP: ₹112.55
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE11525 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23608.3 | SynSpot: ₹23403.5 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55500 | SynSpot: ₹55502.5 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25404.8 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14265 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE22400 | LTP: ₹59.55
+[Decoder] 📡 UDP TICK | BANKNIFTYPE51800 | LTP: ₹335.5
+[Decoder] 📡 UDP TICK | BANKNIFTYCE54300 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE23450 | LTP: ₹0
+[Decoder] 📡 UDP TICK | FINNIFTYCE22200 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE23600 | LTP: ₹92.1
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23608.3 | SynSpot: ₹23307.7 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55985 | SynSpot: ₹54692.8 | ATM: 56000 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹24934.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14265 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | FINNIFTYCE24650 | LTP: ₹570.7
+[Decoder] 📡 UDP TICK | MIDCPNIFTYPE14425 | LTP: ₹384.35
+[Decoder] 📡 UDP TICK | NIFTYCE23900 | LTP: ₹25.85
+[Decoder] 📡 UDP TICK | NIFTYCE22300 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYPE48900 | LTP: ₹26.05
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE14250 | LTP: ₹253
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23514 | SynSpot: ₹23917.9 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55798 | SynSpot: ₹55406.5 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25409.8 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14265 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYPE50700 | LTP: ₹67.65
+[Decoder] 📡 UDP TICK | BANKNIFTYCE55200 | LTP: ₹1810.85
+[Decoder] 📡 UDP TICK | NIFTYPE21900 | LTP: ₹26.6
+[Decoder] 📡 UDP TICK | NIFTYPE23550 | LTP: ₹374.5
+[Decoder] 📡 UDP TICK | NIFTYPE25950 | LTP: ₹2427.45
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23608.3 | SynSpot: ₹23313.9 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55798 | SynSpot: ₹55471.4 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25094.5 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14190.6 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE25150 | LTP: ₹9.65
+[Decoder] 📡 UDP TICK | BANKNIFTYCE56800 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE21950 | LTP: ₹3.7
+[Decoder] 📡 UDP TICK | NIFTYPE21700 | LTP: ₹69.6
+[Decoder] 📡 UDP TICK | NIFTYCE22400 | LTP: ₹1062.7
+[Decoder] 📡 UDP TICK | NIFTYCE24450 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23608.3 | SynSpot: ₹23450.3 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55500 | SynSpot: ₹55502.5 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25663.4 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14025 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE56000 | LTP: ₹725.4
+[Decoder] 📡 UDP TICK | BANKNIFTYCE51500 | LTP: ₹4115
+[Decoder] 📡 UDP TICK | NIFTYPE23300 | LTP: ₹351.3
+[Decoder] 📡 UDP TICK | NIFTYCE22950 | LTP: ₹1250
+[Decoder] 📡 UDP TICK | BANKNIFTYCE57000 | LTP: ₹366.25
+[Decoder] 📡 UDP TICK | BANKNIFTYPE60400 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23514 | SynSpot: ₹24215.1 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55798 | SynSpot: ₹55483.9 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25343.3 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14193.8 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE24900 | LTP: ₹1484
+[Decoder] 📡 UDP TICK | BANKNIFTYCE58400 | LTP: ₹118.1
+[Decoder] 📡 UDP TICK | NIFTYCE24350 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE21000 | LTP: ₹102.8
+[Decoder] 📡 UDP TICK | BANKNIFTYCE50300 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23608.3 | SynSpot: ₹23575.8 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55798 | SynSpot: ₹55473.5 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25380.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14071.9 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYPE48900 | LTP: ₹26.05
+[Decoder] 📡 UDP TICK | BANKNIFTYCE53600 | LTP: ₹2272.4
+[Decoder] 📡 UDP TICK | NIFTYPE23350 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE23800 | LTP: ₹226.65
+[Decoder] 📡 UDP TICK | NIFTYCE22200 | LTP: ₹1486.1
+[Decoder] 📡 UDP TICK | BANKNIFTYPE48700 | LTP: ₹24
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23608.3 | SynSpot: ₹23816.6 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55798 | SynSpot: ₹55808.3 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25380.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14174 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE44000 | LTP: ₹10564.5
+[Decoder] 📡 UDP TICK | NIFTYPE22650 | LTP: ₹54.55
+[Decoder] 📡 UDP TICK | NIFTYFUT | LTP: ₹23414.4
+[Decoder] 📡 UDP TICK | NIFTYPE23500 | LTP: ₹430.35
+[Decoder] 📡 UDP TICK | BANKNIFTYCE58100 | LTP: ₹153.65
+[Decoder] 📡 UDP TICK | NIFTYCE24500 | LTP: ₹53.05
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23414.4 | SynSpot: ₹23526 | ATM: 23400 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55500 | SynSpot: ₹55477.8 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25392 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14323.5 | SynSpot: ₹14265 | ATM: 14325 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE22450 | LTP: ₹937
+[Decoder] 📡 UDP TICK | NIFTYPE23200 | LTP: ₹231.85
+[Decoder] 📡 UDP TICK | FINNIFTYFUT | LTP: ₹25405
+[Decoder] 📡 UDP TICK | NIFTYCE22000 | LTP: ₹1399.5
+[Decoder] 📡 UDP TICK | NIFTYPE23100 | LTP: ₹398.6
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23505.3 | SynSpot: ₹23381.5 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55798 | SynSpot: ₹55214.4 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25280.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14098 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE24100 | LTP: ₹848
+[Decoder] 📡 UDP TICK | BANKNIFTYCE59000 | LTP: ₹313
+[Decoder] 📡 UDP TICK | NIFTYCE23000 | LTP: ₹1695
+[Decoder] 📡 UDP TICK | NIFTYPE21800 | LTP: ₹22.4
+[Decoder] 📡 UDP TICK | NIFTYCE22350 | LTP: ₹1152.8
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23608.3 | SynSpot: ₹23313.9 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55798 | SynSpot: ₹55482.9 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25165.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14025 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE22850 | LTP: ₹583.3
+[Decoder] 📡 UDP TICK | FINNIFTYPE23500 | LTP: ₹45.85
+[Decoder] 📡 UDP TICK | NIFTYPE21650 | LTP: ₹104.7
+[Decoder] 📡 UDP TICK | FINNIFTYCE26800 | LTP: ₹54
+[Decoder] 📡 UDP TICK | NIFTYCE23450 | LTP: ₹667.95
+[Decoder] 📡 UDP TICK | NIFTYFUT | LTP: ₹23414
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23608.3 | SynSpot: ₹23906.5 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55500 | SynSpot: ₹56125.7 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25258 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14025 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE21900 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE23400 | LTP: ₹335.5
+[Decoder] 📡 UDP TICK | NIFTYPE23050 | LTP: ₹220.05
+[Decoder] 📡 UDP TICK | FINNIFTYCE22800 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYCE59800 | LTP: ₹37.8
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23514.9 | SynSpot: ₹23843.8 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55798 | SynSpot: ₹55504.6 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25318 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14193.8 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE53500 | LTP: ₹2959
+[Decoder] 📡 UDP TICK | NIFTYCE24150 | LTP: ₹133.3
+[Decoder] 📡 UDP TICK | NIFTYCE22100 | LTP: ₹1076.35
+[Decoder] 📡 UDP TICK | NIFTYCE24300 | LTP: ₹21.4
+[Decoder] 📡 UDP TICK | MIDCPNIFTYPE14000 | LTP: ₹176
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23608.3 | SynSpot: ₹24215.1 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55798 | SynSpot: ₹55485 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25380.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14265 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE24950 | LTP: ₹1291.9
+[Decoder] 📡 UDP TICK | NIFTYPE23200 | LTP: ₹103.7
+[Decoder] 📡 UDP TICK | FINNIFTYCE26200 | LTP: ₹151.7
+[Decoder] 📡 UDP TICK | NIFTYPE25500 | LTP: ₹1826.75
+[Decoder] 📡 UDP TICK | MIDCPNIFTYFUT | LTP: ₹14323.5
+[Decoder] 📡 UDP TICK | NIFTYPE25450 | LTP: ₹2080.45
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23514.9 | SynSpot: ₹23403.5 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55500 | SynSpot: ₹55476 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25404.8 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14071.9 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE25100 | LTP: ₹15.5
+[Decoder] 📡 UDP TICK | NIFTYCE23100 | LTP: ₹371.25
+[Decoder] 📡 UDP TICK | NIFTYPE23050 | LTP: ₹312.85
+[Decoder] 📡 UDP TICK | NIFTYPE22250 | LTP: ₹46.2
+[Decoder] 📡 UDP TICK | BANKNIFTYCE53900 | LTP: ₹2055.85
+[Decoder] 📡 UDP TICK | NIFTYCE23900 | LTP: ₹314
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23514.9 | SynSpot: ₹23843.8 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55798 | SynSpot: ₹55406.5 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25405 | SynSpot: ₹25409.8 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14323.5 | SynSpot: ₹14193.8 | ATM: 14325 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE24650 | LTP: ₹21.9
+[Decoder] 📡 UDP TICK | NIFTYPE22700 | LTP: ₹19.45
+[Decoder] 📡 UDP TICK | NIFTYPE22000 | LTP: ₹156.3
+[Decoder] 📡 UDP TICK | BANKNIFTYPE54700 | LTP: ₹988
+[Decoder] 📡 UDP TICK | BANKNIFTYCE57800 | LTP: ₹620
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23608.3 | SynSpot: ₹23917.9 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55798 | SynSpot: ₹55474.4 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25287.1 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14193.8 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYPE59200 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE22400 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE24200 | LTP: ₹347.65
+[Decoder] 📡 UDP TICK | BANKNIFTYCE56500 | LTP: ₹521.9
+[Decoder] 📡 UDP TICK | BANKNIFTYPE51000 | LTP: ₹415.75
+[Decoder] 📡 UDP TICK | NIFTYPE23350 | LTP: ₹158.8
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23608.3 | SynSpot: ₹23798.4 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55500 | SynSpot: ₹55186.5 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25305.8 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14265 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE51500 | LTP: ₹0
+[Decoder] 📡 UDP TICK | MIDCPNIFTYPE14175 | LTP: ₹246.1
+[Decoder] 📡 UDP TICK | NIFTYCE24100 | LTP: ₹164.2
+[Decoder] 📡 UDP TICK | BANKNIFTYCE55500 | LTP: ₹2600
+[Decoder] 📡 UDP TICK | NIFTYCE26100 | LTP: ₹12.3
+[Decoder] 📡 UDP TICK | BANKNIFTYCE56300 | LTP: ₹597.35
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23505.9 | SynSpot: ₹23531.3 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55490.4 | SynSpot: ₹55507.4 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25404.8 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14265 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | FINNIFTYPE25400 | LTP: ₹455.3
+[Decoder] 📡 UDP TICK | BANKNIFTYCE49300 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE27000 | LTP: ₹137.2
+[Decoder] 📡 UDP TICK | BANKNIFTYCE53300 | LTP: ₹2517.2
+[Decoder] 📡 UDP TICK | BANKNIFTYCE58000 | LTP: ₹547.1
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23608.3 | SynSpot: ₹23330.1 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55798 | SynSpot: ₹55406.2 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25409.8 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14292.5 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | MIDCPNIFTYPE14175 | LTP: ₹245.35
+[Decoder] 📡 UDP TICK | NIFTYCE24150 | LTP: ₹35.65
+[Decoder] 📡 UDP TICK | NIFTYCE23000 | LTP: ₹590.15
+[Decoder] 📡 UDP TICK | NIFTYCE24100 | LTP: ₹240.1
+[Decoder] 📡 UDP TICK | BANKNIFTYPE61000 | LTP: ₹5500
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.3 | SynSpot: ₹24216.1 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55798 | SynSpot: ₹55482.9 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25380.2 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14025 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE23000 | LTP: ₹297.9
+[Decoder] 📡 UDP TICK | NIFTYCE21450 | LTP: ₹2063.25
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE14325 | LTP: ₹236.45
+[Decoder] 📡 UDP TICK | NIFTYCE21950 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE24400 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE24300 | LTP: ₹895
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.3 | SynSpot: ₹23720.3 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55798 | SynSpot: ₹54668 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25106.7 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14174 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE23400 | LTP: ₹389.25
+[Decoder] 📡 UDP TICK | NIFTYCE24700 | LTP: ₹19.3
+[Decoder] 📡 UDP TICK | NIFTYPE21950 | LTP: ₹3.7
+[Decoder] 📡 UDP TICK | NIFTYCE23700 | LTP: ₹134.9
+[Decoder] 📡 UDP TICK | NIFTYPE23600 | LTP: ₹445.85
+[Decoder] 📡 UDP TICK | BANKNIFTYCE53800 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23505.9 | SynSpot: ₹23542.8 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55798 | SynSpot: ₹55480 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25318 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14323.5 | SynSpot: ₹14265 | ATM: 14325 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE23700 | LTP: ₹399
+[Decoder] 📡 UDP TICK | NIFTYPE22500 | LTP: ₹145.1
+[Decoder] 📡 UDP TICK | BANKNIFTYPE57000 | LTP: ₹2049.5
+[Decoder] 📡 UDP TICK | BANKNIFTYCE55300 | LTP: ₹1076.7
+[Decoder] 📡 UDP TICK | MIDCPNIFTYFUT | LTP: ₹14268.6
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.3 | SynSpot: ₹23546.6 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55798 | SynSpot: ₹54008.3 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25524.3 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14265 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | FINNIFTYCE25150 | LTP: ₹595.3
+[Decoder] 📡 UDP TICK | NIFTYCE22800 | LTP: ₹691.45
+[Decoder] 📡 UDP TICK | NIFTYPE23000 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYCE62500 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE27000 | LTP: ₹3140
+[Decoder] 📡 UDP TICK | NIFTYPE23750 | LTP: ₹595.45
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.3 | SynSpot: ₹23531.3 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55486.6 | SynSpot: ₹54393.5 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25392 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14190.6 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE57000 | LTP: ₹1310.8
+[Decoder] 📡 UDP TICK | BANKNIFTYCE54700 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE25050 | LTP: ₹1544.55
+[Decoder] 📡 UDP TICK | NIFTYPE22950 | LTP: ₹375.45
+[Decoder] 📡 UDP TICK | NIFTYCE24850 | LTP: ₹14.85
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.3 | SynSpot: ₹23443.5 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55486.6 | SynSpot: ₹55909.1 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25311.6 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14190.6 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE60000 | LTP: ₹730.4
+[Decoder] 📡 UDP TICK | NIFTYPE23050 | LTP: ₹411.75
+[Decoder] 📡 UDP TICK | BANKNIFTYPE52000 | LTP: ₹368.3
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE13350 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE23100 | LTP: ₹745
+[Decoder] 📡 UDP TICK | NIFTYCE24200 | LTP: ₹7.25
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.3 | SynSpot: ₹23542.8 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55790 | SynSpot: ₹55473.9 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25663.4 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14193.8 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE60500 | LTP: ₹121.5
+[Decoder] 📡 UDP TICK | MIDCPNIFTYPE13800 | LTP: ₹116.6
+[Decoder] 📡 UDP TICK | NIFTYCE23700 | LTP: ₹315.4
+[Decoder] 📡 UDP TICK | NIFTYPE23900 | LTP: ₹760
+[Decoder] 📡 UDP TICK | NIFTYCE24000 | LTP: ₹149.7
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.3 | SynSpot: ₹23775.4 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55790 | SynSpot: ₹55034 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25411.2 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14193.8 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE55500 | LTP: ₹2100
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE14250 | LTP: ₹253
+[Decoder] 📡 UDP TICK | BANKNIFTYCE48300 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE24600 | LTP: ₹8.8
+[Decoder] 📡 UDP TICK | BANKNIFTYPE59000 | LTP: ₹3577.6
+[Decoder] 📡 UDP TICK | NIFTYPE23050 | LTP: ₹312.85
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.3 | SynSpot: ₹23531.2 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55790 | SynSpot: ₹53341.2 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25524.3 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14025 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYPE49800 | LTP: ₹41.55
+[Decoder] 📡 UDP TICK | FINNIFTYCE23850 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE22400 | LTP: ₹225
+[Decoder] 📡 UDP TICK | NIFTYPE23150 | LTP: ₹0
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE14625 | LTP: ₹107
+[Decoder] 📡 UDP TICK | BANKNIFTYPE69000 | LTP: ₹14631.5
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23506 | SynSpot: ₹23563 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55790 | SynSpot: ₹55409.2 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25378.1 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14071.9 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE22700 | LTP: ₹217.95
+[Decoder] 📡 UDP TICK | NIFTYPE23650 | LTP: ₹662.65
+[Decoder] 📡 UDP TICK | NIFTYCE22800 | LTP: ₹691.45
+[Decoder] 📡 UDP TICK | NIFTYPE22700 | LTP: ₹129.55
+[Decoder] 📡 UDP TICK | BANKNIFTYPE52200 | LTP: ₹396.25
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.3 | SynSpot: ₹24269 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55790 | SynSpot: ₹55473.1 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25399.9 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14098 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE25100 | LTP: ₹1587.55
+[Decoder] 📡 UDP TICK | NIFTYPE22750 | LTP: ₹22.95
+[Decoder] 📡 UDP TICK | NIFTYCE22800 | LTP: ₹1093.5
+[Decoder] 📡 UDP TICK | NIFTYCE25000 | LTP: ₹11.2
+[Decoder] 📡 UDP TICK | BANKNIFTYPE59200 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE21800 | LTP: ₹29.8
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.3 | SynSpot: ₹23525 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55790 | SynSpot: ₹55484.2 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25663.4 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14323.5 | SynSpot: ₹14025 | ATM: 14325 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE48200 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE25700 | LTP: ₹20.55
+[Decoder] 📡 UDP TICK | BANKNIFTYCE56900 | LTP: ₹927.1
+[Decoder] 📡 UDP TICK | NIFTYPE25300 | LTP: ₹1713.85
+[Decoder] 📡 UDP TICK | NIFTYCE28000 | LTP: ₹2150
+[Decoder] 📡 UDP TICK | NIFTYPE29000 | LTP: ₹4520
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23420 | SynSpot: ₹23563 | ATM: 23400 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55985 | SynSpot: ₹55502.8 | ATM: 56000 | Strikes: 406
+[Decoder] 📡 UDP TICK | BANKNIFTYCE52000 | LTP: ₹3608.2
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25378.1 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14264.8 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE23350 | LTP: ₹295
+[Decoder] 📡 UDP TICK | NIFTYPE25550 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE22400 | LTP: ₹1111.25
+[Decoder] 📡 UDP TICK | NIFTYCE23250 | LTP: ₹476.55
+[Decoder] 📡 UDP TICK | BANKNIFTYCE57800 | LTP: ₹620
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.3 | SynSpot: ₹23313.8 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55985 | SynSpot: ₹55482.2 | ATM: 56000 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25163.9 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14264.8 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE22300 | LTP: ₹202.15
+[Decoder] 📡 UDP TICK | NIFTYPE23800 | LTP: ₹632
+[Decoder] 📡 UDP TICK | NIFTYPE22400 | LTP: ₹30
+[Decoder] 📡 UDP TICK | FINNIFTYPE25000 | LTP: ₹298
+[Decoder] 📡 UDP TICK | BANKNIFTYCE44000 | LTP: ₹10564.5
+[Decoder] 📡 UDP TICK | NIFTYPE23700 | LTP: ₹360.4
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.3 | SynSpot: ₹23502.3 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55514 | SynSpot: ₹55492.7 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25256.1 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14264.8 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE23550 | LTP: ₹302.05
+[Decoder] 📡 UDP TICK | NIFTYPE22050 | LTP: ₹33.4
+[Decoder] 📡 UDP TICK | BANKNIFTYPE54500 | LTP: ₹596.3
+[Decoder] 📡 UDP TICK | NIFTYCE23700 | LTP: ₹63.55
+[Decoder] 📡 UDP TICK | FINNIFTYCE25000 | LTP: ₹920
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.3 | SynSpot: ₹23447.2 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55515 | SynSpot: ₹55497.3 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25165.2 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14264.8 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE51600 | LTP: ₹3835.55
+[Decoder] 📡 UDP TICK | NIFTYCE24000 | LTP: ₹2820
+[Decoder] 📡 UDP TICK | BANKNIFTYPE59900 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE22100 | LTP: ₹1076.35
+[Decoder] 📡 UDP TICK | NIFTYPE23600 | LTP: ₹522
+[Decoder] 📡 UDP TICK | FINNIFTYCE28100 | LTP: ₹6.4
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23506 | SynSpot: ₹23330.1 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55790 | SynSpot: ₹54725.1 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25404.8 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14071.9 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE23650 | LTP: ₹217
+[Decoder] 📡 UDP TICK | FINNIFTYPE25900 | LTP: ₹1027.35
+[Decoder] 📡 UDP TICK | NIFTYPE22100 | LTP: ₹111.25
+[Decoder] 📡 UDP TICK | BANKNIFTYPE52900 | LTP: ₹247
+[Decoder] 📡 UDP TICK | BANKNIFTYCE54600 | LTP: ₹1508.6
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.3 | SynSpot: ₹23600 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55790 | SynSpot: ₹54725.1 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25416.2 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14220 | SynSpot: ₹14071.9 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE23000 | LTP: ₹813.8
+[Decoder] 📡 UDP TICK | NIFTYPE23900 | LTP: ₹760
+[Decoder] 📡 UDP TICK | NIFTYPE23700 | LTP: ₹465.35
+[Decoder] 📡 UDP TICK | BANKNIFTYPE52500 | LTP: ₹195.55
+[Decoder] 📡 UDP TICK | BANKNIFTYCE48700 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYCE54500 | LTP: ₹1591.75
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.3 | SynSpot: ₹23502.8 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55790 | SynSpot: ₹55558.7 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25106.7 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14264.8 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE53400 | LTP: ₹2395
+[Decoder] 📡 UDP TICK | NIFTYCE24600 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE25000 | LTP: ₹1600
+[Decoder] 📡 UDP TICK | NIFTYCE20800 | LTP: ₹2703.35
+[Decoder] 📡 UDP TICK | NIFTYCE24400 | LTP: ₹271
+[Decoder] 📡 UDP TICK | NIFTYCE25650 | LTP: ₹132.95
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.3 | SynSpot: ₹23521.5 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55524.8 | SynSpot: ₹55409.2 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25311.6 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14264.8 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE56300 | LTP: ₹607.7
+[Decoder] 📡 UDP TICK | NIFTYCE20600 | LTP: ₹2656
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE11150 | LTP: ₹0
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE14425 | LTP: ₹175
+[Decoder] 📡 UDP TICK | BANKNIFTYCE52400 | LTP: ₹3248.6
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23506 | SynSpot: ₹24271.9 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55985 | SynSpot: ₹55534.2 | ATM: 56000 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25392 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14098 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE23650 | LTP: ₹381.65
+[Decoder] 📡 UDP TICK | NIFTYPE23450 | LTP: ₹452.85
+[Decoder] 📡 UDP TICK | NIFTYCE23500 | LTP: ₹286.8
+[Decoder] 📡 UDP TICK | NIFTYCE24650 | LTP: ₹2.15
+[Decoder] 📡 UDP TICK | BANKNIFTYPE53000 | LTP: ₹542.65
+[Decoder] 📡 UDP TICK | NIFTYCE25100 | LTP: ₹115
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.3 | SynSpot: ₹23624.4 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55790 | SynSpot: ₹55474.9 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25311.6 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14025 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE23100 | LTP: ₹330.1
+[Decoder] 📡 UDP TICK | BANKNIFTYCE56700 | LTP: ₹462.75
+[Decoder] 📡 UDP TICK | BANKNIFTYPE49100 | LTP: ₹29.2
+[Decoder] 📡 UDP TICK | NIFTYPE22500 | LTP: ₹412
+[Decoder] 📡 UDP TICK | FINNIFTYCE24850 | LTP: ₹609.4
+[Decoder] 📡 UDP TICK | BANKNIFTYPE54900 | LTP: ₹1045
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.3 | SynSpot: ₹23624.4 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55530 | SynSpot: ₹55409.2 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25256.1 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14265 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYPE53400 | LTP: ₹326.2
+[Decoder] 📡 UDP TICK | NIFTYCE23200 | LTP: ₹520.95
+[Decoder] 📡 UDP TICK | BANKNIFTYPE54100 | LTP: ₹478.05
+[Decoder] 📡 UDP TICK | MIDCPNIFTYPE15250 | LTP: ₹1058.15
+[Decoder] 📡 UDP TICK | BANKNIFTYCE46500 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE21500 | LTP: ₹24.5
+[Decoder] 📡 UDP TICK | NIFTYPE23750 | LTP: ₹454.7
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23425 | SynSpot: ₹23224.9 | ATM: 23400 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55985 | SynSpot: ₹55474.9 | ATM: 56000 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25409.8 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14174 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE60300 | LTP: ₹26
+[Decoder] 📡 UDP TICK | NIFTYCE22500 | LTP: ₹1295.5
+[Decoder] 📡 UDP TICK | FINNIFTYPE27450 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE22350 | LTP: ₹1049.2
+[Decoder] 📡 UDP TICK | BANKNIFTYCE49600 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE22650 | LTP: ₹982.5
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.3 | SynSpot: ₹23525 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55543 | SynSpot: ₹55486.4 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25380.9 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14174 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE23450 | LTP: ₹159.7
+[Decoder] 📡 UDP TICK | NIFTYPE23150 | LTP: ₹342.55
+[Decoder] 📡 UDP TICK | NIFTYPE21850 | LTP: ₹3.3
+[Decoder] 📡 UDP TICK | BANKNIFTYCE58800 | LTP: ₹357.95
+[Decoder] 📡 UDP TICK | NIFTYPE23650 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE23050 | LTP: ₹130
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.3 | SynSpot: ₹23622.7 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55543 | SynSpot: ₹54949.5 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25404.9 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14190.6 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE23350 | LTP: ₹287.85
+[Decoder] 📡 UDP TICK | BANKNIFTYCE53700 | LTP: ₹2782.6
+[Decoder] 📡 UDP TICK | NIFTYPE23200 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE23000 | LTP: ₹979.55
+[Decoder] 📡 UDP TICK | NIFTYPE22350 | LTP: ₹0
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE13550 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23603.3 | SynSpot: ₹23531.3 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55815 | SynSpot: ₹55544.5 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25276.3 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14071.9 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE24050 | LTP: ₹649.65
+[Decoder] 📡 UDP TICK | NIFTYPE22750 | LTP: ₹22.55
+[Decoder] 📡 UDP TICK | NIFTYPE23250 | LTP: ₹115.9
+[Decoder] 📡 UDP TICK | NIFTYCE21500 | LTP: ₹2000
+[Decoder] 📡 UDP TICK | BANKNIFTYCE56400 | LTP: ₹1075
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23515 | SynSpot: ₹23524.6 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55815 | SynSpot: ₹55486.3 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25367.2 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14025 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE22800 | LTP: ₹1093.5
+[Decoder] 📡 UDP TICK | BANKNIFTYPE60700 | LTP: ₹0
+[Decoder] 📡 UDP TICK | FINNIFTYPE24050 | LTP: ₹150.75
+[Decoder] 📡 UDP TICK | BANKNIFTYCE55900 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYPE58400 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE24000 | LTP: ₹680
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23617.9 | SynSpot: ₹23381.5 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55815 | SynSpot: ₹55530.8 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25355.2 | SynSpot: ₹25352 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14265.4 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE24150 | LTP: ₹212
+[Decoder] 📡 UDP TICK | NIFTYCE24550 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYCE46500 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYPE54000 | LTP: ₹775
+[Decoder] 📡 UDP TICK | NIFTYCE25050 | LTP: ₹0
+[Decoder] 📡 UDP TICK | FINNIFTYPE24150 | LTP: ₹107.45
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23431 | SynSpot: ₹23525.9 | ATM: 23450 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55815 | SynSpot: ₹55464.4 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25373.6 | SynSpot: ₹25049.5 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14265.4 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYFUT | LTP: ₹55544
+[Decoder] 📡 UDP TICK | NIFTYPE30000 | LTP: ₹6564
+[Decoder] 📡 UDP TICK | NIFTYCE23900 | LTP: ₹27.55
+[Decoder] 📡 UDP TICK | NIFTYPE22750 | LTP: ₹152.1
+[Decoder] 📡 UDP TICK | NIFTYPE23400 | LTP: ₹253.6
+[Decoder] 📡 UDP TICK | NIFTYPE30000 | LTP: ₹5477.5
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23515 | SynSpot: ₹23784.8 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55985 | SynSpot: ₹55487.8 | ATM: 56000 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25373.6 | SynSpot: ₹25366.2 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14190.6 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE60100 | LTP: ₹31
+[Decoder] 📡 UDP TICK | BANKNIFTYCE53400 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE21900 | LTP: ₹3.5
+[Decoder] 📡 UDP TICK | NIFTYPE24750 | LTP: ₹0
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE14150 | LTP: ₹312.6
+[Decoder] 📡 UDP TICK | BANKNIFTYCE48700 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23515 | SynSpot: ₹23575.8 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55985 | SynSpot: ₹55808.3 | ATM: 56000 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25373.6 | SynSpot: ₹25380.9 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14174 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE23800 | LTP: ₹107
+[Decoder] 📡 UDP TICK | NIFTYPE23150 | LTP: ₹251.45
+[Decoder] 📡 UDP TICK | NIFTYPE25000 | LTP: ₹1313.1
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE11300 | LTP: ₹3000
+[Decoder] 📡 UDP TICK | BANKNIFTYCE57100 | LTP: ₹352.8
+[Decoder] 📡 UDP TICK | BANKNIFTYCE47800 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23617.9 | SynSpot: ₹23521.5 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55533.6 | SynSpot: ₹55535.5 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25373.6 | SynSpot: ₹25311.6 | ATM: 25350 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14265.4 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE22450 | LTP: ₹163
+[Decoder] 📡 UDP TICK | BANKNIFTYPE55500 | LTP: ₹962.25
+[Decoder] 📡 UDP TICK | BANKNIFTYPE53800 | LTP: ₹977.7
+[Decoder] 📡 UDP TICK | BANKNIFTYCE56100 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE22850 | LTP: ₹718.75
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23617.9 | SynSpot: ₹23784.8 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55815 | SynSpot: ₹55527.8 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25409.8 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14192.2 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE13975 | LTP: ₹445.95
+[Decoder] 📡 UDP TICK | NIFTYCE25000 | LTP: ₹585
+[Decoder] 📡 UDP TICK | NIFTYCE23450 | LTP: ₹315
+[Decoder] 📡 UDP TICK | BANKNIFTYCE54100 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYCE59200 | LTP: ₹60.2
+[Decoder] 📡 UDP TICK | NIFTYPE23300 | LTP: ₹351.3
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23430 | SynSpot: ₹23563 | ATM: 23450 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55544 | SynSpot: ₹55180 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25397.4 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14071.9 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE52500 | LTP: ₹3195
+[Decoder] 📡 UDP TICK | NIFTYCE23150 | LTP: ₹491.45
+[Decoder] 📡 UDP TICK | NIFTYPE21300 | LTP: ₹11.6
+[Decoder] 📡 UDP TICK | MIDCPNIFTYPE13600 | LTP: ₹70
+[Decoder] 📡 UDP TICK | BANKNIFTYCE60500 | LTP: ₹121.5
+[Decoder] 📡 UDP TICK | BANKNIFTYPE45600 | LTP: ₹8.45
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23617.9 | SynSpot: ₹23561.5 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55544 | SynSpot: ₹55525.9 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25256.1 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14265.4 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE23650 | LTP: ₹434.3
+[Decoder] 📡 UDP TICK | BANKNIFTYPE60700 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYPE48700 | LTP: ₹22.95
+[Decoder] 📡 UDP TICK | BANKNIFTYPE62300 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE23200 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23617 | SynSpot: ₹23315.2 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55815 | SynSpot: ₹55530.9 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25318.3 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14071.9 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE25300 | LTP: ₹2035
+[Decoder] 📡 UDP TICK | NIFTYCE22000 | LTP: ₹1399.5
+[Decoder] 📡 UDP TICK | BANKNIFTYPE58000 | LTP: ₹2634.9
+[Decoder] 📡 UDP TICK | BANKNIFTYCE49500 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE22500 | LTP: ₹2097
+[Decoder] 📡 UDP TICK | FINNIFTYCE23550 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23515 | SynSpot: ₹23775.4 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55815 | SynSpot: ₹56127.9 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25416.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14265.4 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYPE53100 | LTP: ₹275
+[Decoder] 📡 UDP TICK | NIFTYCE22750 | LTP: ₹797.95
+[Decoder] 📡 UDP TICK | NIFTYPE22200 | LTP: ₹123.4
+[Decoder] 📡 UDP TICK | NIFTYPE22900 | LTP: ₹173.55
+[Decoder] 📡 UDP TICK | NIFTYPE23000 | LTP: ₹433.7
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23518.9 | SynSpot: ₹23567.6 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55544 | SynSpot: ₹55180 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25378.1 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14265.4 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE28000 | LTP: ₹3625
+[Decoder] 📡 UDP TICK | FINNIFTYCE25250 | LTP: ₹539.2
+[Decoder] 📡 UDP TICK | BANKNIFTYPE48500 | LTP: ₹21.15
+[Decoder] 📡 UDP TICK | BANKNIFTYCE57400 | LTP: ₹280.05
+[Decoder] 📡 UDP TICK | BANKNIFTYPE58600 | LTP: ₹3400
+[Decoder] 📡 UDP TICK | NIFTYCE19000 | LTP: ₹5050
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23518.9 | SynSpot: ₹23531.3 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55545 | SynSpot: ₹55035.8 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25179 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14323.5 | SynSpot: ₹14071.9 | ATM: 14325 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYPE48500 | LTP: ₹93
+[Decoder] 📡 UDP TICK | NIFTYCE24250 | LTP: ₹57.85
+[Decoder] 📡 UDP TICK | NIFTYPE24250 | LTP: ₹832.85
+[Decoder] 📡 UDP TICK | NIFTYPE21900 | LTP: ₹40
+[Decoder] 📡 UDP TICK | NIFTYCE23050 | LTP: ₹487
+[Decoder] 📡 UDP TICK | NIFTYPE24000 | LTP: ₹830.15
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23617 | SynSpot: ₹23531.1 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55834.8 | SynSpot: ₹55545.7 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25280.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14071.9 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE60100 | LTP: ₹30.45
+[Decoder] 📡 UDP TICK | BANKNIFTYPE53800 | LTP: ₹728.75
+[Decoder] 📡 UDP TICK | NIFTYCE24000 | LTP: ₹59.35
+[Decoder] 📡 UDP TICK | NIFTYCE24500 | LTP: ₹11.95
+[Decoder] 📡 UDP TICK | NIFTYPE22100 | LTP: ₹4.5
+[Decoder] 📡 UDP TICK | BANKNIFTYCE58500 | LTP: ₹426.5
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23429.8 | SynSpot: ₹23527 | ATM: 23450 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55985 | SynSpot: ₹55503.9 | ATM: 56000 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25049.5 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14174 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE12525 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYCE49900 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE22000 | LTP: ₹1478.4
+[Decoder] 📡 UDP TICK | NIFTYPE23400 | LTP: ₹310
+[Decoder] 📡 UDP TICK | BANKNIFTYCE57500 | LTP: ₹710.55
+[Decoder] 📡 UDP TICK | BANKNIFTYPE52600 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23617 | SynSpot: ₹24286 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55544 | SynSpot: ₹55539.1 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25045.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14174 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE50300 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYPE59000 | LTP: ₹3577.6
+[Decoder] 📡 UDP TICK | NIFTYPE24100 | LTP: ₹699.95
+[Decoder] 📡 UDP TICK | NIFTYCE21850 | LTP: ₹2031.2
+[Decoder] 📡 UDP TICK | NIFTYCE24150 | LTP: ₹9.05
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23617 | SynSpot: ₹23530.2 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55835 | SynSpot: ₹55069.8 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25396.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14192.2 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE23500 | LTP: ₹507.1
+[Decoder] 📡 UDP TICK | NIFTYCE24500 | LTP: ₹3.1
+[Decoder] 📡 UDP TICK | BANKNIFTYCE52200 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE25150 | LTP: ₹1640.15
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE12350 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23617 | SynSpot: ₹23502.3 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55835 | SynSpot: ₹54406.3 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25411.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14071.9 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE53900 | LTP: ₹2498.6
+[Decoder] 📡 UDP TICK | NIFTYCE23650 | LTP: ₹258.15
+[Decoder] 📡 UDP TICK | NIFTYPE24800 | LTP: ₹1375
+[Decoder] 📡 UDP TICK | FINNIFTYCE22700 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYCE53400 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE22600 | LTP: ₹810.25
+[Decoder] 📡 UDP TICK | BANKNIFTYCE50700 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23518.9 | SynSpot: ₹23526 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55835 | SynSpot: ₹53341.2 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25106.7 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14174 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE24550 | LTP: ₹2.8
+[Decoder] 📡 UDP TICK | NIFTYPE23050 | LTP: ₹411.75
+[Decoder] 📡 UDP TICK | BANKNIFTYCE54300 | LTP: ₹1714.95
+[Decoder] 📡 UDP TICK | BANKNIFTYPE54000 | LTP: ₹452.7
+[Decoder] 📡 UDP TICK | NIFTYPE22400 | LTP: ₹59.15
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23617 | SynSpot: ₹23581.8 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55835 | SynSpot: ₹55069.8 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25352 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14098 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE21500 | LTP: ₹2.45
+[Decoder] 📡 UDP TICK | NIFTYPE21650 | LTP: ₹18.15
+[Decoder] 📡 UDP TICK | BANKNIFTYCE53000 | LTP: ₹3324.6
+[Decoder] 📡 UDP TICK | BANKNIFTYPE54900 | LTP: ₹1045
+[Decoder] 📡 UDP TICK | NIFTYPE24950 | LTP: ₹1291.9
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23617 | SynSpot: ₹24286 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55835 | SynSpot: ₹54949.5 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25367.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14192.2 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYCE55100 | LTP: ₹1790
+[Decoder] 📡 UDP TICK | NIFTYPE23050 | LTP: ₹181
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE12725 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYCE59500 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE23250 | LTP: ₹820
+[Decoder] 📡 UDP TICK | NIFTYCE25750 | LTP: ₹0.8
+[Decoder] 📡 UDP TICK | BANKNIFTYCE57000 | LTP: ₹375.75
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23617 | SynSpot: ₹23378.2 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55540.2 | SynSpot: ₹55526.2 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25352 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14174 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE24400 | LTP: ₹15.95
+[Decoder] 📡 UDP TICK | BANKNIFTYPE52300 | LTP: ₹409.8
+[Decoder] 📡 UDP TICK | BANKNIFTYPE50000 | LTP: ₹164.15
+[Decoder] 📡 UDP TICK | NIFTYPE23300 | LTP: ₹307
+[Decoder] 📡 UDP TICK | FINNIFTYCE23100 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23617 | SynSpot: ₹23535.7 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55540.2 | SynSpot: ₹55159.4 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25276.3 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14265.4 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE23700 | LTP: ₹260.35
+[Decoder] 📡 UDP TICK | BANKNIFTYPE53500 | LTP: ₹644.85
+[Decoder] 📡 UDP TICK | NIFTYCE19000 | LTP: ₹5050
+[Decoder] 📡 UDP TICK | NIFTYCE23500 | LTP: ₹387.8
+[Decoder] 📡 UDP TICK | NIFTYCE18000 | LTP: ₹5424.45
+[Decoder] 📡 UDP TICK | NIFTYCE22450 | LTP: ₹937
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23617 | SynSpot: ₹23542.8 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55835 | SynSpot: ₹54008.3 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25399.9 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14071.9 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYPE55300 | LTP: ₹1196
+[Decoder] 📡 UDP TICK | BANKNIFTYPE57400 | LTP: ₹2175.4
+[Decoder] 📡 UDP TICK | FINNIFTYCE23750 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYPE54100 | LTP: ₹479.25
+[Decoder] 📡 UDP TICK | BANKNIFTYPE62800 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE24400 | LTP: ₹4
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23617 | SynSpot: ₹23521.1 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55835 | SynSpot: ₹55558.7 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25318.3 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14106.9 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE14800 | LTP: ₹67
+[Decoder] 📡 UDP TICK | NIFTYCE27000 | LTP: ₹316
+[Decoder] 📡 UDP TICK | MIDCPNIFTYPE14225 | LTP: ₹261.45
+[Decoder] 📡 UDP TICK | BANKNIFTYCE46000 | LTP: ₹0
+[Decoder] 📡 UDP TICK | MIDCPNIFTYPE14250 | LTP: ₹272.55
+[Decoder] 📡 UDP TICK | NIFTYCE23100 | LTP: ₹918.75
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23617 | SynSpot: ₹23447.2 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55540.2 | SynSpot: ₹55678 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25404.8 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14190.6 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE23650 | LTP: ₹434.3
+[Decoder] 📡 UDP TICK | FINNIFTYCE25000 | LTP: ₹690
+[Decoder] 📡 UDP TICK | BANKNIFTYPE51000 | LTP: ₹80.15
+[Decoder] 📡 UDP TICK | NIFTYCE24900 | LTP: ₹13.35
+[Decoder] 📡 UDP TICK | NIFTYPE26000 | LTP: ₹2442.45
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23518.9 | SynSpot: ₹23425.5 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55835 | SynSpot: ₹55529.7 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25397.4 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14192.2 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE24450 | LTP: ₹144.65
+[Decoder] 📡 UDP TICK | NIFTYCE23400 | LTP: ₹396.05
+[Decoder] 📡 UDP TICK | BANKNIFTYCE57200 | LTP: ₹325.5
+[Decoder] 📡 UDP TICK | FINNIFTYCE24000 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE22150 | LTP: ₹177.6
+[Decoder] 📡 UDP TICK | NIFTYPE22000 | LTP: ₹99.35
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23617 | SynSpot: ₹24229.8 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55835 | SynSpot: ₹55518.8 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25524.3 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14098 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | BANKNIFTYPE50500 | LTP: ₹199.4
+[Decoder] 📡 UDP TICK | NIFTYPE22500 | LTP: ₹145.1
+[Decoder] 📡 UDP TICK | BANKNIFTYCE60300 | LTP: ₹26
+[Decoder] 📡 UDP TICK | NIFTYCE24550 | LTP: ₹10.1
+[Decoder] 📡 UDP TICK | NIFTYCE24350 | LTP: ₹269
+[Decoder] 📡 UDP TICK | BANKNIFTYCE60900 | LTP: ₹17.45
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23617 | SynSpot: ₹23403.8 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55835 | SynSpot: ₹55532.7 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25404.8 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14265.4 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE23350 | LTP: ₹231.9
+[Decoder] 📡 UDP TICK | NIFTYCE23900 | LTP: ₹80.75
+[Decoder] 📡 UDP TICK | BANKNIFTYCE58000 | LTP: ₹559.2
+[Decoder] 📡 UDP TICK | NIFTYPE22950 | LTP: ₹105.15
+[Decoder] 📡 UDP TICK | NIFTYCE23800 | LTP: ₹42.5
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23518.9 | SynSpot: ₹23760.4 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55545 | SynSpot: ₹55526.5 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25318.3 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14323.5 | SynSpot: ₹14192.2 | ATM: 14325 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE23500 | LTP: ₹430.35
+[Decoder] 📡 UDP TICK | NIFTYCE25500 | LTP: ₹418.3
+[Decoder] 📡 UDP TICK | BANKNIFTYPE52800 | LTP: ₹230.15
+[Decoder] 📡 UDP TICK | BANKNIFTYPE55300 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYCE19000 | LTP: ₹4433.45
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23518.9 | SynSpot: ₹23622.7 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55835 | SynSpot: ₹55558.7 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹24934.2 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14268.6 | SynSpot: ₹14192.2 | ATM: 14275 | Strikes: 328
+[Decoder] 📡 UDP TICK | MIDCPNIFTYPE13875 | LTP: ₹123.4
+[Decoder] 📡 UDP TICK | NIFTYCE23250 | LTP: ₹428.4
+[Decoder] 📡 UDP TICK | NIFTYPE21350 | LTP: ₹2.1
+[Decoder] 📡 UDP TICK | BANKNIFTYCE53300 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYCE53600 | LTP: ₹2129.65
+[Decoder] 📡 UDP TICK | NIFTYPE24000 | LTP: ₹815
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23617 | SynSpot: ₹23525 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55835 | SynSpot: ₹55853 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25305.8 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14190.6 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE23800 | LTP: ₹698
+[Decoder] 📡 UDP TICK | NIFTYCE24200 | LTP: ₹66.6
+[Decoder] 📡 UDP TICK | NIFTYPE25000 | LTP: ₹1477.05
+[Decoder] 📡 UDP TICK | BANKNIFTYCE48000 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE21600 | LTP: ₹128.75
+[Decoder] 📡 UDP TICK | NIFTYPE26000 | LTP: ₹2665.35
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23617 | SynSpot: ₹23444.7 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55545 | SynSpot: ₹55500.9 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25318.3 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14174 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE23400 | LTP: ₹389.25
+[Decoder] 📡 UDP TICK | NIFTYPE22800 | LTP: ₹0
+[Decoder] 📡 UDP TICK | NIFTYPE23250 | LTP: ₹286.5
+[Decoder] 📡 UDP TICK | BANKNIFTYPE50300 | LTP: ₹52.8
+[Decoder] 📡 UDP TICK | BANKNIFTYPE62400 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23518.9 | SynSpot: ₹23938.6 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55548.2 | SynSpot: ₹55527.4 | ATM: 55500 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25408.1 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14071.9 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYPE26000 | LTP: ₹2665.35
+[Decoder] 📡 UDP TICK | FINNIFTYPE24950 | LTP: ₹265
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE11500 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYPE48300 | LTP: ₹21.25
+[Decoder] 📡 UDP TICK | MIDCPNIFTYPE13900 | LTP: ₹137.75
+[Decoder] 📡 UDP TICK | NIFTYPE25550 | LTP: ₹0
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23518.9 | SynSpot: ₹23455.7 | ATM: 23500 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55835 | SynSpot: ₹54949.8 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25524.3 | ATM: 25400 | Strikes: 261
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14192.2 | ATM: 14225 | Strikes: 328
+[Decoder] 📡 UDP TICK | NIFTYCE22200 | LTP: ₹1225.75
+[Decoder] 📡 UDP TICK | MIDCPNIFTYCE14550 | LTP: ₹129.5
+[Decoder] 📡 UDP TICK | BANKNIFTYCE46500 | LTP: ₹0
+[Decoder] 📡 UDP TICK | BANKNIFTYPE56400 | LTP: ₹1830.2
+[Decoder] 📡 UDP TICK | MIDCPNIFTYPE14150 | LTP: ₹226.75
+[Feed Decoder] 📤 Published Chain | Symbol: NIFTY | Spot: ₹23617 | SynSpot: ₹23798.4 | ATM: 23600 | Strikes: 286
+[Feed Decoder] 📤 Published Chain | Symbol: BANKNIFTY | Spot: ₹55835 | SynSpot: ₹54727.2 | ATM: 55800 | Strikes: 406
+[Feed Decoder] 📤 Published Chain | Symbol: FINNIFTY | Spot: ₹25375.3 | SynSpot: ₹25280.2 | ATM: 25400 | Strikes: 261
+[Decoder] 📡 UDP TICK | NIFTYCE23100 | LTP: ₹580
+[Feed Decoder] 📤 Published Chain | Symbol: MIDCPNIFTY | Spot: ₹14236 | SynSpot: ₹14174 | ATM: 14225 | Strikes: 328

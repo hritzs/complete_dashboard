@@ -1,0 +1,7 @@
+/home/ubuntu/Desktop/api_gs/trading-platform/build_worker/CMakeFiles/test.dir
+/home/ubuntu/Desktop/api_gs/trading-platform/build_worker/CMakeFiles/edit_cache.dir
+/home/ubuntu/Desktop/api_gs/trading-platform/build_worker/CMakeFiles/rebuild_cache.dir
+/home/ubuntu/Desktop/api_gs/trading-platform/build_worker/services/feed-decoder/CMakeFiles/feed-decoder.dir
+/home/ubuntu/Desktop/api_gs/trading-platform/build_worker/services/feed-decoder/CMakeFiles/test.dir
+/home/ubuntu/Desktop/api_gs/trading-platform/build_worker/services/feed-decoder/CMakeFiles/edit_cache.dir
+/home/ubuntu/Desktop/api_gs/trading-platform/build_worker/services/feed-decoder/CMakeFiles/rebuild_cache.dir

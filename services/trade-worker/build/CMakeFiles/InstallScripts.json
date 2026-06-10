@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/ubuntu/Desktop/api_gs/trading-platform/services/trade-worker/build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

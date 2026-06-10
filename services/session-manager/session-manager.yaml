@@ -1,0 +1,13 @@
+accounts:
+  - name: "xts-interactive"
+    broker_type: "xts"
+    api_key: "6debd1fc7b75c6d2291950"
+    api_secret: "Mrbp544@RD"
+    client_id: "TEST49"
+    source: "WEBAPI"
+  - name: "xts-marketdata"
+    broker_type: "xts"
+    api_key: "47ef3f7c6708d059dab991"
+    api_secret: "Fkte223@Zq"
+    client_id: "TEST49"
+    source: "WEBAPI"

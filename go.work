@@ -1,0 +1,20 @@
+go 1.25.0
+
+use (
+	./libs/broker-greeksoft
+	./libs/broker-xts
+	./libs/contracts
+	./libs/go-broker
+	./libs/go-common
+	./libs/go-common/db
+	./libs/go-common/events
+	./services/contract-master
+	./services/control-api
+	./services/execution-gateway
+	./services/market-data-gateway
+	./services/reconciler
+	./services/session-manager
+	./services/snapshot-service
+	./services/trade-supervisor
+	./services/zmq-nats-bridge
+)
