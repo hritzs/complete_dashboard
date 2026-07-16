@@ -42,6 +42,18 @@ func (e *Executor) ExecuteOrderIntent(
 		status = "SUBMITTED"
 	}
 
+	if brokerOrderID == "" {
+		return &trading.ExecutionResult{
+			IntentID:      intent.IntentID,
+			BrokerOrderID: "",
+			Status:        "REJECTED",
+			FilledQty:     0,
+			FillPrice:     0,
+			EventReason:   "GREEKSOFT_ORDER_REJECTED_NO_ORDER_ID",
+			RawResponse:   rawResponse,
+		}, nil
+	}
+
 	if brokerOrderID != "" {
 		orderStatus, orderBookRaw, err := e.waitOrderStatusFromOrderBook(
 			ctx,
@@ -98,13 +110,46 @@ func (e *Executor) waitOrderStatusFromOrderBook(
 		}
 
 		book, err := e.Client.GetOrderBook(ctx)
+
 		if err != nil {
 			lastErr = err
+
+			fmt.Printf(
+				"[GREEKSOFT ORDERBOOK] order=%s error=%v\n",
+				brokerOrderID,
+				err,
+			)
 		} else {
-			status, raw, ok := findGreeksoftOrderStatus(book, brokerOrderID)
+
+			fmt.Printf(
+				"[GREEKSOFT ORDERBOOK] order=%s lookup_success\n",
+				brokerOrderID,
+			)
+
+			status, raw, ok := findGreeksoftOrderStatus(
+				book,
+				brokerOrderID,
+			)
+
 			if ok {
+
+				fmt.Printf(
+					"[GREEKSOFT ORDERBOOK] matched order=%s status=%s\n",
+					brokerOrderID,
+					status,
+				)
+
 				return status, raw, nil
 			}
+
+			rawBytes, _ := json.Marshal(book)
+
+			fmt.Printf(
+				"[GREEKSOFT ORDERBOOK] order=%s not_found response=%s\n",
+				brokerOrderID,
+				string(rawBytes),
+			)
+
 		}
 
 		if i < attempts-1 {
@@ -122,24 +167,132 @@ func (e *Executor) waitOrderStatusFromOrderBook(
 func normalizeGreeksoftOrderStatus(status string) string {
 	s := strings.ToUpper(strings.TrimSpace(status))
 
-	switch s {
-	case "FILLED", "COMPLETE", "COMPLETED", "TRADED", "EXECUTED":
-		return "FILLED"
-	case "REJECTED", "REJECT", "FAILED":
-		return "REJECTED"
-	case "CANCELLED", "CANCELED":
-		return "CANCELLED"
-	case "PARTIALLYFILLED", "PARTIAL", "PARTIALLY_FILLED":
-		return "PARTIALLY_FILLED"
-	case "OPEN", "NEW", "PENDING", "PENDINGNEW", "PENDING_NEW":
-		return "OPEN"
-	case "SUBMITTED", "ACKED", "ACKNOWLEDGED":
+	switch {
+	case s == "":
 		return "SUBMITTED"
+
+	case strings.Contains(s, "RMS") && strings.Contains(s, "REJECT"):
+		return "REJECTED"
+
+	case strings.Contains(s, "REJECT"):
+		return "REJECTED"
+
+	case s == "FILLED" ||
+		s == "COMPLETE" ||
+		s == "COMPLETED" ||
+		s == "TRADED" ||
+		s == "EXECUTED":
+		return "FILLED"
+
+	case s == "CANCELLED" ||
+		s == "CANCELED":
+		return "CANCELLED"
+
+	case s == "PARTIALLYFILLED" ||
+		s == "PARTIAL" ||
+		s == "PARTIALLY_FILLED" ||
+		s == "PARTIALLY FILLED":
+		return "PARTIALLY_FILLED"
+
+	case s == "OPEN" ||
+		s == "NEW" ||
+		s == "PENDING" ||
+		s == "PENDINGNEW" ||
+		s == "PENDING_NEW" ||
+		s == "PENDING NEW":
+		return "OPEN"
+
+	case s == "SUBMITTED" ||
+		s == "ACKED" ||
+		s == "ACKNOWLEDGED":
+		return "SUBMITTED"
+
 	default:
-		if s == "" {
-			return "SUBMITTED"
-		}
 		return s
+	}
+}
+
+func mapHasOrderID(m map[string]interface{}, target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+
+	keys := []string{
+		"gorderid",
+		"gOrderID",
+		"gOrderId",
+		"ordID",
+		"orderId",
+		"orderID",
+		"OrderID",
+		"AppOrderID",
+		"broker_order_id",
+	}
+
+	for _, key := range keys {
+		v, ok := m[key]
+		if !ok {
+			continue
+		}
+
+		if normalizeGreeksoftOrderID(v) == target {
+			return true
+		}
+	}
+
+	return false
+}
+
+func normalizeGreeksoftOrderID(v interface{}) string {
+	switch x := v.(type) {
+	case nil:
+		return ""
+
+	case string:
+		return strings.TrimSpace(x)
+
+	case int:
+		return fmt.Sprintf("%d", x)
+
+	case int8:
+		return fmt.Sprintf("%d", x)
+
+	case int16:
+		return fmt.Sprintf("%d", x)
+
+	case int32:
+		return fmt.Sprintf("%d", x)
+
+	case int64:
+		return fmt.Sprintf("%d", x)
+
+	case uint:
+		return fmt.Sprintf("%d", x)
+
+	case uint8:
+		return fmt.Sprintf("%d", x)
+
+	case uint16:
+		return fmt.Sprintf("%d", x)
+
+	case uint32:
+		return fmt.Sprintf("%d", x)
+
+	case uint64:
+		return fmt.Sprintf("%d", x)
+
+	case float32:
+		return fmt.Sprintf("%.0f", x)
+
+	case float64:
+		return fmt.Sprintf("%.0f", x)
+
+	case json.Number:
+		return strings.TrimSpace(x.String())
+
+	default:
+		return strings.TrimSpace(fmt.Sprintf("%v", x))
 	}
 }
 
@@ -182,29 +335,6 @@ func findGreeksoftOrderStatus(v interface{}, brokerOrderID string) (string, stri
 	}
 
 	return "", "", false
-}
-
-func mapHasOrderID(m map[string]interface{}, target string) bool {
-	keys := []string{
-		"gorderid",
-		"gOrderID",
-		"gOrderId",
-		"orderId",
-		"orderID",
-		"OrderID",
-		"AppOrderID",
-		"broker_order_id",
-	}
-
-	for _, key := range keys {
-		if v, ok := m[key]; ok {
-			if strings.TrimSpace(fmt.Sprintf("%v", v)) == target {
-				return true
-			}
-		}
-	}
-
-	return false
 }
 
 func firstStringValue(m map[string]interface{}, keys ...string) string {
