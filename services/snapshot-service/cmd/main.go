@@ -167,25 +167,54 @@ func main() {
 				return
 			}
 		} else {
-			// No expiry given — find nearest (lexicographically smallest) expiry for this symbol.
-			// Works for both "DDMMMYYYY" (19JUN2025) and "YYYY-MM-DD" formats — ascending sort = nearest first.
+			// No expiry given — find nearest upcoming expiry by actual date.
+			// Do NOT compare expiry strings lexicographically.
+			// Example bug fixed:
+			// "24DEC29" was being selected before "28JUL26" because "24" < "28".
 			var nearestEntry *ChainCacheEntry
 			var nearestExpiry string
+			var nearestExpiryDate time.Time
+
+			now := time.Now()
+			today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+
 			chainCache.Range(func(k, v interface{}) bool {
 				key := k.(string)
 				if !strings.HasPrefix(key, symbol+"|") {
 					return true
 				}
-				exp := strings.TrimPrefix(key, symbol+"|")
+
+				exp := strings.TrimSpace(strings.TrimPrefix(key, symbol+"|"))
+				expiryDate, ok := parseSnapshotExpiryDate(exp)
+				if !ok {
+					slog.Warn("Skipping unparsable expiry", "symbol", symbol, "expiry", exp)
+					return true
+				}
+
+				if expiryDate.Before(today) {
+					return true
+				}
+
 				entry := v.(ChainCacheEntry)
-				if nearestExpiry == "" || exp < nearestExpiry {
+
+				if nearestEntry == nil || expiryDate.Before(nearestExpiryDate) {
 					e := entry
 					nearestEntry = &e
 					nearestExpiry = exp
+					nearestExpiryDate = expiryDate
 				}
+
 				return true
 			})
+
 			if nearestEntry != nil {
+				slog.Info(
+					"Selected nearest expiry from snapshot cache",
+					"symbol", symbol,
+					"expiry", nearestExpiry,
+					"expiry_date", nearestExpiryDate.Format("2006-01-02"),
+				)
+
 				json.NewEncoder(w).Encode(map[string]interface{}{
 					"success":     true,
 					"cached_at":   nearestEntry.LastUpdated.Format(time.RFC3339),
@@ -314,4 +343,29 @@ func main() {
 
 		hub.broadcast <- outBytes
 	}
+}
+
+func parseSnapshotExpiryDate(expiry string) (time.Time, bool) {
+	clean := strings.ToUpper(strings.TrimSpace(expiry))
+	if clean == "" {
+		return time.Time{}, false
+	}
+
+	clean = strings.ReplaceAll(clean, "-", "")
+	clean = strings.ReplaceAll(clean, "_", "")
+	clean = strings.ReplaceAll(clean, " ", "")
+
+	layouts := []string{
+		"02JAN06",
+		"02JAN2006",
+		"20060102",
+	}
+
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, clean); err == nil {
+			return t, true
+		}
+	}
+
+	return time.Time{}, false
 }
