@@ -230,6 +230,17 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 		return nil, fmt.Errorf("CE/PE tokens not available")
 	}
 
+	if ceRow.CELtp <= 0 || peRow.PELtp <= 0 {
+		return nil, fmt.Errorf(
+			"invalid option LTP for %s expiry=%s strike=%.0f: ce_ltp=%.2f pe_ltp=%.2f; refusing to place fallback 0.05 order",
+			req.Symbol,
+			chain.Expiry,
+			selectedStrike,
+			ceRow.CELtp,
+			peRow.PELtp,
+		)
+	}
+
 	// Lot size resolution
 	lotSize := req.LotSize
 	if lotSize == 0 && chain.LotSize > 0 {

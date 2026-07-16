@@ -1,1 +1,34 @@
 .env
+.env
+
+# secrets
+.env
+.env.*
+!.env.example
+
+# logs / build outputs
+logs/
+build/
+ui/dist/
+ui/node_modules/
+node_modules/
+venv/
+__pycache__/
+
+# generated/debug dumps
+*dump*.txt
+selected_dump_part_*
+trading-first-dump.txt
+control-api-complete-dump.txt
+copilot_decoder_dump.txt
+
+# binaries
+services/execution-gateway/execution-gateway
+services/snapshot-service/snapshot-service
+services/contract-master/cmd/cmd
+services/trade-worker/trade-worker
+
+# backups
+*.bak
+*.bak.*
+*.broken.*
