@@ -24,6 +24,18 @@ void GreeksCalculator::process_tick(int token, double ltp, double bid, double as
 
 namespace greeks {
 
+static inline bool bad(double x) {
+    return std::isnan(x) || !std::isfinite(x);
+}
+
+static inline double intrinsic_call(double S, double K) {
+    return std::fmax(S - K, 0.0);
+}
+
+static inline double intrinsic_put(double S, double K) {
+    return std::fmax(K - S, 0.0);
+}
+
 double norm_pdf(double x) {
     return std::exp(-x * x / 2.0) / std::sqrt(2.0 * M_PI);
 }
@@ -32,124 +44,130 @@ double norm_cdf(double x) {
     return 0.5 * (1.0 + std::erf(x / std::sqrt(2.0)));
 }
 
+static inline double d1(double S, double K, double r, double sigma, double t) {
+    if (S <= 0.0 || K <= 0.0 || sigma <= 0.0 || t <= 0.0) return 0.0;
+    return (std::log(S / K) + (r + 0.5 * sigma * sigma) * t) / (sigma * std::sqrt(t));
+}
+
+static inline double d2(double S, double K, double r, double sigma, double t) {
+    return d1(S, K, r, sigma, t) - sigma * std::sqrt(t);
+}
+
+static inline double call_price(double S, double K, double r, double sigma, double t) {
+    if (t <= 0.0) return std::fmax(0.0, S - K);
+    return S * norm_cdf(d1(S, K, r, sigma, t)) - K * std::exp(-r * t) * norm_cdf(d2(S, K, r, sigma, t));
+}
+
+static inline double put_price(double S, double K, double r, double sigma, double t) {
+    if (t <= 0.0) return std::fmax(0.0, K - S);
+    return K * std::exp(-r * t) * norm_cdf(-d2(S, K, r, sigma, t)) - S * norm_cdf(-d1(S, K, r, sigma, t));
+}
+
+static inline double vega_internal(double S, double K, double r, double sigma, double t) {
+    if (t <= 0.0) return 0.0;
+    return (S * norm_pdf(d1(S, K, r, sigma, t)) * std::sqrt(t)) * 0.01;
+}
+
+static inline double call_delta(double S, double K, double r, double sigma, double t) {
+    if (t <= 0.0) return (S > K) ? 1.0 : 0.0;
+    return norm_cdf(d1(S, K, r, sigma, t));
+}
+
+static inline double put_delta(double S, double K, double r, double sigma, double t) {
+    if (t <= 0.0) return (S < K) ? -1.0 : 0.0;
+    return norm_cdf(d1(S, K, r, sigma, t)) - 1.0;
+}
+
+static inline double gamma_internal(double S, double K, double r, double sigma, double t) {
+    if (S <= 0.0 || sigma <= 0.0 || t <= 0.0) return 0.0;
+    return norm_pdf(d1(S, K, r, sigma, t)) / (S * sigma * std::sqrt(t));
+}
+
+static inline double call_theta(double S, double K, double r, double sigma, double t) {
+    if (t <= 0.0) return 0.0;
+    double D1 = d1(S, K, r, sigma, t);
+    double D2 = d2(S, K, r, sigma, t);
+    double term1 = -(S * norm_pdf(D1) * sigma) / (2.0 * std::sqrt(t));
+    double term2 = -r * K * std::exp(-r * t) * norm_cdf(D2);
+    return (term1 + term2) / 365.0;
+}
+
+static inline double put_theta(double S, double K, double r, double sigma, double t) {
+    if (t <= 0.0) return 0.0;
+    double D1 = d1(S, K, r, sigma, t);
+    double D2 = d2(S, K, r, sigma, t);
+    double term1 = -(S * norm_pdf(D1) * sigma) / (2.0 * std::sqrt(t));
+    double term2 = r * K * std::exp(-r * t) * norm_cdf(-D2);
+    return (term1 + term2) / 365.0;
+}
+
 double black_scholes(char calc_type, char option_type, double K, double S, double T, double sigma, double r) {
-    // Convert days to years as per the Python implementation
-    T = T / 365.0; 
-
-    if (std::isnan(sigma) || sigma <= 0.0) return NAN;
-    if (std::isnan(K) || K <= 0.0) return NAN;
-    if (std::isnan(S) || S <= 0.0) return NAN;
-    if (std::isnan(T) || T <= 0.0) return NAN;
-
-    double denominator = sigma * std::sqrt(T);
-    if (denominator == 0.0) return NAN;
-
-    double d1 = (std::log(S / K) + (r + sigma * sigma / 2.0) * T) / denominator;
-    double d2 = d1 - denominator;
+    if (bad(sigma) || sigma <= 0.0) return NAN;
+    if (bad(K) || K <= 0.0) return NAN;
+    if (bad(S) || S <= 0.0) return NAN;
+    if (bad(T) || T <= 0.0) return NAN;
 
     char opt = std::tolower(option_type);
     char calc = std::tolower(calc_type);
 
     if (calc == 'p') { // PRICE
-        if (opt == 'c') {
-            return S * norm_cdf(d1) - K * std::exp(-r * T) * norm_cdf(d2);
-        } else if (opt == 'p') {
-            return K * std::exp(-r * T) * norm_cdf(-d2) - S * norm_cdf(-d1);
-        }
+        return (opt == 'c') ? call_price(S, K, r, sigma, T) : put_price(S, K, r, sigma, T);
     } else if (calc == 'd') { // DELTA
-        if (opt == 'c') {
-            return norm_cdf(d1);
-        } else if (opt == 'p') {
-            return -norm_cdf(-d1);
-        }
+        return (opt == 'c') ? call_delta(S, K, r, sigma, T) : put_delta(S, K, r, sigma, T);
     } else if (calc == 'g') { // GAMMA
-        return norm_pdf(d1) / (S * sigma * std::sqrt(T));
+        return gamma_internal(S, K, r, sigma, T);
     } else if (calc == 'v') { // VEGA
-        return S * norm_pdf(d1) * std::sqrt(T) * 0.01;
+        return vega_internal(S, K, r, sigma, T);
     } else if (calc == 't') { // THETA
-        double theta = 0.0;
-        if (opt == 'c') {
-            theta = -S * norm_pdf(d1) * sigma / (2.0 * std::sqrt(T)) - r * K * std::exp(-r * T) * norm_cdf(d2);
-        } else if (opt == 'p') {
-            theta = -S * norm_pdf(d1) * sigma / (2.0 * std::sqrt(T)) + r * K * std::exp(-r * T) * norm_cdf(-d2);
-        }
-        return theta / 365.0;
+        return (opt == 'c') ? call_theta(S, K, r, sigma, T) : put_theta(S, K, r, sigma, T);
     } else if (calc == 'r') { // RHO
-        if (opt == 'c') {
-            return K * T * std::exp(-r * T) * norm_cdf(d2) * 0.01;
-        } else if (opt == 'p') {
-            return -K * T * std::exp(-r * T) * norm_cdf(-d2) * 0.01;
-        }
+        double D2 = d2(S, K, r, sigma, T);
+        if (opt == 'c') return K * T * std::exp(-r * T) * norm_cdf(D2) * 0.01;
+        else return -K * T * std::exp(-r * T) * norm_cdf(-D2) * 0.01;
     }
 
     return NAN;
 }
 
 double implied_volatility(char option_type, double K, double S, double T, double option_price, double r, double tol, int max_iterations) {
-    if (std::isnan(option_price) || option_price <= 0.0) return NAN;
-    if (std::isnan(K) || K <= 0.0) return NAN;
-    if (std::isnan(S) || S <= 0.0) return NAN;
-    if (std::isnan(T) || T <= 0.0) return NAN;
+    if (bad(option_price) || option_price <= 0.0) return NAN;
+    if (bad(K) || K <= 0.0) return NAN;
+    if (bad(S) || S <= 0.0) return NAN;
+    if (bad(T) || T <= 0.0) return NAN;
 
     char opt = std::tolower(option_type);
-    double intrinsic = (opt == 'c') ? std::max(0.0, S - K) : std::max(0.0, K - S);
+    bool is_call = (opt == 'c');
 
-    // If option price is at or below intrinsic, IV is theoretically 0
-    if (option_price <= intrinsic) {
-        return 0.0;
-    }
+    double intrinsic = is_call ? intrinsic_call(S, K) : intrinsic_put(S, K);
+    if (option_price <= intrinsic) return 0.0;
 
-    double T_in_years = T / 365.0;
-    if (T_in_years <= 0.0) return NAN;
-
-    double sqrt_T = std::sqrt(T_in_years);
-    if (sqrt_T <= 0.0 || S <= 0.0) return NAN;
-
-    // Initial guess for sigma 
-    double sigma_guess = (std::sqrt(2.0 * M_PI) / sqrt_T) * (option_price / S);
-    double sigma = 0.2;
-    if (sigma_guess <= 0.03) {
-        sigma = 0.2;
-    } else if (sigma_guess >= 4.0) {
-        sigma = 2.5;
-    } else {
-        sigma = sigma_guess;
-    }
+    double sigma = 0.50;
 
     // Newton-Raphson iteration
     for (int i = 0; i < max_iterations; ++i) {
-        double price = black_scholes('p', opt, K, S, T, sigma, r);
-        double vega = black_scholes('v', opt, K, S, T, sigma, r);
+        double theo = is_call ? call_price(S, K, r, sigma, T) : put_price(S, K, r, sigma, T);
+        if (bad(theo)) return NAN;
 
-        if (std::isnan(price) || std::isnan(vega)) return NAN;
+        double diff = theo - option_price;
+        if (std::fabs(diff) < tol) return sigma;
 
-        // Nudge sigma up if price is too low to get a valid derivative
-        if (price < 0.05) {
-            int nudge_count = 0;
-            double nudge_increment = (opt == 'c') ? 0.1 : 0.01;
-            while (black_scholes('p', opt, K, S, T, sigma, r) < 0.05) {
-                sigma += nudge_increment;
-                nudge_count++;
-                if (nudge_count > 50) return NAN; // Safety break
-            }
-            // Recalculate after nudging
-            price = black_scholes('p', opt, K, S, T, sigma, r);
-            vega = black_scholes('v', opt, K, S, T, sigma, r);
+        double vega = vega_internal(S, K, r, sigma, T);
+
+        if (bad(vega) || vega < 1e-8) {
+            sigma *= 1.5;
+            if (sigma > 4.0) return NAN;
+            continue;
         }
 
-        if (vega == 0.0) return NAN; // Cannot proceed if vega is zero
+        double step = (diff / vega) / 100.0;
 
-        double diff = price - option_price;
-        
-        // Check convergence
-        if (std::abs(diff) < tol) return sigma;
+        if (step > sigma * 0.5) step = sigma * 0.5;
+        else if (step < -2.0) step = -2.0;
 
-        // Update sigma
-        sigma = sigma - (diff / vega) / 100.0;
+        sigma -= step;
 
-        // Bounds matching hoadley
         if (sigma > 4.0) sigma = 4.0;
-        if (sigma <= 0.001) sigma = 0.001;
+        if (sigma < 0.0001) return NAN;
     }
 
     return NAN; // Failed to converge
@@ -160,21 +178,43 @@ Greeks calculate_all_greeks(char option_type, double K, double S, double T, doub
 
     double iv = implied_volatility(option_type, K, S, T, option_price, r);
     
-    if (std::isnan(iv) || iv <= 0.0) {
+    if (bad(iv) || iv <= 0.0) {
         return g; // Return all zeros if IV failed
     }
 
-    double delta = black_scholes('d', option_type, K, S, T, iv, r);
-    double gamma = black_scholes('g', option_type, K, S, T, iv, r);
-    double vega  = black_scholes('v', option_type, K, S, T, iv, r);
-    double theta = black_scholes('t', option_type, K, S, T, iv, r);
+    char opt = std::tolower(option_type);
+    double delta = (opt == 'c') ? call_delta(S, K, r, iv, T) : put_delta(S, K, r, iv, T);
+    double gamma = gamma_internal(S, K, r, iv, T);
+    double vega  = vega_internal(S, K, r, iv, T);
+    double theta = (opt == 'c') ? call_theta(S, K, r, iv, T) : put_theta(S, K, r, iv, T);
 
-    // Formatting values identical to Python code
-    g.iv = std::isnan(iv) ? 0.0 : std::round(iv * 10000.0) / 10000.0;
-    g.delta = std::isnan(delta) ? 0.0 : std::round(delta * 10000.0) / 10000.0;
-    g.gamma = std::isnan(gamma) ? 0.0 : std::round(gamma * 1000000.0) / 1000000.0;
-    g.vega = std::isnan(vega) ? 0.0 : std::round(vega * 10000.0) / 10000.0;
-    g.theta = std::isnan(theta) ? 0.0 : std::round(theta * 10000.0) / 10000.0;
+    g.iv = std::round(iv * 10000.0) / 10000.0;
+    g.delta = bad(delta) ? 0.0 : std::round(delta * 10000.0) / 10000.0;
+    g.gamma = bad(gamma) ? 0.0 : std::round(gamma * 1000000.0) / 1000000.0;
+    g.vega = bad(vega) ? 0.0 : std::round(vega * 10000.0) / 10000.0;
+    g.theta = bad(theta) ? 0.0 : std::round(theta * 10000.0) / 10000.0;
+
+    return g;
+}
+
+Greeks calculate_greeks_from_iv(char option_type, double K, double S, double T, double iv, double r) {
+    Greeks g{0.0, 0.0, 0.0, 0.0, 0.0};
+
+    if (bad(iv) || iv <= 0.0) {
+        return g; 
+    }
+
+    char opt = std::tolower(option_type);
+    double delta = (opt == 'c') ? call_delta(S, K, r, iv, T) : put_delta(S, K, r, iv, T);
+    double gamma = gamma_internal(S, K, r, iv, T);
+    double vega  = vega_internal(S, K, r, iv, T);
+    double theta = (opt == 'c') ? call_theta(S, K, r, iv, T) : put_theta(S, K, r, iv, T);
+
+    g.iv = std::round(iv * 10000.0) / 10000.0;
+    g.delta = bad(delta) ? 0.0 : std::round(delta * 10000.0) / 10000.0;
+    g.gamma = bad(gamma) ? 0.0 : std::round(gamma * 1000000.0) / 1000000.0;
+    g.vega = bad(vega) ? 0.0 : std::round(vega * 10000.0) / 10000.0;
+    g.theta = bad(theta) ? 0.0 : std::round(theta * 10000.0) / 10000.0;
 
     return g;
 }

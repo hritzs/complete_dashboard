@@ -63,18 +63,22 @@ CMAKE_BINARY_DIR = /home/ubuntu/Desktop/api_gs/trading-platform/build
 # Directory level rules for the build root directory
 
 # The main recursive "all" target.
+all: services/trade-worker/all
 all: services/feed-decoder/all
 .PHONY : all
 
 # The main recursive "codegen" target.
+codegen: services/trade-worker/codegen
 codegen: services/feed-decoder/codegen
 .PHONY : codegen
 
 # The main recursive "preinstall" target.
+preinstall: services/trade-worker/preinstall
 preinstall: services/feed-decoder/preinstall
 .PHONY : preinstall
 
 # The main recursive "clean" target.
+clean: services/trade-worker/clean
 clean: services/feed-decoder/clean
 .PHONY : clean
 
@@ -96,6 +100,57 @@ services/feed-decoder/preinstall:
 # Recursive "clean" directory target.
 services/feed-decoder/clean: services/feed-decoder/CMakeFiles/feed-decoder.dir/clean
 .PHONY : services/feed-decoder/clean
+
+#=============================================================================
+# Directory level rules for directory services/trade-worker
+
+# Recursive "all" directory target.
+services/trade-worker/all: services/trade-worker/CMakeFiles/trade-worker.dir/all
+.PHONY : services/trade-worker/all
+
+# Recursive "codegen" directory target.
+services/trade-worker/codegen: services/trade-worker/CMakeFiles/trade-worker.dir/codegen
+.PHONY : services/trade-worker/codegen
+
+# Recursive "preinstall" directory target.
+services/trade-worker/preinstall:
+.PHONY : services/trade-worker/preinstall
+
+# Recursive "clean" directory target.
+services/trade-worker/clean: services/trade-worker/CMakeFiles/trade-worker.dir/clean
+.PHONY : services/trade-worker/clean
+
+#=============================================================================
+# Target rules for target services/trade-worker/CMakeFiles/trade-worker.dir
+
+# All Build rule for target.
+services/trade-worker/CMakeFiles/trade-worker.dir/all:
+	$(MAKE) $(MAKESILENT) -f services/trade-worker/CMakeFiles/trade-worker.dir/build.make services/trade-worker/CMakeFiles/trade-worker.dir/depend
+	$(MAKE) $(MAKESILENT) -f services/trade-worker/CMakeFiles/trade-worker.dir/build.make services/trade-worker/CMakeFiles/trade-worker.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/ubuntu/Desktop/api_gs/trading-platform/build/CMakeFiles --progress-num=10,11,12,13,14 "Built target trade-worker"
+.PHONY : services/trade-worker/CMakeFiles/trade-worker.dir/all
+
+# Build rule for subdir invocation for target.
+services/trade-worker/CMakeFiles/trade-worker.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/ubuntu/Desktop/api_gs/trading-platform/build/CMakeFiles 5
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 services/trade-worker/CMakeFiles/trade-worker.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/ubuntu/Desktop/api_gs/trading-platform/build/CMakeFiles 0
+.PHONY : services/trade-worker/CMakeFiles/trade-worker.dir/rule
+
+# Convenience name for target.
+trade-worker: services/trade-worker/CMakeFiles/trade-worker.dir/rule
+.PHONY : trade-worker
+
+# codegen rule for target.
+services/trade-worker/CMakeFiles/trade-worker.dir/codegen:
+	$(MAKE) $(MAKESILENT) -f services/trade-worker/CMakeFiles/trade-worker.dir/build.make services/trade-worker/CMakeFiles/trade-worker.dir/codegen
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/ubuntu/Desktop/api_gs/trading-platform/build/CMakeFiles --progress-num=10,11,12,13,14 "Finished codegen for target trade-worker"
+.PHONY : services/trade-worker/CMakeFiles/trade-worker.dir/codegen
+
+# clean rule for target.
+services/trade-worker/CMakeFiles/trade-worker.dir/clean:
+	$(MAKE) $(MAKESILENT) -f services/trade-worker/CMakeFiles/trade-worker.dir/build.make services/trade-worker/CMakeFiles/trade-worker.dir/clean
+.PHONY : services/trade-worker/CMakeFiles/trade-worker.dir/clean
 
 #=============================================================================
 # Target rules for target services/feed-decoder/CMakeFiles/feed-decoder.dir

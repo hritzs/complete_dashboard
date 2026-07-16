@@ -1,0 +1,277 @@
+package trading
+
+import (
+    "context"
+    "database/sql"
+    "fmt"
+    "time"
+)
+
+type SQLStore struct {
+    DB *sql.DB
+}
+
+func NewSQLStore(db *sql.DB) *SQLStore {
+    return &SQLStore{DB: db}
+}
+
+func (s *SQLStore) InsertTrade(ctx context.Context, rec *TradeRecord) error {
+    q := `
+    INSERT INTO trades (
+        trade_uid,
+        symbol,
+        status,
+        config,
+        realized_pnl,
+        created_at,
+        closed_at
+    )
+    VALUES ($1,$2,$3,$4,$5,$6,$7)
+    RETURNING id
+    `
+    return s.DB.QueryRowContext(
+        ctx,
+        q,
+        rec.TradeUID,
+        rec.Symbol,
+        rec.Status,
+        rec.Config,
+        rec.RealizedPnL,
+        rec.CreatedAt,
+        rec.ClosedAt,
+    ).Scan(&rec.ID)
+}
+
+func (s *SQLStore) InsertTradeLeg(ctx context.Context, rec *TradeLegRecord) error {
+    q := `
+    INSERT INTO trade_legs (
+        trade_id,
+        contract_id,
+        target_quantity,
+        current_quantity,
+        avg_entry_price,
+        avg_exit_price,
+        realized_pnl,
+        status,
+        created_at,
+        updated_at
+    )
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+    RETURNING id
+    `
+    return s.DB.QueryRowContext(
+        ctx,
+        q,
+        rec.TradeID,
+        rec.ContractID,
+        rec.TargetQuantity,
+        rec.CurrentQuantity,
+        rec.AvgEntryPrice,
+        rec.AvgExitPrice,
+        rec.RealizedPnL,
+        rec.Status,
+        rec.CreatedAt,
+        rec.UpdatedAt,
+    ).Scan(&rec.ID)
+}
+
+func (s *SQLStore) InsertOrder(ctx context.Context, rec *OrderRecord) error {
+    q := `
+    INSERT INTO orders (
+        intent_id,
+        trade_id,
+        broker_order_id,
+        exchange_order_id,
+        contract_id,
+        side,
+        quantity,
+        order_type,
+        limit_price,
+        status,
+        raw_broker_request,
+        created_at,
+        updated_at
+    )
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+    RETURNING id
+    `
+    return s.DB.QueryRowContext(
+        ctx,
+        q,
+        nullIfEmpty(rec.IntentID),
+        nullInt64IfZero(rec.TradeID),
+        rec.BrokerOrderID,
+        rec.ExchangeOrderID,
+        rec.ContractID,
+        rec.Side,
+        rec.Quantity,
+        rec.OrderType,
+        rec.LimitPrice,
+        rec.Status,
+        rec.RawBrokerReq,
+        rec.CreatedAt,
+        rec.UpdatedAt,
+    ).Scan(&rec.ID)
+}
+
+func (s *SQLStore) InsertOrderEvent(ctx context.Context, rec *OrderEventRecord) error {
+    q := `
+    INSERT INTO order_events (
+        order_id,
+        status,
+        reason_text,
+        event_timestamp,
+        raw_broker_response
+    )
+    VALUES ($1,$2,$3,$4,$5)
+    `
+    _, err := s.DB.ExecContext(
+        ctx,
+        q,
+        rec.OrderID,
+        rec.Status,
+        rec.ReasonText,
+        rec.EventTimestamp,
+        rec.RawBrokerResponse,
+    )
+    return err
+}
+
+func (s *SQLStore) InsertFill(ctx context.Context, rec *FillRecord) error {
+    q := `
+    INSERT INTO fills (
+        order_id,
+        trade_id,
+        fill_id,
+        fill_quantity,
+        fill_price,
+        fill_timestamp,
+        raw_broker_fill
+    )
+    VALUES ($1,$2,$3,$4,$5,$6,$7)
+    `
+    _, err := s.DB.ExecContext(
+        ctx,
+        q,
+        rec.OrderID,
+        rec.TradeID,
+        rec.FillID,
+        rec.FillQuantity,
+        rec.FillPrice,
+        rec.FillTimestamp,
+        rec.RawBrokerFill,
+    )
+    return err
+}
+
+func (s *SQLStore) UpdateOrderBrokerIDsAndStatus(ctx context.Context, orderID int64, brokerOrderID string, exchangeOrderID string, status string) error {
+    q := `
+    UPDATE orders
+    SET broker_order_id = $2,
+        exchange_order_id = $3,
+        status = $4,
+        updated_at = $5
+    WHERE id = $1
+    `
+    _, err := s.DB.ExecContext(ctx, q, orderID, brokerOrderID, exchangeOrderID, status, time.Now())
+    return err
+}
+
+func (s *SQLStore) UpdateTradeLegFill(ctx context.Context, legID int64, fillQty int64, fillPrice float64) error {
+    q := `
+    UPDATE trade_legs
+    SET current_quantity = current_quantity + $2,
+        avg_entry_price = CASE
+          WHEN avg_entry_price IS NULL THEN $3
+          ELSE ((avg_entry_price * current_quantity) + ($3 * $2)) / NULLIF(current_quantity + $2, 0)
+        END,
+        updated_at = $4
+    WHERE id = $1
+    `
+    _, err := s.DB.ExecContext(ctx, q, legID, fillQty, fillPrice, time.Now())
+    return err
+}
+
+func (s *SQLStore) UpdateTradeStatus(ctx context.Context, tradeID int64, status string) error {
+    q := `
+    UPDATE trades
+    SET status = $2
+    WHERE id = $1
+    `
+    _, err := s.DB.ExecContext(ctx, q, tradeID, status)
+    return err
+}
+
+func (s *SQLStore) GetContractByToken(ctx context.Context, token int64, exchange string) (*ContractLookup, error) {
+    q := `
+    SELECT
+        id,
+        broker_token,
+        exchange,
+        symbol,
+        instrument_type,
+        COALESCE(expiry_date::text, ''),
+        COALESCE(strike_price, 0),
+        COALESCE(option_type, ''),
+        lot_size,
+        tick_size
+    FROM contracts
+    WHERE broker_token = $1
+      AND exchange = $2
+    LIMIT 1
+    `
+    var rec ContractLookup
+    err := s.DB.QueryRowContext(ctx, q, token, exchange).Scan(
+        &rec.ID,
+        &rec.BrokerToken,
+        &rec.Exchange,
+        &rec.Symbol,
+        &rec.InstrumentType,
+        &rec.ExpiryDate,
+        &rec.StrikePrice,
+        &rec.OptionType,
+        &rec.LotSize,
+        &rec.TickSize,
+    )
+    if err != nil {
+        return nil, err
+    }
+    return &rec, nil
+}
+
+func (s *SQLStore) GetLotSize(ctx context.Context, symbol string, expiry string) (int, error) {
+    q := `
+    SELECT lot_size
+    FROM contracts
+    WHERE symbol = $1
+      AND expiry_date::text = $2
+    LIMIT 1
+    `
+    var lotSize int
+    err := s.DB.QueryRowContext(ctx, q, symbol, expiry).Scan(&lotSize)
+    if err != nil {
+        return 0, err
+    }
+    return lotSize, nil
+}
+
+func nullIfEmpty(v string) interface{} {
+    if v == "" {
+        return nil
+    }
+    return v
+}
+
+func nullInt64IfZero(v int64) interface{} {
+    if v == 0 {
+        return nil
+    }
+    return v
+}
+
+func checkErr(action string, err error) error {
+    if err != nil {
+        return fmt.Errorf("%s failed: %w", action, err)
+    }
+    return nil
+}

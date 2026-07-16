@@ -1,0 +1,1 @@
+/usr/bin/c++ -Wl,--dependency-file=CMakeFiles/trade-worker.dir/link.d "CMakeFiles/trade-worker.dir/src/main.cpp.o" "CMakeFiles/trade-worker.dir/src/worker_loop.cpp.o" "CMakeFiles/trade-worker.dir/src/state_machine.cpp.o" "CMakeFiles/trade-worker.dir/src/intent_builder.cpp.o" -o trade-worker  -lzmq -lpthread -lrt

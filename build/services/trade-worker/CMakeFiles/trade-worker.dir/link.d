@@ -1,0 +1,148 @@
+trade-worker: \
+  /usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/Scrt1.o \
+  /usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/crti.o \
+  /usr/lib/gcc/x86_64-linux-gnu/15/crtbeginS.o \
+  CMakeFiles/trade-worker.dir/src/main.cpp.o \
+  CMakeFiles/trade-worker.dir/src/worker_loop.cpp.o \
+  CMakeFiles/trade-worker.dir/src/state_machine.cpp.o \
+  CMakeFiles/trade-worker.dir/src/intent_builder.cpp.o \
+  /usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/libzmq.so \
+  /usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/libpthread.a \
+  /usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/librt.a \
+  /usr/lib/gcc/x86_64-linux-gnu/15/libstdc++.so \
+  /usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/libm.so \
+  /usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/libm.so \
+  /usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/libm.so \
+  /usr/lib/x86_64-linux-gnu/libm.so.6 \
+  /usr/lib/x86_64-linux-gnu/libmvec.so.1 \
+  /usr/lib/gcc/x86_64-linux-gnu/15/libgcc_s.so \
+  /usr/lib/gcc/x86_64-linux-gnu/15/libgcc_s.so \
+  /usr/lib/gcc/x86_64-linux-gnu/15/libgcc_s.so \
+  /usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/libgcc_s.so.1 \
+  /usr/lib/gcc/x86_64-linux-gnu/15/libgcc.a \
+  /usr/lib/gcc/x86_64-linux-gnu/15/libgcc.a \
+  /usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/libc.so \
+  /usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/libc.so \
+  /usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/libc.so \
+  /usr/lib/x86_64-linux-gnu/libc.so.6 \
+  /usr/lib/x86_64-linux-gnu/libc_nonshared.a \
+  /lib64/ld-linux-x86-64.so.2 \
+  /usr/lib/gcc/x86_64-linux-gnu/15/libgcc_s.so \
+  /usr/lib/gcc/x86_64-linux-gnu/15/libgcc_s.so \
+  /usr/lib/gcc/x86_64-linux-gnu/15/libgcc_s.so \
+  /usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/libgcc_s.so.1 \
+  /usr/lib/gcc/x86_64-linux-gnu/15/libgcc.a \
+  /usr/lib/gcc/x86_64-linux-gnu/15/libgcc.a \
+  /usr/lib/gcc/x86_64-linux-gnu/15/crtendS.o \
+  /usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/crtn.o \
+  /usr/lib/x86_64-linux-gnu/libbsd.so.0 \
+  /usr/lib/x86_64-linux-gnu/libsodium.so.23 \
+  /usr/lib/x86_64-linux-gnu/libpgm-5.3.so.0 \
+  /usr/lib/x86_64-linux-gnu/libnorm.so.1 \
+  /usr/lib/x86_64-linux-gnu/libgssapi_krb5.so.2 \
+  /lib64/ld-linux-x86-64.so.2 \
+  /usr/lib/x86_64-linux-gnu/libmd.so.0 \
+  /usr/lib/x86_64-linux-gnu/libkrb5.so.3 \
+  /usr/lib/x86_64-linux-gnu/libk5crypto.so.3 \
+  /usr/lib/x86_64-linux-gnu/libcom_err.so.2 \
+  /usr/lib/x86_64-linux-gnu/libkrb5support.so.0 \
+  /usr/lib/x86_64-linux-gnu/libkeyutils.so.1 \
+  /usr/lib/x86_64-linux-gnu/libresolv.so.2
+
+/usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/Scrt1.o:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/crti.o:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/crtbeginS.o:
+
+CMakeFiles/trade-worker.dir/src/main.cpp.o:
+
+CMakeFiles/trade-worker.dir/src/worker_loop.cpp.o:
+
+CMakeFiles/trade-worker.dir/src/state_machine.cpp.o:
+
+CMakeFiles/trade-worker.dir/src/intent_builder.cpp.o:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/libzmq.so:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/libpthread.a:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/librt.a:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/libstdc++.so:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/libm.so:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/libm.so:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/libm.so:
+
+/usr/lib/x86_64-linux-gnu/libm.so.6:
+
+/usr/lib/x86_64-linux-gnu/libmvec.so.1:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/libgcc_s.so:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/libgcc_s.so:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/libgcc_s.so:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/libgcc_s.so.1:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/libgcc.a:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/libgcc.a:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/libc.so:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/libc.so:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/libc.so:
+
+/usr/lib/x86_64-linux-gnu/libc.so.6:
+
+/usr/lib/x86_64-linux-gnu/libc_nonshared.a:
+
+/lib64/ld-linux-x86-64.so.2:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/libgcc_s.so:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/libgcc_s.so:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/libgcc_s.so:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/libgcc_s.so.1:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/libgcc.a:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/libgcc.a:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/crtendS.o:
+
+/usr/lib/gcc/x86_64-linux-gnu/15/../../../x86_64-linux-gnu/crtn.o:
+
+/usr/lib/x86_64-linux-gnu/libbsd.so.0:
+
+/usr/lib/x86_64-linux-gnu/libsodium.so.23:
+
+/usr/lib/x86_64-linux-gnu/libpgm-5.3.so.0:
+
+/usr/lib/x86_64-linux-gnu/libnorm.so.1:
+
+/usr/lib/x86_64-linux-gnu/libgssapi_krb5.so.2:
+
+/lib64/ld-linux-x86-64.so.2:
+
+/usr/lib/x86_64-linux-gnu/libmd.so.0:
+
+/usr/lib/x86_64-linux-gnu/libkrb5.so.3:
+
+/usr/lib/x86_64-linux-gnu/libk5crypto.so.3:
+
+/usr/lib/x86_64-linux-gnu/libcom_err.so.2:
+
+/usr/lib/x86_64-linux-gnu/libkrb5support.so.0:
+
+/usr/lib/x86_64-linux-gnu/libkeyutils.so.1:
+
+/usr/lib/x86_64-linux-gnu/libresolv.so.2:

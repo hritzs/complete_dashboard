@@ -28,12 +28,15 @@ type Store struct {
 }
 
 func NewStore() *Store {
-	return &Store{sessions: make(map[string]Session)}
+	return &Store{
+		sessions: make(map[string]Session),
+	}
 }
 
 func (s *Store) Create(session Session) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	sessionID := uuid.NewString()
 	s.sessions[sessionID] = session
 	return sessionID
@@ -42,12 +45,25 @@ func (s *Store) Create(session Session) string {
 func (s *Store) Get(sessionID string) (Session, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
 	session, ok := s.sessions[sessionID]
 	return session, ok
+}
+
+func (s *Store) Update(sessionID string, session Session) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.sessions[sessionID]; !ok {
+		return false
+	}
+	s.sessions[sessionID] = session
+	return true
 }
 
 func (s *Store) Delete(sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	delete(s.sessions, sessionID)
 }

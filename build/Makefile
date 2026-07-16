@@ -127,6 +127,19 @@ depend:
 .PHONY : depend
 
 #=============================================================================
+# Target rules for targets named trade-worker
+
+# Build rule for target.
+trade-worker: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 trade-worker
+.PHONY : trade-worker
+
+# fast build rule for target.
+trade-worker/fast:
+	$(MAKE) $(MAKESILENT) -f services/trade-worker/CMakeFiles/trade-worker.dir/build.make services/trade-worker/CMakeFiles/trade-worker.dir/build
+.PHONY : trade-worker/fast
+
+#=============================================================================
 # Target rules for targets named feed-decoder
 
 # Build rule for target.
@@ -149,6 +162,7 @@ help:
 	@echo "... rebuild_cache"
 	@echo "... test"
 	@echo "... feed-decoder"
+	@echo "... trade-worker"
 .PHONY : help
 
 

@@ -1,6 +1,27 @@
-2026/06/10 12:03:39 Starting Execution Gateway...
-2026/06/10 12:03:39 🔥 LIVE TEST: Logging into XTS for Client TEST49...
-2026/06/10 12:03:39 ✅ XTS Login Success! Session Token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySUQiOiJURVNUVl82REVCRDFGQzdCNzVDNkQyMjkxOTUwIiwicHVibGljS2V5IjoiNmRlYmQxZmM3Yjc1YzZkMjI5MTk1MCIsImlzSW50ZXJhY3RpdmUiOnRydWUsImlhdCI6MTc4MTA3MzIxOSwiZXhwIjoxNzgxMTU5NjE5fQ.C-gJ5YO-23YY_Nqz0li6muPx0YFpycjq2soW-Cf3mgE
-2026/06/10 12:03:39 🌐 Control API listening on :8005
-2026/06/10 12:03:39 Listening for OrderIntents on ZMQ tcp://127.0.0.1:5557
-2026/06/10 12:04:10 Shutting down Execution Gateway...
+2026/07/16 14:45:31 Starting Execution Gateway...
+2026/07/16 14:45:31 [SQL STORE] postgres-backed store enabled
+2026/07/16 14:45:31 Control API listening on :8005
+2026/07/16 14:45:31 Listening for OrderIntents on ZMQ tcp://127.0.0.1:5557
+2026/07/16 14:45:32 DEBUG DeployStraddle broker="GREEKSOFT" account="HRITIK" user="U001" symbol="NIFTY" lots=1 expiry="" exchange=""
+2026/07/16 14:45:32 INFO starting Greeksoft login sequence account=greeksoft-hritik
+2026/07/16 14:45:32 INFO jlogin debug password=d@1111111111 hash=7c6340a4d36b46b556527703a081e2c0
+2026/07/16 14:45:33 WARN getFlagValues failed; falling back to websocket fields from jloginNew error="api error: status=400 body="
+2026/07/16 14:45:33 INFO Greeksoft login successful account=greeksoft-hritik user_id=HRITIK gcid=273
+2026/07/16 14:45:33 Greeksoft executor ready account=HRITIK user_id=HRITIK
+2026/07/16 14:45:33 [GREEKSOFT TOKEN] loaded path=/mnt/shared/IndexTokens.csv rows=11120 mappings_added=11119
+2026/07/16 14:45:33 [GREEKSOFT TOKEN] loaded path=/mnt/shared/BSEIndexTokens.csv rows=5097 mappings_added=0
+2026/07/16 14:45:33 [GREEKSOFT TOKEN] loaded path=../../IndexTokens.csv rows=11574 mappings_added=11573
+2026/07/16 14:45:33 [GREEKSOFT TOKEN] loaded path=../../BSEIndexTokens.csv rows=5743 mappings_added=0
+2026/07/16 14:45:33 [GREEKSOFT TOKEN] unable to open csv path=IndexTokens.csv err=open IndexTokens.csv: no such file or directory
+2026/07/16 14:45:33 [GREEKSOFT TOKEN] unable to open csv path=BSEIndexTokens.csv err=open BSEIndexTokens.csv: no such file or directory
+2026/07/16 14:45:33 [GREEKSOFT TOKEN] loaded mappings=16063
+2026/07/16 14:45:33 [GREEKSOFT TOKEN] mapped short_token=61748 greek_gtoken=102061748 exchange_segment=NSEFO
+2026/07/16 14:45:33 [GREEKSOFT ORDER] sending token=102061748 side=SELL qty=65 order_type=LIMIT price=0.05 gcid=273 trade_uid=TRD_U001_GREEKSOFT_HRITIK_NIFTY_24DEC29_24000_20260716144533 intent_id=BUI_TRD_U001_GREEKSOFT_HRITIK_NIFTY_24DEC29_24000_20260716144533_1784193333330285
+2026/07/16 14:45:33 [GREEKSOFT ORDER REQUEST] {"request":{"data":{"trigger_price":"0","gtoken":"102061748","side":"2","gcid":"273","validity":"0","price":"0.05","exchange":"NSE","disclosed_qty":"0","tradeSymbol":"NIFTY","lot":"1","order_type":"1","product":"1","qty":"65","corderid":"3","amo":"0","iprocli":"0","gtdExpiry":0,"is_post_closed":"0","is_preopen_order":"0","isSqOffOrder":"false","offline":"0","is_restapi":"1","strategyName":"STOCK"},"response_format":"json","request_type":"subscribe","streaming_type":"NewOrderRequest"}}
+2026/07/16 14:45:33 [GREEKSOFT ORDER] submitted order_id=120000186 status=SUBMITTED raw={"response":{"appID":"bc90bb525bc9739a9595bb9e176dab17","data":{"ErrorCode":"0","gorderid":"120000186","gscid":"HRITIK","tag":"","userTag":""},"infoID":"0","serverTime":"1784193333000","streaming_type":"OrderResponse","svcName":"NewOrderRequestResponse"}}
+2026/07/16 14:45:38 [GREEKSOFT TOKEN] mapped short_token=61749 greek_gtoken=102061749 exchange_segment=NSEFO
+2026/07/16 14:45:38 [GREEKSOFT ORDER] sending token=102061749 side=SELL qty=65 order_type=LIMIT price=978.10 gcid=273 trade_uid=TRD_U001_GREEKSOFT_HRITIK_NIFTY_24DEC29_24000_20260716144533 intent_id=BUI_TRD_U001_GREEKSOFT_HRITIK_NIFTY_24DEC29_24000_20260716144533_1784193333330286
+2026/07/16 14:45:38 [GREEKSOFT ORDER REQUEST] {"request":{"data":{"trigger_price":"0","gtoken":"102061749","side":"2","gcid":"273","validity":"0","price":"978.10","exchange":"NSE","disclosed_qty":"0","tradeSymbol":"NIFTY","lot":"1","order_type":"1","product":"1","qty":"65","corderid":"3","amo":"0","iprocli":"0","gtdExpiry":0,"is_post_closed":"0","is_preopen_order":"0","isSqOffOrder":"false","offline":"0","is_restapi":"1","strategyName":"STOCK"},"response_format":"json","request_type":"subscribe","streaming_type":"NewOrderRequest"}}
+2026/07/16 14:45:38 [GREEKSOFT ORDER] submitted order_id=120000187 status=SUBMITTED raw={"response":{"appID":"bc90bb525bc9739a9595bb9e176dab17","data":{"ErrorCode":"0","gorderid":"120000187","gscid":"HRITIK","tag":"","userTag":""},"infoID":"0","serverTime":"1784193338000","streaming_type":"OrderResponse","svcName":"NewOrderRequestResponse"}}
+2026/07/16 14:47:53 Shutting down Execution Gateway...
+2026/07/16 14:47:53 Execution Gateway stopped

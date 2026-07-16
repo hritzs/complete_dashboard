@@ -1,4 +1,6 @@
-{"time":"2026-06-10T12:03:39.848485821+05:30","level":"INFO","msg":"🚀 Starting Go Snapshot Service (WebSocket Hub)"}
-{"time":"2026-06-10T12:03:39.848700597+05:30","level":"INFO","msg":"Snapshot Service ZMQ Subscriber connected to C++ Feed","endpoint":"tcp://localhost:5556"}
-{"time":"2026-06-10T12:03:39.848744295+05:30","level":"INFO","msg":"🌐 WebSocket Server listening","port":"8003"}
-{"time":"2026-06-10T12:04:10.926420549+05:30","level":"INFO","msg":"🛑 Shutting down Snapshot Service"}
+{"time":"2026-07-16T14:45:29.812993188+05:30","level":"INFO","msg":"🚀 Go Snapshot Service listening","port":"8003"}
+{"time":"2026-07-16T14:45:29.813086167+05:30","level":"INFO","msg":"📥 ZMQ Connected to C++ Feed Decoder","endpoint":"tcp://127.0.0.1:5556"}
+{"time":"2026-07-16T14:45:30.766934554+05:30","level":"INFO","msg":"🌐 UI Client connected to Go Snapshot Service"}
+{"time":"2026-07-16T14:46:29.541084783+05:30","level":"INFO","msg":"🌐 UI Client connected to Go Snapshot Service"}
+{"time":"2026-07-16T14:46:30.177117947+05:30","level":"INFO","msg":"🌐 UI Client connected to Go Snapshot Service"}
+signal: interrupt

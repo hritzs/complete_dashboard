@@ -1,0 +1,8 @@
+2026/07/16 14:45:24 🚀 Loading contracts from token CSV files...
+2026/07/16 14:45:24 📂 INDEX_TOKENS path: /mnt/shared/IndexTokens.csv
+2026/07/16 14:45:24 📂 BSE_INDEX_TOKENS path: /mnt/shared/BSEIndexTokens.csv
+2026/07/16 14:45:24 📘 IndexTokens.csv contracts: 9014
+2026/07/16 14:45:24 📙 BSEIndexTokens.csv contracts: 4210
+2026/07/16 14:45:25 ✅ Loaded 13224 contracts from CSV files
+2026/07/16 14:45:25 🌐 Contract Master running on :8010
+signal: interrupt

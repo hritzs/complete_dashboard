@@ -1,0 +1,737 @@
+package trading
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"math"
+	"strings"
+	"sync"
+	"time"
+)
+
+type MemoryStore struct {
+	mu        sync.RWMutex
+	trades    map[string]StoredTrade
+	intents   map[string][]StoredIntent
+	snapshots map[string]TradeSnapshot
+	runtimes  map[string]*RuntimeTrade
+}
+
+func NewMemoryStore() *MemoryStore {
+	return &MemoryStore{
+		trades:    map[string]StoredTrade{},
+		intents:   map[string][]StoredIntent{},
+		snapshots: map[string]TradeSnapshot{},
+		runtimes:  map[string]*RuntimeTrade{},
+	}
+}
+
+func (s *MemoryStore) SaveTrade(tr StoredTrade) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.trades[tr.TradeUID] = tr
+}
+
+func (s *MemoryStore) LoadTrade(tradeUID string) (StoredTrade, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	tr, ok := s.trades[tradeUID]
+	return tr, ok
+}
+
+func (s *MemoryStore) AllTrades() []StoredTrade {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make([]StoredTrade, 0, len(s.trades))
+	for _, tr := range s.trades {
+		out = append(out, tr)
+	}
+	return out
+}
+
+func (s *MemoryStore) UpdateTrade(tr StoredTrade) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.trades[tr.TradeUID] = tr
+}
+
+func (s *MemoryStore) AppendIntent(tradeUID string, intent OrderIntent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.intents[tradeUID] = append(s.intents[tradeUID], StoredIntent{
+		ReceivedAt: time.Now(),
+		Intent:     intent,
+	})
+}
+
+func (s *MemoryStore) LoadIntents(tradeUID string) []StoredIntent {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]StoredIntent(nil), s.intents[tradeUID]...)
+}
+
+func (s *MemoryStore) SaveSnapshot(snapshot TradeSnapshot) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.snapshots[snapshot.TradeUID] = snapshot
+}
+
+func (s *MemoryStore) LoadSnapshot(tradeUID string) (TradeSnapshot, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	snap, ok := s.snapshots[tradeUID]
+	return snap, ok
+}
+
+func (s *MemoryStore) SaveRuntime(rt *RuntimeTrade) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.runtimes[rt.Trade.TradeUID] = rt
+}
+
+func (s *MemoryStore) LoadRuntime(tradeUID string) (*RuntimeTrade, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rt, ok := s.runtimes[tradeUID]
+	return rt, ok
+}
+
+func (s *MemoryStore) DeleteRuntime(tradeUID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.runtimes, tradeUID)
+}
+
+type Service struct {
+	Store           Store
+	DefaultClientID string
+	BrokerFactory   BrokerFactory
+	Snapshot        SnapshotProvider
+	LotSize         LotSizeProvider
+}
+
+func NewService(store Store, clientID string) *Service {
+	return &Service{
+		Store:           store,
+		DefaultClientID: clientID,
+		BrokerFactory:   NewDefaultBrokerFactory(),
+		Snapshot:        NewSnapshotClient(),
+		LotSize:         NewLotSizeClient(),
+	}
+}
+
+func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest) (*DeployStraddleResponse, error) {
+	start := time.Now()
+
+	// Normalize inputs
+	req.Symbol = NormalizeSymbol(req.Symbol)
+	req.UserID = strings.TrimSpace(req.UserID)
+	req.BrokerName = strings.ToUpper(strings.TrimSpace(req.BrokerName))
+	req.AccountID = strings.TrimSpace(req.AccountID)
+	req.ProductType = strings.ToUpper(strings.TrimSpace(req.ProductType))
+	req.ExchangeSegment = strings.ToUpper(strings.TrimSpace(req.ExchangeSegment))
+	req.TargetExpiry = strings.TrimSpace(req.TargetExpiry)
+
+	// Defaults
+	if req.UserID == "" {
+		req.UserID = "U001"
+	}
+	// Broker optional → default to XTS
+	if req.BrokerName == "" {
+		req.BrokerName = "XTS"
+	}
+	// Account optional → default by broker
+	if req.AccountID == "" {
+		if req.BrokerName == "GREEKSOFT" {
+			req.AccountID = "HRITIK"
+		} else {
+			req.AccountID = s.DefaultClientID
+		}
+	}
+	if req.ProductType == "" {
+		if req.BrokerName == "GREEKSOFT" {
+			req.ProductType = "NRML"
+		} else {
+			req.ProductType = "MIS"
+		}
+	}
+	if req.Lots <= 0 {
+		req.Lots = 1
+	}
+	if req.Symbol == "" {
+		return nil, fmt.Errorf("symbol is required")
+	}
+
+	log.Printf(
+		"DEBUG DeployStraddle broker=%q account=%q user=%q symbol=%q lots=%d expiry=%q exchange=%q",
+		req.BrokerName, req.AccountID, req.UserID, req.Symbol, req.Lots, req.TargetExpiry, req.ExchangeSegment,
+	)
+
+	// Resolve / infer exchange segment (e.g., NIFTY → NSEFO, SENSEX → BSEFO)
+	exchangeSegment := ResolveExchangeSegment(req.Symbol, req.ExchangeSegment)
+	if exchangeSegment == "" {
+		exchangeSegment = "NSEFO"
+	}
+
+	// Get broker executor (XTS in your case)
+	executor, err := s.BrokerFactory.GetExecutor(req.UserID, req.BrokerName, req.AccountID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get executor: %w", err)
+	}
+
+	// Option chain snapshot
+	chain, err := s.Snapshot.GetOptionChain(ctx, req.Symbol, req.TargetExpiry)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch option chain: %w", err)
+	}
+
+	var ceRow, peRow *OptionChainRow
+	var selectedStrike float64
+
+	useCustom := req.CEStrikePrice > 0 || req.PEStrikePrice > 0
+	if useCustom {
+		if req.CEStrikePrice <= 0 || req.PEStrikePrice <= 0 {
+			return nil, fmt.Errorf("both ceStrikePrice and peStrikePrice are required")
+		}
+
+		ceRow, err = FindRowByStrike(*chain, req.CEStrikePrice)
+		if err != nil {
+			return nil, fmt.Errorf("CE strike lookup failed: %w", err)
+		}
+
+		peRow, err = FindRowByStrike(*chain, req.PEStrikePrice)
+		if err != nil {
+			return nil, fmt.Errorf("PE strike lookup failed: %w", err)
+		}
+
+		selectedStrike = (ceRow.Strike + peRow.Strike) / 2
+	} else {
+		atmRow, err := FindATMRow(*chain)
+		if err != nil {
+			return nil, err
+		}
+		ceRow = atmRow
+		peRow = atmRow
+		selectedStrike = atmRow.Strike
+	}
+
+	// Tokens (override if request supplied)
+	ceToken := req.CEToken
+	peToken := req.PEToken
+	if ceToken == 0 {
+		ceToken = ceRow.CEToken
+	}
+	if peToken == 0 {
+		peToken = peRow.PEToken
+	}
+	if ceToken == 0 || peToken == 0 {
+		return nil, fmt.Errorf("CE/PE tokens not available")
+	}
+
+	// Lot size resolution
+	lotSize := req.LotSize
+	if lotSize == 0 && chain.LotSize > 0 {
+		lotSize = chain.LotSize
+	}
+	if lotSize == 0 {
+		if ls, lerr := s.LotSize.GetLotSize(ctx, req.Symbol, chain.Expiry); lerr == nil && ls > 0 {
+			lotSize = ls
+		}
+	}
+	if lotSize == 0 {
+		lotSize = GetFallbackLotSize(req.Symbol)
+	}
+	if lotSize <= 0 {
+		return nil, fmt.Errorf("invalid lot size for symbol %s", req.Symbol)
+	}
+	if req.Lots <= 0 {
+		return nil, fmt.Errorf("invalid lots: %d", req.Lots)
+	}
+
+	ceLots := req.Lots
+	peLots := req.Lots
+
+	// Delta neutral adjustment
+	ceDelta := ceRow.CEDelta
+	peDelta := peRow.PEDelta
+	netDelta := 0.0
+
+	if req.DeltaNeutral && ceDelta != 0 && peDelta != 0 {
+		targetContracts := req.Lots * lotSize
+		ratio := math.Abs(ceDelta / peDelta)
+
+		peContracts := int(math.Round(float64(targetContracts)))
+		ceContracts := int(math.Round(float64(targetContracts) * ratio))
+
+		if ceContracts < lotSize {
+			ceContracts = lotSize
+		}
+		if peContracts < lotSize {
+			peContracts = lotSize
+		}
+
+		ceLots = maxInt(1, ceContracts/lotSize)
+		peLots = maxInt(1, peContracts/lotSize)
+		netDelta = float64(ceLots*lotSize)*ceDelta + float64(peLots*lotSize)*peDelta
+	}
+
+	ceQty := ceLots * lotSize
+	peQty := peLots * lotSize
+	if ceQty <= 0 || peQty <= 0 {
+		return nil, fmt.Errorf("computed invalid quantities ce=%d pe=%d", ceQty, peQty)
+	}
+
+	now := time.Now()
+	tradeUID := BuildTradeUID(req.UserID, req.BrokerName, req.AccountID, req.Symbol, chain.Expiry, selectedStrike, now)
+
+	trade := StoredTrade{
+		TradeUID:        tradeUID,
+		UserID:          req.UserID,
+		BrokerName:      req.BrokerName,
+		AccountID:       req.AccountID,
+		Symbol:          req.Symbol,
+		Expiry:          chain.Expiry,
+		Strike:          selectedStrike,
+		ProductType:     req.ProductType,
+		ExchangeSegment: exchangeSegment,
+		CEToken:         ceToken,
+		PEToken:         peToken,
+		CEQty:           ceQty,
+		PEQty:           peQty,
+		CELtp:           ceRow.CELtp,
+		PELtp:           peRow.PELtp,
+		NetDelta:        netDelta,
+		Status:          "BUILDING",
+		Mode:            req.BrokerName,
+		Underlying:      chooseUnderlying(*chain),
+		LotSize:         lotSize,
+		Lots:            req.Lots,
+		CreatedAt:       now,
+		LastUpdateTime:  now,
+		Config: MonitorConfig{
+			BuyBuffer:           2.0,
+			SellBuffer:          2.0,
+			SLPointsPerLot:      0,
+			HedgeThresholdDelta: 0,
+			StraddleStopPrice:   0,
+			OrderLotsPerCall:    req.OrderLotsPerCall,
+			PollIntervalSec:     1,
+		},
+	}
+	s.Store.SaveTrade(trade)
+
+	// Build legs
+	legs := []LegData{}
+	if ceLots > 0 {
+		legs = append(legs, LegData{
+			Token:           ceToken,
+			Symbol:          req.Symbol,
+			OptionType:      "CE",
+			Action:          "SELL",
+			TotalLots:       ceLots,
+			LotSize:         lotSize,
+			ExpectedPrice:   ceRow.CELtp,
+			ExchangeSegment: exchangeSegment,
+		})
+	}
+	if peLots > 0 {
+		legs = append(legs, LegData{
+			Token:           peToken,
+			Symbol:          req.Symbol,
+			OptionType:      "PE",
+			Action:          "SELL",
+			TotalLots:       peLots,
+			LotSize:         lotSize,
+			ExpectedPrice:   peRow.PELtp,
+			ExchangeSegment: exchangeSegment,
+		})
+	}
+
+	// Chunk orders (updated version that returns error)
+	chunks, err := GenerateChunkedOrders(
+		fmt.Sprintf("BUI_%s", tradeUID),
+		legs,
+		req.Lots,
+		MaxOrderQtyForSymbol(req.Symbol),
+		req.OrderLotsPerCall,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Execute build
+	if err := s.executeBuild(ctx, executor, trade, chunks); err != nil {
+		trade.Status = "FAILED"
+		trade.LastUpdateTime = time.Now()
+		s.Store.UpdateTrade(trade)
+		return nil, err
+	}
+
+	trade.Status = "ACTIVE"
+	trade.LastUpdateTime = time.Now()
+	s.Store.UpdateTrade(trade)
+	s.startRuntime(trade)
+
+	return &DeployStraddleResponse{
+		Success:    true,
+		TradeUID:   tradeUID,
+		Status:     trade.Status,
+		Message:    fmt.Sprintf("Straddle deployment initiated via %s", req.BrokerName),
+		Symbol:     req.Symbol,
+		Expiry:     chain.Expiry,
+		Strike:     selectedStrike,
+		CEToken:    ceToken,
+		PEToken:    peToken,
+		CEQty:      ceQty,
+		PEQty:      peQty,
+		CELtp:      ceRow.CELtp,
+		PELtp:      peRow.PELtp,
+		NetDelta:   netDelta,
+		LotSize:    lotSize,
+		Lots:       req.Lots,
+		DurationMS: time.Since(start).Milliseconds(),
+		CreatedAt:  time.Now().Format(time.RFC3339),
+	}, nil
+}
+
+func (s *Service) executeBuild(ctx context.Context, executor Executor, trade StoredTrade, chunks [][]ExecOrder) error {
+	sellBuffer := trade.Config.SellBuffer
+	if sellBuffer <= 0 {
+		sellBuffer = 2.0
+	}
+
+	for chunkIdx, chunk := range chunks {
+		ordersToProcess := append([]ExecOrder(nil), chunk...)
+		maxChunkRetries := 3
+
+		for retryIter := 0; retryIter < maxChunkRetries && len(ordersToProcess) > 0; retryIter++ {
+			if retryIter > 0 {
+				time.Sleep(1 * time.Second)
+			}
+
+			var nextRetry []ExecOrder
+
+			for i := range ordersToProcess {
+				order := ordersToProcess[i]
+
+				if order.Quantity <= 0 {
+					return fmt.Errorf("invalid build quantity for token %d: %d", order.Token, order.Quantity)
+				}
+
+				bufferMultiplier := float64(retryIter + 1)
+				limit := math.Max(0.05, order.ExpectedPrice-sellBuffer*bufferMultiplier)
+				order.LimitPrice = math.Round(limit/0.05) * 0.05
+
+				intent := OrderIntent{
+					IntentID:        order.UID,
+					TradeUID:        trade.TradeUID,
+					Token:           order.Token,
+					Symbol:          order.Symbol,
+					Side:            order.Action,
+					Quantity:        int64(order.Quantity),
+					OrderType:       "LIMIT",
+					ProductType:     trade.ProductType,
+					ExchangeSegment: trade.ExchangeSegment,
+					LegType:         order.OptionType,
+					Phase:           "BUILD",
+					OrderUID:        order.UID,
+					BrokerName:      trade.BrokerName,
+					AccountID:       trade.AccountID,
+					ExpectedPrice:   order.ExpectedPrice,
+				}
+				lp := order.LimitPrice
+				intent.LimitPrice = &lp
+
+				s.Store.AppendIntent(trade.TradeUID, intent)
+
+				res, err := executor.ExecuteOrderIntent(ctx, intent)
+				if err != nil {
+					log.Printf("❌ BUILD chunk=%d retry=%d leg=%s err=%v", chunkIdx+1, retryIter+1, order.OptionType, err)
+					nextRetry = append(nextRetry, order)
+					continue
+				}
+
+				if res.Status != "FILLED" && res.Status != "SUCCESS" && res.Status != "ACKED" && res.Status != "SUBMITTED" {
+					nextRetry = append(nextRetry, order)
+				}
+			}
+
+			ordersToProcess = nextRetry
+		}
+
+		if len(ordersToProcess) > 0 {
+			return fmt.Errorf("build chunk %d failed after retries", chunkIdx+1)
+		}
+	}
+
+	return nil
+}
+
+func (s *Service) runMonitorCycle(tradeUID string) {
+	trade, ok := s.Store.LoadTrade(tradeUID)
+	if !ok {
+		return
+	}
+	if trade.Status == "CLOSED" || trade.Status == "FAILED" {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	chain, err := s.Snapshot.GetOptionChain(ctx, trade.Symbol, trade.Expiry)
+	if err != nil {
+		log.Printf("⚠ snapshot fetch failed for %s: %v", tradeUID, err)
+		return
+	}
+
+	var ceRow, peRow *OptionChainRow
+	for i := range chain.Chain {
+		row := &chain.Chain[i]
+		if row.CEToken == trade.CEToken {
+			ceRow = row
+		}
+		if row.PEToken == trade.PEToken {
+			peRow = row
+		}
+	}
+	if ceRow == nil || peRow == nil {
+		return
+	}
+
+	cePNL := (trade.CELtp - ceRow.CELtp) * float64(trade.CEQty)
+	pePNL := (trade.PELtp - peRow.PELtp) * float64(trade.PEQty)
+	totalPNL := cePNL + pePNL
+
+	netDelta := ceRow.CEDelta*float64(trade.CEQty) + peRow.PEDelta*float64(trade.PEQty)
+	netGamma := ceRow.CEGamma*float64(trade.CEQty) + peRow.PEGamma*float64(trade.PEQty)
+	netTheta := ceRow.CETheta*float64(trade.CEQty) + peRow.PETheta*float64(trade.PEQty)
+	netVega := ceRow.CEVega*float64(trade.CEQty) + peRow.PEVega*float64(trade.PEQty)
+
+	snapshot := TradeSnapshot{
+		TradeUID:      trade.TradeUID,
+		Timestamp:     time.Now(),
+		Status:        trade.Status,
+		Symbol:        trade.Symbol,
+		Expiry:        trade.Expiry,
+		Strike:        trade.Strike,
+		Underlying:    chooseUnderlying(*chain),
+		TotalPNL:      totalPNL,
+		RealizedPNL:   0,
+		UnrealizedPNL: totalPNL,
+		NetDelta:      netDelta,
+		NetGamma:      netGamma,
+		NetTheta:      netTheta,
+		NetVega:       netVega,
+		LivePositions: []TradeLegSnapshot{
+			{
+				Token:      trade.CEToken,
+				Strike:     ceRow.Strike,
+				OptionType: "CE",
+				Action:     "SELL",
+				Quantity:   int64(trade.CEQty),
+				EntryPrice: trade.CELtp,
+				LTP:        ceRow.CELtp,
+				PNL:        cePNL,
+				IV:         ceRow.CEIV,
+				Delta:      ceRow.CEDelta,
+				Gamma:      ceRow.CEGamma,
+				Theta:      ceRow.CETheta,
+				Vega:       ceRow.CEVega,
+			},
+			{
+				Token:      trade.PEToken,
+				Strike:     peRow.Strike,
+				OptionType: "PE",
+				Action:     "SELL",
+				Quantity:   int64(trade.PEQty),
+				EntryPrice: trade.PELtp,
+				LTP:        peRow.PELtp,
+				PNL:        pePNL,
+				IV:         peRow.PEIV,
+				Delta:      peRow.PEDelta,
+				Gamma:      peRow.PEGamma,
+				Theta:      peRow.PETheta,
+				Vega:       peRow.PEVega,
+			},
+		},
+	}
+
+	s.Store.SaveSnapshot(snapshot)
+
+	if trade.Config.SLPointsPerLot > 0 {
+		totalLotsOpen := float64(trade.CEQty+trade.PEQty) / (2.0 * float64(maxInt(1, trade.LotSize)))
+		slThreshold := -trade.Config.SLPointsPerLot * totalLotsOpen
+		if totalPNL <= slThreshold {
+			trade.Status = "CLOSED_SL"
+			trade.LastUpdateTime = time.Now()
+			s.Store.UpdateTrade(trade)
+
+			if rt, ok := s.Store.LoadRuntime(tradeUID); ok {
+				close(rt.StopCh)
+				s.Store.DeleteRuntime(tradeUID)
+			}
+		}
+	}
+}
+
+func (s *Service) SquareOff(tradeUID string, reason string) error {
+	tr, ok := s.Store.LoadTrade(tradeUID)
+	if !ok {
+		return fmt.Errorf("trade not found")
+	}
+
+	tr.Status = "CLOSED"
+	tr.LastUpdateTime = time.Now()
+	s.Store.UpdateTrade(tr)
+
+	if rt, ok := s.Store.LoadRuntime(tradeUID); ok {
+		close(rt.StopCh)
+		s.Store.DeleteRuntime(tradeUID)
+	}
+	return nil
+}
+
+func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
+	tr, ok := s.Store.LoadTrade(tradeUID)
+	if !ok {
+		return fmt.Errorf("trade not found")
+	}
+	if percentage <= 0 || percentage > 100 {
+		return fmt.Errorf("invalid percentage")
+	}
+
+	scale := (100.0 - percentage) / 100.0
+	tr.CEQty = int(math.Round(float64(tr.CEQty) * scale))
+	tr.PEQty = int(math.Round(float64(tr.PEQty) * scale))
+	tr.LastUpdateTime = time.Now()
+	tr.Status = "PARTIAL"
+	s.Store.UpdateTrade(tr)
+	return nil
+}
+
+func (s *Service) ManualHedge(ctx context.Context, tradeUID string) error {
+	tr, ok := s.Store.LoadTrade(tradeUID)
+	if !ok {
+		return fmt.Errorf("trade not found")
+	}
+
+	snap, ok := s.Store.LoadSnapshot(tradeUID)
+	if !ok {
+		return fmt.Errorf("snapshot not found")
+	}
+	if math.Abs(snap.NetDelta) < 1 {
+		return nil
+	}
+
+	executor, err := s.BrokerFactory.GetExecutor(tr.UserID, tr.BrokerName, tr.AccountID)
+	if err != nil {
+		return err
+	}
+
+	chain, err := s.Snapshot.GetOptionChain(ctx, tr.Symbol, tr.Expiry)
+	if err != nil {
+		return err
+	}
+
+	atmRow, err := FindATMRow(*chain)
+	if err != nil {
+		return err
+	}
+
+	qty := tr.LotSize
+	if qty <= 0 {
+		qty = GetFallbackLotSize(tr.Symbol)
+	}
+	if qty <= 0 {
+		return fmt.Errorf("invalid hedge quantity for symbol %s", tr.Symbol)
+	}
+
+	var ceSide, peSide string
+	if snap.NetDelta < 0 {
+		ceSide = "BUY"
+		peSide = "SELL"
+	} else {
+		ceSide = "SELL"
+		peSide = "BUY"
+	}
+
+	ceIntent := OrderIntent{
+		IntentID:        BuildShortOrderUID(tr.Symbol, "HCE", time.Now(), 0),
+		TradeUID:        tradeUID,
+		Token:           atmRow.CEToken,
+		Side:            ceSide,
+		Quantity:        int64(qty),
+		OrderType:       "LIMIT",
+		ProductType:     tr.ProductType,
+		ExchangeSegment: tr.ExchangeSegment,
+		LegType:         "CE",
+		Phase:           "HEDGE",
+		OrderUID:        BuildShortOrderUID(tr.Symbol, "HCE", time.Now(), 1),
+		BrokerName:      tr.BrokerName,
+		AccountID:       tr.AccountID,
+		ExpectedPrice:   atmRow.CELtp,
+	}
+
+	peIntent := OrderIntent{
+		IntentID:        BuildShortOrderUID(tr.Symbol, "HPE", time.Now(), 0),
+		TradeUID:        tradeUID,
+		Token:           atmRow.PEToken,
+		Side:            peSide,
+		Quantity:        int64(qty),
+		OrderType:       "LIMIT",
+		ProductType:     tr.ProductType,
+		ExchangeSegment: tr.ExchangeSegment,
+		LegType:         "PE",
+		Phase:           "HEDGE",
+		OrderUID:        BuildShortOrderUID(tr.Symbol, "HPE", time.Now(), 1),
+		BrokerName:      tr.BrokerName,
+		AccountID:       tr.AccountID,
+		ExpectedPrice:   atmRow.PELtp,
+	}
+
+	ceLimit := math.Max(0.05, atmRow.CELtp-2.0)
+	peLimit := math.Max(0.05, atmRow.PELtp-2.0)
+	ceIntent.LimitPrice = &ceLimit
+	peIntent.LimitPrice = &peLimit
+
+	s.Store.AppendIntent(tradeUID, ceIntent)
+	s.Store.AppendIntent(tradeUID, peIntent)
+
+	ceRes, err := executor.ExecuteOrderIntent(ctx, ceIntent)
+	if err != nil {
+		return fmt.Errorf("hedge CE failed: %w", err)
+	}
+	if updater, ok := s.Store.(interface {
+		MarkOrderSubmitted(intentID string, brokerOrderID string, status string, rawResponse string)
+	}); ok {
+		updater.MarkOrderSubmitted(ceIntent.IntentID, ceRes.BrokerOrderID, ceRes.Status, ceRes.RawResponse)
+	}
+
+	peRes, err := executor.ExecuteOrderIntent(ctx, peIntent)
+	if err != nil {
+		return fmt.Errorf("hedge PE failed: %w", err)
+	}
+	if updater, ok := s.Store.(interface {
+		MarkOrderSubmitted(intentID string, brokerOrderID string, status string, rawResponse string)
+	}); ok {
+		updater.MarkOrderSubmitted(peIntent.IntentID, peRes.BrokerOrderID, peRes.Status, peRes.RawResponse)
+	}
+
+	return nil
+}
+
+func chooseUnderlying(chain OptionChainSnapshot) float64 {
+	if chain.SyntheticSpot != 0 {
+		return chain.SyntheticSpot
+	}
+	if chain.SyntheticFuture != 0 {
+		return chain.SyntheticFuture
+	}
+	if chain.FutureLtp != 0 {
+		return chain.FutureLtp
+	}
+	return 0
+}

@@ -1,0 +1,47 @@
+	package greeksoft
+
+	import (
+		"context"
+
+		gs "trading-platform/libs/broker-greeksoft"
+
+		"execution-gateway/internal/trading"
+	)
+
+	type Executor struct {
+		Client *gs.Client
+	}
+
+	func NewExecutor(
+		client *gs.Client,
+	) *Executor {
+		return &Executor{
+			Client: client,
+		}
+	}
+
+	func (e *Executor) ExecuteOrderIntent(
+		ctx context.Context,
+		intent trading.OrderIntent,
+	) (*trading.ExecutionResult, error) {
+
+		req := MapOrderIntent(intent)
+
+		resp, err := e.Client.PlaceOrder(
+			ctx,
+			req,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		return &trading.ExecutionResult{
+			IntentID:      intent.IntentID,
+			BrokerOrderID: resp.OrderID,
+			Status:        resp.Status,
+			FilledQty:     0,
+			FillPrice:     0,
+			EventReason:   "GREEKSOFT_ORDER_SENT",
+			RawResponse:   resp.RawResponse,
+		}, nil
+	}

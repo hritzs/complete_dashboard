@@ -44,6 +44,11 @@ endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
+  include("/home/ubuntu/Desktop/api_gs/trading-platform/build/services/trade-worker/cmake_install.cmake")
+endif()
+
+if(NOT CMAKE_INSTALL_LOCAL_ONLY)
+  # Include the install script for the subdirectory.
   include("/home/ubuntu/Desktop/api_gs/trading-platform/build/services/feed-decoder/cmake_install.cmake")
 endif()
 

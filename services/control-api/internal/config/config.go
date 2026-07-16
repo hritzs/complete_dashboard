@@ -1,55 +1,38 @@
 package config
 
 import (
-	"fmt"
-	"log/slog"
 	"os"
-	"strconv"
+	"strings"
 	"time"
 )
 
-const (
-	defaultGreekAPIBaseURL    = "http://greekapi.greeksoft.in:3001"
-	defaultGreekRESTAPIURL    = "http://restapi.greeksoft.in:3434"
-	defaultRequestTimeoutSecs = 30
-	defaultListenHost         = "0.0.0.0"
-	defaultListenPort         = "8080"
-)
-
-// Config holds application configuration.
 type Config struct {
-	Host                string
-	Port                string
-	StaticFilePath      string
-	GreekAuthApiBaseUrl string
-	GreekRestApiBaseUrl string
-	RequestTimeout      time.Duration
+	Port                   string
+	GreekAuthApiBaseURL    string
+	GreekRestApiBaseURL    string
+	StaticFilePath         string
+	SnapshotServiceBaseURL string
+	ContractMasterBaseURL  string
+	ExecutionGatewayBaseURL string
+	RequestTimeout         time.Duration
 }
 
-// Load loads configuration from environment variables with defaults.
 func Load() Config {
-	host := getEnvOrDefault("LISTEN_HOST", defaultListenHost)
-	port := getEnvOrDefault("PORT", defaultListenPort)
-	staticPath := getEnvOrDefault("STATIC_FILE_PATH", "../../ui")
-	authURL := getEnvOrDefault("GREEK_API_BASE_URL", defaultGreekAPIBaseURL)
-	restURL := getEnvOrDefault("GREEK_REST_API_URL", defaultGreekRESTAPIURL)
-	timeoutStr := getEnvOrDefault("REQUEST_TIMEOUT", fmt.Sprintf("%d", defaultRequestTimeoutSecs))
-	timeoutSec, err := strconv.Atoi(timeoutStr)
-	if err != nil {
-		slog.Warn("Invalid REQUEST_TIMEOUT value, using default", "value", timeoutStr, "default", defaultRequestTimeoutSecs)
-		timeoutSec = defaultRequestTimeoutSecs
-	}
 	return Config{
-		Host: host, Port: port, StaticFilePath: staticPath,
-		GreekAuthApiBaseUrl: authURL, GreekRestApiBaseUrl: restURL,
-		RequestTimeout: time.Duration(timeoutSec) * time.Second,
+		Port:                    getEnv("PORT", "8006"),
+		GreekAuthApiBaseURL:     strings.TrimRight(getEnv("GREEK_AUTH_API_BASE_URL", "http://127.0.0.1:8081"), "/"),
+		GreekRestApiBaseURL:     strings.TrimRight(getEnv("GREEK_REST_API_BASE_URL", "http://127.0.0.1:8082"), "/"),
+		StaticFilePath:          getEnv("STATIC_FILE_PATH", "../ui"),
+		SnapshotServiceBaseURL:  strings.TrimRight(getEnv("SNAPSHOT_SERVICE_BASE_URL", "http://127.0.0.1:8003"), "/"),
+		ContractMasterBaseURL:   strings.TrimRight(getEnv("CONTRACT_MASTER_BASE_URL", "http://127.0.0.1:8010"), "/"),
+		ExecutionGatewayBaseURL: strings.TrimRight(getEnv("EXECUTION_GATEWAY_BASE_URL", "http://127.0.0.1:8005"), "/"),
+		RequestTimeout:          20 * time.Second,
 	}
 }
 
-// getEnvOrDefault fetches an environment variable or returns a default value.
-func getEnvOrDefault(key, defaultValue string) string {
-	if value, exists := os.LookupEnv(key); exists {
-		return value
+func getEnv(key, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
 	}
-	return defaultValue
+	return fallback
 }

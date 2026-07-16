@@ -10,4 +10,4 @@ export XTS_CLIENT_ID="TEST49"
 echo "Loading credentials and starting Execution Gateway..."
 
 # Run the Go application
-go run main.go
+go run .

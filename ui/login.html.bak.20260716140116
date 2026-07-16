@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Greek API Login</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f0f2f5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            flex-direction: column; /* Allow multiple containers to stack */
+        }
+        .login-container {
+            background-color: #fff;
+            padding: 20px 40px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            width: 320px;
+            text-align: center;
+        }
+        h2 {
+            color: #333;
+            margin-bottom: 24px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+            text-align: left;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #555;
+            font-weight: 500;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            box-sizing: border-box;
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        #message {
+            margin-top: 15px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        #message.error {
+            color: #d93025;
+        }
+        #message.success {
+            color: #1e8e3e;
+        }
+        #post-login-actions {
+            margin-top: 20px;
+            text-align: left;
+        }
+        #post-login-actions button {
+            margin-bottom: 10px;
+        }
+        #results-display-container {
+            margin-top: 15px;
+            text-align: left;
+        }
+        #results-display {
+            margin-top: 15px;
+            background-color: #272822;
+            color: #f8f8f2;
+            padding: 15px;
+            border-radius: 6px;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        #order-placement-container {
+            margin-top: 15px;
+            border: 1px solid #ddd; padding: 10px; border-radius: 6px;
+            text-align: left;
+        }
+        .search-result-item {
+            padding: 5px;
+            border-bottom: 1px solid #444;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .search-result-item:hover {
+            background-color: #555;
+        }
+        .search-result-item.selected {
+            background-color: #007bff;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div id="login-main-container" class="login-container">
+        <h2>Greek API Login</h2>
+        <form id="login-form">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" required>
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+            <div class="form-group">
+                <label for="brokerId">Broker ID</label>
+                <input type="number" id="brokerId" name="brokerId" required>
+            </div>
+            <button type="submit">Login</button>
+        </form>
+        <div id="message"></div>
+    </div>
+
+    <!-- This section will be shown after a successful login -->
+    <div id="post-login-actions" class="login-container" style="display:none; width: 500px;">
+        <h2>Post-Login Actions</h2>
+        <button id="fetch-contracts-btn">1. Fetch Contracts</button>
+        <div class="form-group" style="margin-top: 15px; margin-bottom: 5px;">
+            <label for="pan-dob-input">PAN / Date of Birth (for JLogin)</label>
+            <input type="text" id="pan-dob-input" value="01/01/1901" placeholder="DD/MM/YYYY">
+        </div>
+        <button id="jlogin-btn">2. Perform JLogin</button>
+        <button id="clear-db-btn" style="background-color: #ffc107; color: #212529; margin-top: 10px;">Clear Contract DB</button>
+        <button id="logout-btn" style="background-color: #dc3545; margin-top: 5px;">Logout</button>
+
+        <div class="form-group" style="margin-top: 15px;">
+            <hr>
+            <h3>Sell ATM Straddle</h3>
+            <label for="straddle-symbol-select">Symbol</label>
+            <select id="straddle-symbol-select" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px;">
+                <option value="NIFTY">NIFTY</option>
+                <option value="BANKNIFTY">BANKNIFTY</option>
+                <option value="FINNIFTY">FINNIFTY</option>
+                <option value="MIDCPNIFTY">MIDCPNIFTY</option>
+                <option value="SENSEX">SENSEX</option>
+            </select>
+            <label for="straddle-lots-input" style="margin-top: 10px;">Lots</label>
+            <input type="number" id="straddle-lots-input" value="1" min="1" style="width: 100%;">
+        </div>
+        <button id="sell-straddle-btn" style="background-color: #17a2b8;">Sell ATM Straddle</button>
+        
+        <hr style="margin: 20px 0;">
+        
+        <div id="contract-search-container" style="display: none;">
+            <h3>Contract Search & Order</h3>
+            <div class="form-group">
+                <label for="search-symbol-input">Enter Trading Symbol (e.g., NIFTY, RELIANCE)</label>
+                <input type="text" id="search-symbol-input" placeholder="NIFTY">
+            </div>
+            <button id="search-contract-btn">3. Search for Contract</button>
+        </div>
+
+        <div id="order-placement-container" style="display:none;" data-gtoken="" data-exchange="" data-tradingsymbol="" data-symbol="" data-instrument="" data-lotsize="">
+            <h4>Place Order for <span id="order-symbol" style="font-weight: bold;"></span></h4>
+            <div class="form-group">
+                <label for="order-qty">Quantity (Lot Size: <span id="lot-size-display" style="font-weight: bold;">-</span>)</label>
+                <input type="number" id="order-qty" value="1" placeholder="e.g., 500" class="form-control">
+            </div>
+            <div class="form-group">
+                <label for="order-price">Price (if 0, it will use live bid/ask)</label>
+                <input type="number" id="order-price" value="0" class="form-control" step="0.05">
+            </div>
+            <div style="display: flex; gap: 10px; margin-top: 10px;">
+                <button id="buy-order-btn" style="background-color: #28a745;">Place Buy Order</button>
+                <button id="sell-order-btn" style="background-color: #dc3545;">Place Sell Order</button>
+            </div>
+        </div>
+        
+        <div id="results-display-container">
+            <strong>API Response:</strong>
+            <div id="results-display">Awaiting action...</div>
+        </div>
+    </div>
+
+    <!-- CryptoJS for MD5 hashing (used for JLogin password) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
+    <!-- IndexedDB wrapper library (idb) embedded to prevent CDN loading issues -->
+    <script>!function(e,t){"object"==typeof exports&&"undefined"!=typeof module?t(exports):"function"==typeof define&&define.amd?define(["exports"],t):t((e="undefined"!=typeof globalThis?globalThis:e||self).idb={})}(this,function(e){"use strict";let t,n;const r=new WeakMap,o=new WeakMap,s=new WeakMap,a=new WeakMap,i=new WeakMap;const c=e=>{const t=new Promise((t,n)=>{const r=()=>{e.removeEventListener("success",c),e.removeEventListener("error",u)},c=()=>{t(l(e.result)),r()},u=()=>{n(e.error),r()};e.addEventListener("success",c),e.addEventListener("error",u)});return t.then(t=>{t instanceof IDBCursor&&r.set(t,e)}),t},l=e=>e instanceof IDBDatabase?o.has(e)?o.get(e):new d(e):e instanceof IDBObjectStore?s.has(e)?s.get(e):new f(e):e instanceof IDBIndex?a.has(e)?a.get(e):new p(e):e instanceof IDBCursor?i.has(e)?i.get(e):new h(e):e instanceof IDBTransaction?r.has(e)?r.get(e):new m(e):e,u=e=>new Promise(t=>{const n=e.openCursor();n.addEventListener("success",()=>t(l(n.result)))});class d{constructor(e){o.set(this,e),this._db=e}get name(){return this._db.name}get version(){return this._db.version}get objectStoreNames(){return this._db.objectStoreNames}createObjectStore(e,t){return l(this._db.createObjectStore(e,t))}deleteObjectStore(e){this._db.deleteObjectStore(e)}transaction(e,t){return l(this._db.transaction(e,t))}close(){this._db.close()}get(e,...t){return this.transaction(e).get(...t)}getAll(e,...t){return this.transaction(e).getAll(...t)}add(e,...t){return this.transaction(e,"readwrite").add(...t)}put(e,...t){return this.transaction(e,"readwrite").put(...t)}delete(e,...t){return this.transaction(e,"readwrite").delete(...t)}clear(e,...t){return this.transaction(e,"readwrite").clear(...t)}count(e,...t){return this.transaction(e).count(...t)}}class f{constructor(e){s.set(this,e),this._store=e}get name(){return this._store.name}get keyPath(){return this._store.keyPath}get indexNames(){return this._store.indexNames}get transaction(){return l(this._store.transaction)}get autoIncrement(){return this._store.autoIncrement}get(e){return c(this._store.get(e))}getAll(e,t){return c(this._store.getAll(e,t))}getKey(e){return c(this._store.getKey(e))}getAllKeys(e,t){return c(this._store.getAllKeys(e,t))}count(e){return c(this._store.count(e))}put(e,t){return c(this._store.put(e,t))}add(e,t){return c(this._store.add(e,t))}delete(e){return c(this._store.delete(e))}clear(){return c(this._store.clear())}index(e){return l(this._store.index(e))}openCursor(e,t){return u(this._store.openCursor(e,t))}openKeyCursor(e,t){return u(this._store.openKeyCursor(e,t))}}class p{constructor(e){a.set(this,e),this._index=e}get name(){return this._index.name}get keyPath(){return this._index.keyPath}get multiEntry(){return this._index.multiEntry}get unique(){return this._index.unique}get(e){return c(this._index.get(e))}getAll(e,t){return c(this._index.getAll(e,t))}getKey(e){return c(this._index.getKey(e))}getAllKeys(e,t){return c(this._index.getAllKeys(e,t))}count(e){return c(this._index.count(e))}openCursor(e,t){return u(this._index.openCursor(e,t))}openKeyCursor(e,t){return u(this._index.openKeyCursor(e,t))}}class h{constructor(e){i.set(this,e),this._cursor=e}get source(){return l(this._cursor.source)}get direction(){return this._cursor.direction}get key(){return this._cursor.key}get primaryKey(){return this._cursor.primaryKey}get value(){return this._cursor.value}advance(e){this._cursor.advance(e)}continue(e){this._cursor.continue(e)}continuePrimaryKey(e,t){this._cursor.continuePrimaryKey(e,t)}delete(){return c(this._cursor.delete())}update(e){return c(this._cursor.update(e))}}class m{constructor(e){r.set(this,e),this._tx=e,this.done=new Promise((t,n)=>{e.oncomplete=()=>t(),e.onerror=()=>n(e.error),e.onabort=()=>n(e.error)})}get objectStoreNames(){return this._tx.objectStoreNames}get db(){return l(this._tx.db)}get mode(){return this._tx.mode}objectStore(e){return l(this._tx.objectStore(e))}abort(){this._tx.abort()}}e.deleteDB=function(e,{blocked:t}={}){const n=indexedDB.deleteDatabase(e);return n.onblocked=()=>t&&t(),c(n).then(()=>void 0)},e.openDB=function(e,t,{blocked:n,upgrade:r,blocking:o}={}){const s=indexedDB.open(e,t);s.onupgradeneeded=e=>{r&&r(l(s.result),e.oldVersion,e.newVersion,l(s.transaction))},s.onblocked=()=>n&&n(),s.onclose=()=>o&&o();const a=c(s);return a.then(e=>{e.onclose=()=>o&&o()}),a},e.unwrap=function(e){return(t||(t=new WeakMap),n||(n=new WeakMap),e instanceof d?e._db:e instanceof f?e._store:e instanceof p?e._index:e instanceof h?e._cursor:e instanceof m?e._tx:e)},e.wrap=l}));</script>
+    <script>
+        let loggedInUsername = null; // Store username from initial login
+        let loggedInBrokerId = null; // Store brokerId from initial login
+        let contractData = [];      // Will store the parsed contract file
+        let gcid = null;            // Will store the gcid from jlogin, required for orders
+        // NEW: Variables for WebSocket session details
+        let wsSessionId = null;
+        let irisIp = null;
+        let irisPort = null;
+        let apolloIp = null;
+        let apolloPort = null;
+        const resultsDisplay = document.getElementById('results-display');
+
+        // --- Core Application Logic ---
+
+        // --- IndexedDB for Storing Large Contract File ---
+        const dbName = 'GreekAPIDB';
+        const storeName = 'contractStore';
+
+        async function openDb() {
+            return idb.openDB(dbName, 1, {
+                upgrade(db) {
+                    if (!db.objectStoreNames.contains(storeName)) {
+                        db.createObjectStore(storeName);
+                    }
+                },
+            });
+        }
+
+        async function saveContractDataToDb(data) {
+            const db = await openDb();
+            const tx = db.transaction(storeName, 'readwrite');
+            const store = tx.objectStore(storeName);
+            await store.put(data, 'contractFile');
+            await store.put(Date.now(), 'contractTimestamp');
+            return tx.done;
+        }
+
+        async function loadContractDataFromDb() {
+            const db = await openDb();
+            const tx = db.transaction(storeName, 'readonly');
+            const store = tx.objectStore(storeName);
+            const timestamp = await store.get('contractTimestamp');
+            if (!timestamp) return null;
+
+            const today = new Date().toDateString();
+            const cacheDate = new Date(timestamp).toDateString();
+
+            if (today === cacheDate) {
+                return await store.get('contractFile');
+            }
+            return null; // Return null if cache is stale
+        }
+
+        async function clearContractDataFromDb() {
+            const db = await openDb();
+            const tx = db.transaction(storeName, 'readwrite');
+            await tx.objectStore(storeName).clear();
+            return tx.done;
+        }
+
+        // Function to switch to the post-login view and check for cached contracts
+        async function showPostLoginView() {
+            document.getElementById('login-main-container').style.display = 'none';
+            document.getElementById('post-login-actions').style.display = 'block';
+
+            // Check if contract data exists for today in the local database
+            const dbContractData = await loadContractDataFromDb();
+            if (dbContractData) {
+                setTimeout(() => {
+                    contractData = parseContractCSV(dbContractData);
+                    if (contractData && contractData.length > 0) {
+                        showResults(`Contracts Loaded from Local DB`, `Successfully loaded ${contractData.length} contracts from the local database.`);
+                        document.getElementById('contract-search-container').style.display = 'block';
+                        document.getElementById('fetch-contracts-btn').textContent = '1. Re-fetch Contracts';
+                    }
+                }, 10);
+            }
+        }
+        // On page load, check with the server if we have a valid session cookie
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                const response = await fetch('/api/session/status');
+                if (response.ok) { // A 200 OK response means the session cookie is valid
+                    const sessionData = await response.json();
+                    loggedInUsername = sessionData.username;
+                    loggedInBrokerId = sessionData.brokerId;
+                    await showPostLoginView();
+                    showResults('Session Restored', `Logged in as ${loggedInUsername} from a previous session.`);
+                }
+            } catch (error) {
+                console.log("No active session found on server.", error);
+            }
+        });
+
+        // Add a single click listener to the results display for event delegation
+        resultsDisplay.addEventListener('click', (event) => {
+            const selectedItem = event.target.closest('.search-result-item');
+            if (!selectedItem) return;
+
+            // Highlight the selected item
+            const currentlySelected = resultsDisplay.querySelector('.selected');
+            if (currentlySelected) {
+                currentlySelected.classList.remove('selected');
+            }
+            selectedItem.classList.add('selected');
+
+            const gtoken = selectedItem.getAttribute('data-gtoken');
+            const selectedContract = contractData.find(c => c.token === gtoken); // Use lowercase 'token'
+
+            // Hide order placement if no contract is found or if it's an invalid click
+            document.getElementById('order-placement-container').style.display = 'none';
+
+            // Only proceed if a valid contract was found
+            if (selectedContract) {
+                // Populate and show the order placement form
+                const orderPlacementDiv = document.getElementById('order-placement-container');
+                const lotSize = selectedContract.lotsize || '1';
+
+                document.getElementById('order-symbol').textContent = selectedItem.textContent;
+                // Display the lot size in the label and set input attributes
+                document.getElementById('lot-size-display').textContent = lotSize;
+                const qtyInput = document.getElementById('order-qty');
+                qtyInput.value = lotSize; // Pre-fill with one lot size for convenience
+                qtyInput.step = lotSize;
+                qtyInput.min = lotSize;
+
+                // Move data attributes to the container
+                orderPlacementDiv.setAttribute('data-gtoken', selectedContract.token);
+                orderPlacementDiv.setAttribute('data-exchange', selectedContract.exchange);
+                orderPlacementDiv.setAttribute('data-tradingsymbol', selectedContract.tradingsymbol);
+                orderPlacementDiv.setAttribute('data-symbol', selectedContract.symbol);
+                orderPlacementDiv.setAttribute('data-instrument', selectedContract.instrument);
+                orderPlacementDiv.setAttribute('data-lotsize', lotSize);
+
+                orderPlacementDiv.style.display = 'block';
+            }
+        });
+
+        // Simple CSV parser for the contract file
+        function parseContractCSV(csvText) {
+            try {
+                // Remove Byte Order Mark (BOM) if present, as it can interfere with parsing the first header
+                if (csvText.charCodeAt(0) === 0xFEFF) {
+                    csvText = csvText.substring(1);
+                }
+                const lines = csvText.trim().split('\n');
+                if (lines.length < 2) return [];
+                let headers = lines[0].split(',').map(h => h.trim().toLowerCase()); // Normalize headers to lowercase
+
+                // Map actual CSV headers to expected internal property names
+                const headerMap = {
+                    'greektoken': 'token',
+                    'exchangesegment': 'exchange',
+                    'tradingsymbol': 'tradingsymbol',
+                    'series/insttype': 'instrument', // Map for F&O detection
+                    'symbol': 'symbol', // Map for underlying symbol
+                    'description': 'description', 'lotsize': 'lotsize',
+                    'expirydate': 'expirydate', 'optiontype': 'optiontype', 'strikeprice': 'strikeprice'
+                };
+
+                // Create a new array of internal headers for validation
+                const internalHeaders = headers.map(header => headerMap[header] || header);
+
+                // Check for essential headers to ensure the file is valid
+                if (!internalHeaders.includes('token') || !internalHeaders.includes('exchange') || !internalHeaders.includes('tradingsymbol')) {
+                    throw new Error(`Contract file is missing required columns. It must contain 'token', 'exchange', and 'tradingsymbol'. Found headers: ${headers.join(', ')}`);
+                }
+
+                return lines.slice(1).map(line => {
+                    const values = line.split(',');
+                    const entry = {};
+                    headers.forEach((header, index) => { // Iterate over original headers
+                        const internalName = headerMap[header] || header; // Use mapped name or original
+                        entry[internalName] = values[index] ? values[index].trim() : '';
+                    });
+                    return entry;
+                });
+            } catch (e) {
+                console.error("Failed to parse contract CSV:", e);
+                // Pass the specific error message to the UI
+                showResults('Contract Parsing Error', { message: e.message });
+                return []; // Return empty array on failure
+            }
+        }
+
+        // Function to display results in the results box
+        function showResults(title, data) {
+            let content;
+            if (typeof data === 'string') {
+                // If data is a string, it might be a pre-formatted error or message
+                content = data;
+            } else {
+                // Otherwise, stringify the JSON object
+                content = JSON.stringify(data, null, 2);
+            }
+            resultsDisplay.innerHTML = `<strong>${title}</strong><br><br><pre><code>${content}</code></pre>`;
+        }
+
+        // Function to display a list of searchable contracts
+        function displaySearchResults(contracts, searchTerm) {
+            let header = `<strong>Found ${contracts.length} contracts for "${searchTerm}". Select one to place an order.</strong><br><br>`;
+            
+            let listHTML = contracts.map(contract => {
+                // Create a descriptive name for each contract. Assuming column names from a typical contract file.
+                let description = contract.description || contract.tradingsymbol || 'N/A'; // Use lowercase
+                
+                // For F&O, build a more detailed description
+                if (contract.instrument && (contract.instrument.toUpperCase().includes('FUT') || contract.instrument.toUpperCase().includes('OPT'))) {
+                    // Example: NIFTY 27JUN2024 23500 CE
+                    // Assuming ExpiryDate is in YYYYMMDD format or similar string
+                    let expiryDateFormatted = contract.expirydate; // Use lowercase
+                    if (expiryDateFormatted && expiryDateFormatted.length === 8 && !isNaN(expiryDateFormatted)) {
+                        const year = expiryDateFormatted.substring(0, 4);
+                        const month = expiryDateFormatted.substring(4, 6);
+                        const day = expiryDateFormatted.substring(6, 8);
+                        expiryDateFormatted = `${day}-${month}-${year}`; // DD-MM-YYYY
+                    }
+                    description = `${contract.tradingsymbol} ${expiryDateFormatted || ''} ${contract.strikeprice || ''} ${contract.optiontype || ''}`.replace(/\s+/g, ' ').trim(); // Use lowercase
+                }
+                // Add Exchange for clarity
+                description = `${description} (${contract.exchange || 'N/A'})`; // Use lowercase
+
+                return `<div class="search-result-item" data-gtoken="${contract.token}" title="Click to select">${description}</div>`; // Use lowercase
+            }).join('');
+
+            resultsDisplay.innerHTML = header + listHTML;
+        }
+
+        // 1. Fetch Contracts
+        document.getElementById('fetch-contracts-btn').addEventListener('click', async () => {
+            showResults('Fetching Contracts...', { status: 'In progress...' });
+            try {
+                const response = await fetch('/api-proxy/getAllContract', {
+                    method: 'GET' // Auth is handled by the server via cookie
+                });
+                // The contract file is large and not JSON, so we handle it as text
+                if (response.ok) {
+                    const data = await response.text();
+                    contractData = parseContractCSV(data);
+
+                    if (contractData && contractData.length > 0) {
+                        // Save the raw contract data to IndexedDB. This avoids the localStorage quota limit.
+                        await saveContractDataToDb(data);
+
+                        showResults(`Contracts Loaded & Saved (Status: ${response.status})`, `Successfully loaded and saved ${contractData.length} contracts to the local database. You can now search for a contract.`);
+                        document.getElementById('contract-search-container').style.display = 'block';
+                        document.getElementById('fetch-contracts-btn').textContent = '1. Re-fetch Contracts';
+                    } else {
+                        document.getElementById('contract-search-container').style.display = 'none';
+                        // The parseContractCSV function will have already shown an error message
+                    }
+                } else {
+                    contractData = [];
+                    document.getElementById('contract-search-container').style.display = 'none';
+                    const errorData = await response.json();
+                    showResults(`Error Fetching Contracts (Status: ${response.status})`, errorData);
+                }
+            } catch (error) {
+                // Check for QuotaExceededError which is a common reason for failure with large data
+                if (error.name === 'QuotaExceededError') {
+                    showResults('Error Fetching Contracts', { error: "The contract file is too large to be cached in your browser's localStorage. This version attempts to use IndexedDB, but an error still occurred." });
+                } else {
+                    showResults('Error Fetching Contracts', { error: error.message });
+                }
+            }
+        });
+
+        // 2. Perform Websocket JLogin
+        document.getElementById('jlogin-btn').addEventListener('click', async () => {
+            showResults('Performing JLogin...', { status: 'In progress...' });
+
+            const passwordForJLogin = prompt("Please enter your password for JLogin:", "");
+            if (!passwordForJLogin) {
+                showResults('JLogin Cancelled', 'Password was not provided.');
+                return;
+            }
+            const jloginHashedPass = CryptoJS.MD5(passwordForJLogin.toUpperCase()).toString();
+
+            // Get the pan_dob from the new input field
+            const panDob = document.getElementById('pan-dob-input').value;
+
+            // The successful Postman request uses brokerid: "1" for this specific call,
+            // which is different from the brokerId used for the initial session login (22).
+            const jloginBody = { "request": { "data": { "pan_dob": panDob, "deviceId": "4f89423bab1280c9", "gscid": loggedInUsername.toUpperCase(), "deviceDetails": "", "deviceType": "0", "pass": jloginHashedPass, "transPass": "", "userType": "Customer", "brokerid": "1", "passType": "0", "version_no": "1.0.1.10", "encryptionType": "1" }, "svcName": "jloginNew", "svcGroup": "Login" } };
+            try {
+                const response = await fetch('/api-proxy/jloginNew', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(jloginBody)
+                });
+                const data = await response.json();
+                // A successful JLogin has an ErrorCode of 0 and returns the ClientCode, which we use as the GCID for subsequent requests.
+                const responseData = data.response ? data.response.data : null;
+
+                if (response.ok && responseData && responseData.ErrorCode === 0 && responseData.ClientCode) {
+                    gcid = responseData.ClientCode; // The API returns 'ClientCode', which we will use as 'gcid'.
+                    
+                    // --- NEW: The backend now returns all session data in one go ---
+                    const wsData = data.response.data;
+                    wsSessionId = data.response.sessionId;
+                    irisIp = wsData.Iris_IP;
+                    irisPort = wsData.Iris_Port;
+                    apolloIp = wsData.Apollo_IP;
+                    apolloPort = wsData.Apollo_Port;
+
+                    const sessionDetails = {
+                        gcid: gcid,
+                        websocketSessionId: wsSessionId,
+                        interactiveSocket: `${irisIp}:${irisPort}`,
+                        marketdataSocket: `${apolloIp}:${apolloPort}`
+                    };
+                    showResults('Full Session Ready', sessionDetails);
+
+                } else {
+                    gcid = null;
+                    showResults(`JLogin Failed (Status: ${response.status})`, data);
+                }
+            } catch (error) {
+                showResults('Error during JLogin', { error: error.message });
+            }
+        });
+
+        // New button and handler for clearing the local contract database
+        document.getElementById('clear-db-btn').addEventListener('click', async () => {
+            contractData = []; // Clear in-memory data
+            await clearContractDataFromDb();
+            document.getElementById('contract-search-container').style.display = 'none';
+            document.getElementById('order-placement-container').style.display = 'none';
+            document.getElementById('fetch-contracts-btn').textContent = '1. Fetch Contracts';
+            showResults('Database Cleared', 'Local contract data has been cleared. You will need to fetch it again.');
+        });
+
+
+        // 3. Search for a contract
+        document.getElementById('search-contract-btn').addEventListener('click', () => {
+            const searchTerm = document.getElementById('search-symbol-input').value.toUpperCase().trim();
+            if (!searchTerm) {
+                showResults('Search Error', 'Please enter a symbol to search.');
+                return;
+            }
+
+            // Hide order form from previous selections, it will be shown again if a contract is selected
+            document.getElementById('order-placement-container').style.display = 'none';
+
+            // Find ALL contracts that match the trading symbol for futures and options
+            // Use startsWith to find equities, futures, and options for an underlying symbol.
+            const foundContracts = contractData.filter(c => c.tradingsymbol && c.tradingsymbol.startsWith(searchTerm)); // Use lowercase
+
+            if (foundContracts.length > 0) {
+                displaySearchResults(foundContracts, searchTerm);
+            } else {
+                showResults(`Contract Not Found`, `No contracts found with the symbol "${searchTerm}".`);
+            }
+        });
+
+        // --- NEW: Unified Order Placement Logic ---
+        async function handleOrderPlacement(side) {
+            const orderContainer = document.getElementById('order-placement-container');
+            const gtoken = orderContainer.getAttribute('data-gtoken');
+            const priceInput = document.getElementById('order-price');
+            const userPrice = parseFloat(priceInput.value);
+
+            if (!gcid) {
+                showResults('Order Error', 'Cannot place order. Please perform "JLogin" first to get a GCID.');
+                return;
+            }
+            if (!gtoken) {
+                showResults('Order Error', 'Contract details are missing. Please select a contract again.');
+                return;
+            }
+
+            // If user has not entered a price, fetch it. Otherwise, use the user's price.
+            if (userPrice <= 0) {
+                showResults('Fetching Market Depth...', { status: 'In progress...' });
+
+                // 1. Fetch Market Depth using getQuoteForSingleSymbol_V2
+                const quoteBody = {
+                    "request": {
+                        "data": {
+                            "token": gtoken,
+                            "assetType": "option", // Assuming option, can be made dynamic if needed
+                            "gscid": loggedInUsername.toUpperCase(),
+                            "gcid": gcid
+                        },
+                        "svcName": "getQuoteForSingleSymbol_V2",
+                        "svcGroup": "Markets"
+                    }
+                };
+
+                try {
+                    const depthResponse = await fetch('/api-proxy/getQuoteForSingleSymbol_V2', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(quoteBody)
+                    });
+                    const depthData = await depthResponse.json();
+                    const quoteData = depthData.response?.data;
+
+                    if (depthResponse.ok && quoteData) { // Check if quoteData itself is not null/undefined
+                        // More robust price extraction to handle different possible response structures
+                        let bidPrice = 0;
+                        let askPrice = 0;
+
+                        // Case 1: Nested BidInfo/AskInfo objects
+                        if (quoteData.BidInfo && quoteData.BidInfo.Price) {
+                            bidPrice = parseFloat(quoteData.BidInfo.Price);
+                        }
+                        if (quoteData.AskInfo && quoteData.AskInfo.Price) {
+                            askPrice = parseFloat(quoteData.AskInfo.Price);
+                        }
+
+                        // Case 2: Flat bid/ask properties (fallback)
+                        if (bidPrice <= 0 && quoteData.bid) bidPrice = parseFloat(quoteData.bid);
+                        if (askPrice <= 0 && quoteData.ask) askPrice = parseFloat(quoteData.ask);
+
+
+                        const marketPrice = (side === 'BUY') ? askPrice : bidPrice;
+
+                        if (marketPrice <= 0) {
+                            throw new Error(`Invalid ${side === 'BUY' ? 'ask' : 'bid'} price received: ${marketPrice}`);
+                        }
+
+                        priceInput.value = marketPrice;
+                        showResults('Price Fetched', `Placing ${side} order at limit price: ${marketPrice}`);
+                    } else {
+                        throw new Error(depthData.message || 'Failed to fetch market depth.');
+                    }
+                } catch (error) {
+                    showResults('Order Aborted', { message: `Failed to fetch live price. Please try again.`, error: error.message });
+                    return; // Stop the function here
+                }
+            } else {
+                showResults('Using Manual Price', `Placing ${side} order at limit price: ${userPrice}`);
+            }
+
+
+            // 2. Place the order
+            const exchangeFromContract = orderContainer.getAttribute('data-exchange');
+            const fullTradeSymbol = orderContainer.getAttribute('data-tradingsymbol');
+            const underlyingSymbol = orderContainer.getAttribute('data-symbol');
+            const instrument = orderContainer.getAttribute('data-instrument');
+            const lotSize = parseInt(orderContainer.getAttribute('data-lotsize') || '1');
+            const qty = document.getElementById('order-qty').value;
+            const price = priceInput.value;
+
+            const tradeSymbolForRequest = (instrument && (instrument.toUpperCase().includes('FUT') || instrument.toUpperCase().includes('OPT')))
+                ? underlyingSymbol
+                : fullTradeSymbol;
+
+            let apiExchangeValue = exchangeFromContract.startsWith('NSE') ? 'NSE' : (exchangeFromContract.startsWith('BSE') ? 'BSE' : exchangeFromContract);
+
+            const userEnteredQty = parseInt(qty);
+            if (userEnteredQty % lotSize !== 0) {
+                showResults('Order Error', `Quantity must be a multiple of the lot size (${lotSize}). You entered ${userEnteredQty}.`);
+                return;
+            }
+            const lots = userEnteredQty / lotSize;
+            const orderSideCode = (side === 'BUY') ? "1" : "2";
+
+            // Construct the order body based on the documentation
+            const orderBody = {
+                "request": {
+                    "data": {
+                        "gtoken": gtoken,
+                        "side": orderSideCode,
+                        "gcid": gcid,
+                        "price": String(price),
+                        "order_type": "1", // 1 for LIMIT order
+                        "qty": String(userEnteredQty),
+                        "validity": "0", // Add validity for the order (0 = DAY)
+                        "exchange": apiExchangeValue, // Add the exchange field
+                        "tradeSymbol": tradeSymbolForRequest, // Add the tradeSymbol
+                        "product": "0", // Add product type (e.g., 0 for MIS/NRML)
+                        "is_preopen_order": "0", // FIX: Add pre-open order flag
+                        "is_post_closed": "0",   // FIX: Add post-closed order flag
+                        "is_restapi": "1",       // Add rest-api flag
+                        "disclosed_qty": "0",    // FIX: Add disclosed quantity
+                        "lot": String(lots)      // Add lot count
+                        // The docs show a simpler body; adding extra fields only if needed.
+                    },
+                    "response_format": "json",
+                    "request_type": "subscribe",
+                    "streaming_type": "NewOrderRequest"
+                }
+            };
+
+            showResults('Placing Order...', orderBody);
+
+            try {
+                const response = await fetch('/api-proxy/NewOrderRequest', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(orderBody)
+                });
+                const data = await response.json();
+                showResults(`Order Response (Status: ${response.status})`, data);
+            } catch (error) {
+                showResults('Error Placing Order', { error: error.message });
+            }
+        }
+
+        document.getElementById('buy-order-btn').addEventListener('click', () => handleOrderPlacement('BUY'));
+        document.getElementById('sell-order-btn').addEventListener('click', () => handleOrderPlacement('SELL'));
+
+        // Logout handler
+        document.getElementById('logout-btn').addEventListener('click', async () => {
+            localStorage.removeItem('greekUsername');
+            localStorage.removeItem('greekBrokerId');
+
+            try {
+                await fetch('/logout', { method: 'POST' });
+            } catch (e) {
+                console.error("Logout request to server failed, but clearing UI anyway.", e);
+            }
+
+            // Reload the page to ensure all state is cleared and user is back at login
+            // Reset global state variables
+            userPassword = null;
+            loggedInUsername = null;
+            loggedInBrokerId = null;
+            gcid = null;
+            wsSessionId = null;
+            irisIp = null;
+            irisPort = null;
+            apolloIp = null;
+            apolloPort = null;
+            contractData = []; // Clear in-memory contracts
+
+            window.location.reload();
+        });
+
+        // New handler for selling an ATM straddle
+        document.getElementById('sell-straddle-btn').addEventListener('click', async () => {
+            const symbol = document.getElementById('straddle-symbol-select').value;
+            const lots = parseInt(document.getElementById('straddle-lots-input').value);
+
+            if (lots <= 0) {
+                showResults('Error', 'Lots must be greater than 0.');
+                return;
+            }
+
+            showResults('Selling ATM Straddle...', { symbol, lots });
+
+            try {
+                const response = await fetch('/api/straddle/sell', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbol, lots }) });
+                const data = await response.json();
+                showResults(`Sell Straddle Response (Status: ${response.status})`, data);
+            } catch (error) {
+                showResults('Error Selling Straddle', { error: error.message });
+            }
+        });
+
+        document.getElementById('login-form').addEventListener('submit', async function(event) {
+            event.preventDefault();
+
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const brokerId = document.getElementById('brokerId').value;
+            const messageDiv = document.getElementById('message');
+
+            messageDiv.textContent = 'Logging in...';
+            messageDiv.className = '';
+
+            // Use the Python proxy for the login request
+            const sessionUrl = '/login'; 
+            const requestBody = { username, password, validFor: "30d", brokerId: parseInt(brokerId) };
+
+            try {
+                const response = await fetch(sessionUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody),
+                });
+                const responseData = await response.json();
+
+                if (response.ok) { // Use .ok for any 2xx status code
+                    // The server now returns username and brokerId on successful login
+                    loggedInUsername = responseData.username;
+                    loggedInBrokerId = responseData.brokerId;
+                    localStorage.setItem('greekUsername', loggedInUsername);
+                    localStorage.setItem('greekBrokerId', loggedInBrokerId);
+                    await showPostLoginView(); // Show actions panel
+                } else {
+                    messageDiv.textContent = `Login failed: ${responseData.message || response.statusText}`;
+                    messageDiv.className = 'error';
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                messageDiv.textContent = 'Request failed. Is the Python server running? Check the console.';
+                messageDiv.className = 'error';
+            }
+        });
+    </script>
+</body>
+</html>

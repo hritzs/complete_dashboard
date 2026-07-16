@@ -30,6 +30,9 @@ double implied_volatility(char option_type, double K, double S, double T, double
 // Calculate all Greeks in a single pass returning a structured Greeks object
 Greeks calculate_all_greeks(char option_type, double K, double S, double T, double option_price, double r = 0.0);
 
+// Calculate all Greeks from a given implied volatility
+Greeks calculate_greeks_from_iv(char option_type, double K, double S, double T, double iv, double r = 0.0);
+
 // Calculate combined Greeks for a short straddle position
 Greeks calculate_straddle_greeks(const Greeks& ce_greeks, const Greeks& pe_greeks, int ce_quantity, int pe_quantity);
 

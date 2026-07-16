@@ -2,84 +2,57 @@ package interactive
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"time"
 
+	xts "trading-platform/libs/broker-xts"
+	"trading-platform/libs/broker-xts/auth"
 	broker "trading-platform/libs/go-broker"
 )
 
-type XTSPlaceOrderRequest struct {
-	ExchangeSegment       string  `json:"exchangeSegment"`
-	ExchangeInstrumentID  int     `json:"exchangeInstrumentID"`
-	ProductType           string  `json:"productType"`
-	OrderType             string  `json:"orderType"`
-	OrderSide             string  `json:"orderSide"`
-	TimeInForce           string  `json:"timeInForce"`
-	DisclosedQuantity     int     `json:"disclosedQuantity"`
-	OrderQuantity         int     `json:"orderQuantity"`
-	LimitPrice            float64 `json:"limitPrice"`
-	StopPrice             float64 `json:"stopPrice"`
-	OrderUniqueIdentifier string  `json:"orderUniqueIdentifier"`
-	ClientID              string  `json:"clientID"`
-}
-
-type XTSPlaceOrderResponse struct {
-	Type        string `json:"type"`
-	Code        string `json:"code"`
-	Description string `json:"description"`
-	Result      struct {
-		AppOrderID string `json:"AppOrderID"`
-	} `json:"result"`
-}
-
-// PlaceOrder translates an internal OrderIntent into an XTS Interactive HTTP request
-func PlaceOrder(ctx context.Context, baseURL, token, clientID string, intent *broker.OrderIntent) (*broker.OrderResponse, error) {
-	url := baseURL + "/interactive/orders"
-
-	reqPayload := XTSPlaceOrderRequest{
-		ExchangeSegment:       intent.ExchangeSegment,
-		ExchangeInstrumentID:  intent.InstrumentToken,
-		ProductType:           "MIS",
-		OrderType:             "LIMIT",
-		OrderSide:             intent.Side,
-		TimeInForce:           "DAY",
-		DisclosedQuantity:     0,
-		OrderQuantity:         intent.Quantity,
-		LimitPrice:            intent.LimitPrice,
-		StopPrice:             0,
-		OrderUniqueIdentifier: intent.IntentID,
-		ClientID:              clientID,
+func PlaceOrder(c *xts.Client, intent broker.OrderIntent, orderUID string, limitPrice float64) error {
+	if err := auth.EnsureLogin(c); err != nil {
+		return err
 	}
 
-	reqBody, _ := json.Marshal(reqPayload)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(reqBody))
+	payload := map[string]interface{}{
+		"exchangeSegment":       intent.ExchangeSegment,
+		"exchangeInstrumentID":  intent.InstrumentToken,
+		"productType":           intent.ProductType,
+		"orderType":             intent.OrderType,
+		"orderSide":             intent.Side,
+		"timeInForce":           "DAY",
+		"disclosedQuantity":     0,
+		"orderQuantity":         intent.Quantity,
+		"limitPrice":            limitPrice,
+		"stopPrice":             0.0,
+		"orderUniqueIdentifier": orderUID,
+		"clientID":              intent.ClientID,
+	}
+	pb, _ := json.Marshal(payload)
+	req, err := http.NewRequest("POST", c.BaseURL+"/interactive/orders", bytes.NewBuffer(pb))
 	if err != nil {
-		return nil, err
+		return err
 	}
-
-	req.Header.Set("Authorization", token)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Do(req)
+	c.Mu.Lock()
+	req.Header.Set("authorization", c.Token)
+	c.Mu.Unlock()
+
+	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("XTS order request failed: %w", err)
+		return err
 	}
 	defer resp.Body.Close()
 
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	var orderRes XTSPlaceOrderResponse
-	if err := json.Unmarshal(bodyBytes, &orderRes); err != nil || orderRes.Type != "success" {
-		return nil, fmt.Errorf("XTS order placement failed: %s", orderRes.Description)
+	var out map[string]interface{}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("XTS rejected order (HTTP %d): %v", resp.StatusCode, out)
 	}
 
-	return &broker.OrderResponse{
-		Status:        "SUBMITTED",
-		BrokerOrderID: orderRes.Result.AppOrderID,
-		RawResponse:   string(bodyBytes),
-	}, nil
+	return nil
 }

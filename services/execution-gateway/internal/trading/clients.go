@@ -1,0 +1,138 @@
+package trading
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+)
+
+type SnapshotClient struct {
+	BaseURL string
+}
+
+func NewSnapshotClient() *SnapshotClient {
+	return &SnapshotClient{
+		BaseURL: "http" + "://127.0.0.1:8003",
+	}
+}
+
+func (c *SnapshotClient) GetOptionChain(ctx context.Context, symbol string, expiry string) (*OptionChainSnapshot, error) {
+	u := fmt.Sprintf("%s/api/option-chain/%s", strings.TrimRight(c.BaseURL, "/"), url.PathEscape(strings.TrimSpace(symbol)))
+	if strings.TrimSpace(expiry) != "" {
+		u = fmt.Sprintf("%s?expiry=%s", u, url.QueryEscape(strings.TrimSpace(expiry)))
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot fetch failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("snapshot service returned %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Success bool                `json:"success"`
+		Data    OptionChainSnapshot `json:"data"`
+		Error   string              `json:"error"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("snapshot parse error: %w", err)
+	}
+
+	if !result.Success {
+		return nil, fmt.Errorf("snapshot error: %s", result.Error)
+	}
+
+	return &result.Data, nil
+}
+
+type LotSizeClient struct {
+	BaseURL string
+}
+
+func NewLotSizeClient() *LotSizeClient {
+	return &LotSizeClient{
+		BaseURL: "http" + "://127.0.0.1:8010",
+	}
+}
+
+func (c *LotSizeClient) GetLotSize(ctx context.Context, symbol string, expiry string) (int, error) {
+	q := url.Values{}
+	q.Set("symbol", strings.TrimSpace(symbol))
+
+	if strings.TrimSpace(expiry) != "" {
+		q.Set("expiry", strings.TrimSpace(expiry))
+	}
+
+	u := fmt.Sprintf("%s/api/lot-size?%s", strings.TrimRight(c.BaseURL, "/"), q.Encode())
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("lot size fetch failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("lot size API returned %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Success bool   `json:"success"`
+		LotSize int    `json:"lot_size"`
+		Error   string `json:"error"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, fmt.Errorf("lot size parse error: %w", err)
+	}
+
+	if !result.Success || result.LotSize <= 0 {
+		return 0, fmt.Errorf("lot size missing: %s", result.Error)
+	}
+
+	return result.LotSize, nil
+}
+
+func FormatExpiryForContractMaster(expiry string) string {
+	s := strings.TrimSpace(expiry)
+	if s == "" {
+		return s
+	}
+
+	layouts := []string{
+		"02Jan2006",
+		"02JAN2006",
+		"02-Jan-2006",
+		"02-JAN-2006",
+		"02-Jan-06",
+		"02-JAN-06",
+		"2006-01-02",
+		"2006-01-02T15:04:05",
+		time.RFC3339,
+	}
+
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return strings.ToUpper(t.Format("02-Jan-06"))
+		}
+	}
+
+	return strings.ToUpper(s)
+}

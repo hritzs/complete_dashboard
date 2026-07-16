@@ -11,8 +11,10 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/chain_builder.cpp.o: /home
   /usr/include/asm-generic/int-ll64.h \
   /usr/include/asm-generic/posix_types.h \
   /usr/include/asm-generic/types.h \
+  /usr/include/c++/15/algorithm \
   /usr/include/c++/15/backward/binders.h \
   /usr/include/c++/15/bit \
+  /usr/include/c++/15/bits/algorithmfwd.h \
   /usr/include/c++/15/bits/alloc_traits.h \
   /usr/include/c++/15/bits/allocator.h \
   /usr/include/c++/15/bits/basic_ios.h \
@@ -63,20 +65,24 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/chain_builder.cpp.o: /home
   /usr/include/c++/15/bits/specfun.h \
   /usr/include/c++/15/bits/std_abs.h \
   /usr/include/c++/15/bits/std_mutex.h \
+  /usr/include/c++/15/bits/stl_algo.h \
   /usr/include/c++/15/bits/stl_algobase.h \
   /usr/include/c++/15/bits/stl_bvector.h \
   /usr/include/c++/15/bits/stl_construct.h \
   /usr/include/c++/15/bits/stl_function.h \
+  /usr/include/c++/15/bits/stl_heap.h \
   /usr/include/c++/15/bits/stl_iterator.h \
   /usr/include/c++/15/bits/stl_iterator_base_funcs.h \
   /usr/include/c++/15/bits/stl_iterator_base_types.h \
   /usr/include/c++/15/bits/stl_pair.h \
+  /usr/include/c++/15/bits/stl_tempbuf.h \
   /usr/include/c++/15/bits/stl_uninitialized.h \
   /usr/include/c++/15/bits/stl_vector.h \
   /usr/include/c++/15/bits/streambuf.tcc \
   /usr/include/c++/15/bits/streambuf_iterator.h \
   /usr/include/c++/15/bits/string_view.tcc \
   /usr/include/c++/15/bits/stringfwd.h \
+  /usr/include/c++/15/bits/uniform_int_dist.h \
   /usr/include/c++/15/bits/unique_lock.h \
   /usr/include/c++/15/bits/unordered_map.h \
   /usr/include/c++/15/bits/uses_allocator.h \
@@ -114,6 +120,8 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/chain_builder.cpp.o: /home
   /usr/include/c++/15/mutex \
   /usr/include/c++/15/new \
   /usr/include/c++/15/ostream \
+  /usr/include/c++/15/pstl/execution_defs.h \
+  /usr/include/c++/15/pstl/glue_algorithm_defs.h \
   /usr/include/c++/15/pstl/pstl_config.h \
   /usr/include/c++/15/ratio \
   /usr/include/c++/15/shared_mutex \
@@ -408,8 +416,11 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/greeks_calculator.cpp.o: /
   /usr/include/c++/15/bits/stl_iterator.h \
   /usr/include/c++/15/bits/stl_iterator_base_funcs.h \
   /usr/include/c++/15/bits/stl_iterator_base_types.h \
+  /usr/include/c++/15/bits/stl_map.h \
+  /usr/include/c++/15/bits/stl_multimap.h \
   /usr/include/c++/15/bits/stl_pair.h \
   /usr/include/c++/15/bits/stl_tempbuf.h \
+  /usr/include/c++/15/bits/stl_tree.h \
   /usr/include/c++/15/bits/stl_uninitialized.h \
   /usr/include/c++/15/bits/stl_vector.h \
   /usr/include/c++/15/bits/string_view.tcc \
@@ -442,6 +453,7 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/greeks_calculator.cpp.o: /
   /usr/include/c++/15/initializer_list \
   /usr/include/c++/15/iosfwd \
   /usr/include/c++/15/limits \
+  /usr/include/c++/15/map \
   /usr/include/c++/15/new \
   /usr/include/c++/15/pstl/execution_defs.h \
   /usr/include/c++/15/pstl/glue_algorithm_defs.h \
@@ -655,7 +667,6 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/main.cpp.o: /home/ubuntu/D
   /usr/include/c++/15/bits/shared_ptr.h \
   /usr/include/c++/15/bits/shared_ptr_base.h \
   /usr/include/c++/15/bits/specfun.h \
-  /usr/include/c++/15/bits/sstream.tcc \
   /usr/include/c++/15/bits/std_abs.h \
   /usr/include/c++/15/bits/std_mutex.h \
   /usr/include/c++/15/bits/std_thread.h \
@@ -733,7 +744,6 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/main.cpp.o: /home/ubuntu/D
   /usr/include/c++/15/queue \
   /usr/include/c++/15/ratio \
   /usr/include/c++/15/shared_mutex \
-  /usr/include/c++/15/sstream \
   /usr/include/c++/15/stdexcept \
   /usr/include/c++/15/streambuf \
   /usr/include/c++/15/string \
@@ -919,8 +929,10 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/message_parser.cpp.o: /hom
   /usr/include/asm-generic/int-ll64.h \
   /usr/include/asm-generic/posix_types.h \
   /usr/include/asm-generic/types.h \
+  /usr/include/c++/15/algorithm \
   /usr/include/c++/15/backward/binders.h \
   /usr/include/c++/15/bit \
+  /usr/include/c++/15/bits/algorithmfwd.h \
   /usr/include/c++/15/bits/alloc_traits.h \
   /usr/include/c++/15/bits/allocator.h \
   /usr/include/c++/15/bits/basic_ios.h \
@@ -968,21 +980,32 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/message_parser.cpp.o: /hom
   /usr/include/c++/15/bits/requires_hosted.h \
   /usr/include/c++/15/bits/specfun.h \
   /usr/include/c++/15/bits/std_abs.h \
+  /usr/include/c++/15/bits/stl_algo.h \
   /usr/include/c++/15/bits/stl_algobase.h \
+  /usr/include/c++/15/bits/stl_bvector.h \
   /usr/include/c++/15/bits/stl_construct.h \
   /usr/include/c++/15/bits/stl_function.h \
+  /usr/include/c++/15/bits/stl_heap.h \
   /usr/include/c++/15/bits/stl_iterator.h \
   /usr/include/c++/15/bits/stl_iterator_base_funcs.h \
   /usr/include/c++/15/bits/stl_iterator_base_types.h \
+  /usr/include/c++/15/bits/stl_map.h \
+  /usr/include/c++/15/bits/stl_multimap.h \
   /usr/include/c++/15/bits/stl_pair.h \
+  /usr/include/c++/15/bits/stl_tempbuf.h \
+  /usr/include/c++/15/bits/stl_tree.h \
+  /usr/include/c++/15/bits/stl_uninitialized.h \
+  /usr/include/c++/15/bits/stl_vector.h \
   /usr/include/c++/15/bits/streambuf.tcc \
   /usr/include/c++/15/bits/streambuf_iterator.h \
   /usr/include/c++/15/bits/string_view.tcc \
   /usr/include/c++/15/bits/stringfwd.h \
+  /usr/include/c++/15/bits/uniform_int_dist.h \
   /usr/include/c++/15/bits/unordered_map.h \
   /usr/include/c++/15/bits/uses_allocator.h \
   /usr/include/c++/15/bits/uses_allocator_args.h \
   /usr/include/c++/15/bits/utility.h \
+  /usr/include/c++/15/bits/vector.tcc \
   /usr/include/c++/15/bits/version.h \
   /usr/include/c++/15/cctype \
   /usr/include/c++/15/cerrno \
@@ -994,6 +1017,7 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/message_parser.cpp.o: /hom
   /usr/include/c++/15/cstdint \
   /usr/include/c++/15/cstdio \
   /usr/include/c++/15/cstdlib \
+  /usr/include/c++/15/cstring \
   /usr/include/c++/15/cwchar \
   /usr/include/c++/15/cwctype \
   /usr/include/c++/15/debug/assertions.h \
@@ -1011,8 +1035,11 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/message_parser.cpp.o: /hom
   /usr/include/c++/15/iostream \
   /usr/include/c++/15/istream \
   /usr/include/c++/15/limits \
+  /usr/include/c++/15/map \
   /usr/include/c++/15/new \
   /usr/include/c++/15/ostream \
+  /usr/include/c++/15/pstl/execution_defs.h \
+  /usr/include/c++/15/pstl/glue_algorithm_defs.h \
   /usr/include/c++/15/pstl/pstl_config.h \
   /usr/include/c++/15/stdexcept \
   /usr/include/c++/15/streambuf \
@@ -1035,6 +1062,7 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/message_parser.cpp.o: /hom
   /usr/include/c++/15/type_traits \
   /usr/include/c++/15/typeinfo \
   /usr/include/c++/15/unordered_map \
+  /usr/include/c++/15/vector \
   /usr/include/ctype.h \
   /usr/include/endian.h \
   /usr/include/errno.h \
@@ -1053,6 +1081,8 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/message_parser.cpp.o: /hom
   /usr/include/stdint.h \
   /usr/include/stdio.h \
   /usr/include/stdlib.h \
+  /usr/include/string.h \
+  /usr/include/strings.h \
   /usr/include/time.h \
   /usr/include/wchar.h \
   /usr/include/wctype.h \
@@ -1250,6 +1280,7 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/normalizer.cpp.o: /home/ub
   /usr/include/c++/15/cstdint \
   /usr/include/c++/15/cstdio \
   /usr/include/c++/15/cstdlib \
+  /usr/include/c++/15/ctime \
   /usr/include/c++/15/cwchar \
   /usr/include/c++/15/cwctype \
   /usr/include/c++/15/debug/assertions.h \
@@ -1462,7 +1493,10 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/packet_dispatch.cpp.o: /ho
   /usr/include/c++/15/bits/stl_iterator.h \
   /usr/include/c++/15/bits/stl_iterator_base_funcs.h \
   /usr/include/c++/15/bits/stl_iterator_base_types.h \
+  /usr/include/c++/15/bits/stl_map.h \
+  /usr/include/c++/15/bits/stl_multimap.h \
   /usr/include/c++/15/bits/stl_pair.h \
+  /usr/include/c++/15/bits/stl_tree.h \
   /usr/include/c++/15/bits/stl_uninitialized.h \
   /usr/include/c++/15/bits/stl_vector.h \
   /usr/include/c++/15/bits/streambuf.tcc \
@@ -1501,6 +1535,7 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/packet_dispatch.cpp.o: /ho
   /usr/include/c++/15/iostream \
   /usr/include/c++/15/istream \
   /usr/include/c++/15/limits \
+  /usr/include/c++/15/map \
   /usr/include/c++/15/new \
   /usr/include/c++/15/ostream \
   /usr/include/c++/15/pstl/pstl_config.h \
@@ -2018,8 +2053,6 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/chain_builder.cpp.o:
 
 /usr/include/x86_64-linux-gnu/bits/fcntl-linux.h:
 
-/usr/include/string.h:
-
 /usr/include/linux/openat2.h:
 
 /usr/include/fcntl.h:
@@ -2035,6 +2068,10 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/chain_builder.cpp.o:
 /usr/lib/x86_64-linux-gnu/libc_nonshared.a:
 
 /home/ubuntu/Desktop/api_gs/trading-platform/services/feed-decoder/src/packet_dispatch.cpp:
+
+/usr/include/c++/15/bits/sstream.tcc:
+
+/usr/include/string.h:
 
 /usr/include/zmq.h:
 
@@ -2098,8 +2135,6 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/decompressor.cpp.o:
 
 /usr/include/c++/15/queue:
 
-/usr/include/c++/15/map:
-
 /usr/include/c++/15/fstream:
 
 /usr/include/asm-generic/sockios.h:
@@ -2107,8 +2142,6 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/decompressor.cpp.o:
 /usr/include/c++/15/bits/unique_ptr.h:
 
 /usr/include/c++/15/bits/stl_queue.h:
-
-/usr/include/c++/15/bits/sstream.tcc:
 
 services/feed-decoder/CMakeFiles/feed-decoder.dir/src/packet_dispatch.cpp.o:
 
@@ -2130,19 +2163,7 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/packet_dispatch.cpp.o:
 
 /home/ubuntu/Desktop/api_gs/trading-platform/services/feed-decoder/src/main.cpp:
 
-/usr/include/c++/15/pstl/execution_defs.h:
-
-/usr/include/c++/15/bits/uniform_int_dist.h:
-
-/usr/include/c++/15/bits/deque.tcc:
-
-/usr/include/c++/15/bits/stl_tempbuf.h:
-
-/usr/include/c++/15/bits/stl_algo.h:
-
-/usr/include/x86_64-linux-gnu/bits/socket.h:
-
-/usr/include/c++/15/bits/algorithmfwd.h:
+/usr/include/c++/15/map:
 
 /home/ubuntu/Desktop/api_gs/trading-platform/services/feed-decoder/include/decoder/normalizer.hpp:
 
@@ -2170,17 +2191,25 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/packet_dispatch.cpp.o:
 
 /usr/include/limits.h:
 
-/usr/include/c++/15/tr1/gamma.tcc:
+/home/ubuntu/Desktop/api_gs/trading-platform/services/feed-decoder/include/decoder/decompressor.hpp:
 
-/usr/include/c++/15/tr1/exp_integral.tcc:
+/home/ubuntu/Desktop/api_gs/trading-platform/services/feed-decoder/src/decompressor.cpp:
 
-/usr/include/x86_64-linux-gnu/bits/struct_stat.h:
+/usr/include/x86_64-linux-gnu/bits/xopen_lim.h:
 
-/usr/include/c++/15/bits/streambuf_iterator.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/stdint.h:
 
-/usr/include/x86_64-linux-gnu/bits/types/struct_sigstack.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/stdarg.h:
 
-/usr/include/x86_64-linux-gnu/bits/types/__locale_t.h:
+/home/ubuntu/Desktop/api_gs/trading-platform/services/feed-decoder/include/decoder/socket_reader.hpp:
+
+/usr/include/x86_64-linux-gnu/sys/types.h:
+
+/usr/include/x86_64-linux-gnu/sys/single_threaded.h:
+
+/usr/include/x86_64-linux-gnu/asm/socket.h:
+
+/usr/include/x86_64-linux-gnu/sys/select.h:
 
 /usr/include/c++/15/string:
 
@@ -2188,23 +2217,13 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/packet_dispatch.cpp.o:
 
 /usr/include/c++/15/bits/node_handle.h:
 
-/usr/include/c++/15/tr1/beta_function.tcc:
-
-/usr/lib/x86_64-linux-gnu/libm.so:
-
-/usr/include/asm-generic/int-ll64.h:
-
-/usr/include/x86_64-linux-gnu/bits/signum-generic.h:
-
-/usr/include/c++/15/bits/fstream.tcc:
-
-/usr/include/c++/15/bits/memoryfwd.h:
-
 /usr/include/x86_64-linux-gnu/bits/sigevent-consts.h:
 
 /usr/include/c++/15/iosfwd:
 
-/usr/include/c++/15/ios:
+/usr/include/c++/15/pstl/execution_defs.h:
+
+/usr/include/x86_64-linux-gnu/bits/wordsize.h:
 
 /usr/include/c++/15/ext/numeric_traits.h:
 
@@ -2238,11 +2257,11 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/packet_dispatch.cpp.o:
 
 /usr/include/c++/15/cstdlib:
 
-/usr/include/c++/15/bits/locale_facets.h:
-
 services/feed-decoder/CMakeFiles/feed-decoder.dir/src/main.cpp.o:
 
 /usr/include/c++/15/bits/requires_hosted.h:
+
+/usr/include/c++/15/bits/locale_facets.h:
 
 /usr/include/x86_64-linux-gnu/bits/atomic_wide_counter.h:
 
@@ -2251,12 +2270,6 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/main.cpp.o:
 /usr/include/x86_64-linux-gnu/bits/floatn-common.h:
 
 /usr/include/x86_64-linux-gnu/bits/types/wint_t.h:
-
-/usr/include/c++/15/system_error:
-
-/usr/include/c++/15/tr1/ell_integral.tcc:
-
-/usr/include/x86_64-linux-gnu/sys/cdefs.h:
 
 /usr/include/c++/15/cstdint:
 
@@ -2276,7 +2289,23 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/main.cpp.o:
 
 /usr/include/c++/15/bits/utility.h:
 
+/usr/include/c++/15/ios:
+
+/usr/include/c++/15/bits/uniform_int_dist.h:
+
+/usr/include/features-time64.h:
+
 /usr/include/c++/15/bits/string_view.tcc:
+
+/usr/include/x86_64-linux-gnu/bits/struct_stat.h:
+
+/usr/include/c++/15/bits/streambuf_iterator.h:
+
+/usr/include/c++/15/tr1/exp_integral.tcc:
+
+/usr/include/x86_64-linux-gnu/bits/types/struct_sigstack.h:
+
+/usr/include/x86_64-linux-gnu/bits/types/__locale_t.h:
 
 /usr/include/c++/15/istream:
 
@@ -2284,9 +2313,9 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/main.cpp.o:
 
 /usr/include/x86_64-linux-gnu/bits/types/__sigset_t.h:
 
-/usr/include/c++/15/bits/stl_multimap.h:
-
 /usr/include/c++/15/bits/shared_ptr_base.h:
+
+/usr/include/c++/15/bits/stl_multimap.h:
 
 /usr/include/c++/15/bits/stl_uninitialized.h:
 
@@ -2294,35 +2323,17 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/main.cpp.o:
 
 /usr/include/x86_64-linux-gnu/bits/types/struct_timeval.h:
 
+/usr/include/c++/15/bits/deque.tcc:
+
+/usr/include/c++/15/bits/stl_tempbuf.h:
+
 /usr/include/c++/15/pstl/pstl_config.h:
 
+/usr/include/c++/15/bits/refwrap.h:
+
+/usr/include/c++/15/type_traits:
+
 /usr/include/c++/15/bits/chrono.h:
-
-/usr/include/c++/15/bits/stl_heap.h:
-
-/usr/include/c++/15/bits/exception_defines.h:
-
-/usr/include/c++/15/bits/predefined_ops.h:
-
-/usr/include/c++/15/debug/debug.h:
-
-/usr/lib/gcc/x86_64-linux-gnu/15/libgcc_s.so:
-
-/usr/include/x86_64-linux-gnu/bits/socket_type.h:
-
-/usr/include/c++/15/bits/stl_construct.h:
-
-/usr/include/c++/15/bits/ptr_traits.h:
-
-/usr/include/c++/15/pstl/glue_algorithm_defs.h:
-
-/usr/include/c++/15/tr1/poly_laguerre.tcc:
-
-/usr/include/c++/15/bits/charconv.h:
-
-/home/ubuntu/Desktop/api_gs/trading-platform/services/feed-decoder/include/decoder/socket_reader.hpp:
-
-/usr/include/x86_64-linux-gnu/sys/types.h:
 
 /usr/include/c++/15/bits/allocated_ptr.h:
 
@@ -2344,6 +2355,16 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/main.cpp.o:
 
 /usr/include/c++/15/tr1/modified_bessel_func.tcc:
 
+/usr/include/c++/15/tr1/poly_laguerre.tcc:
+
+/usr/include/c++/15/bits/charconv.h:
+
+/usr/include/c++/15/pstl/glue_algorithm_defs.h:
+
+/usr/include/x86_64-linux-gnu/bits/socket.h:
+
+/usr/include/c++/15/bits/algorithmfwd.h:
+
 /usr/include/c++/15/bits/locale_facets.tcc:
 
 /usr/include/ctype.h:
@@ -2352,13 +2373,13 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/main.cpp.o:
 
 /usr/include/c++/15/bits/stl_iterator_base_types.h:
 
-/usr/include/x86_64-linux-gnu/sys/single_threaded.h:
-
 /usr/include/stdc-predef.h:
 
 /home/ubuntu/Desktop/api_gs/trading-platform/services/feed-decoder/src/chain_builder.cpp:
 
 /usr/include/x86_64-linux-gnu/bits/byteswap.h:
+
+/usr/include/c++/15/bits/predefined_ops.h:
 
 /usr/include/c++/15/ext/aligned_buffer.h:
 
@@ -2372,19 +2393,13 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/main.cpp.o:
 
 /usr/include/alloca.h:
 
+/usr/lib/gcc/x86_64-linux-gnu/15/crtbeginS.o:
+
+/usr/include/c++/15/bits/range_access.h:
+
 /usr/include/c++/15/bits/std_abs.h:
 
 /usr/include/c++/15/typeinfo:
-
-/usr/include/strings.h:
-
-/usr/include/signal.h:
-
-/usr/include/c++/15/ostream:
-
-/usr/include/c++/15/bits/exception.h:
-
-/usr/include/c++/15/initializer_list:
 
 /usr/include/asm-generic/errno-base.h:
 
@@ -2399,6 +2414,28 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/main.cpp.o:
 /usr/include/c++/15/ratio:
 
 /usr/include/x86_64-linux-gnu/bits/libc-header-start.h:
+
+/usr/include/c++/15/initializer_list:
+
+/usr/include/strings.h:
+
+/usr/include/signal.h:
+
+/usr/include/c++/15/ostream:
+
+/usr/include/c++/15/bits/exception.h:
+
+/usr/lib/x86_64-linux-gnu/libm.so:
+
+/usr/include/asm-generic/int-ll64.h:
+
+/usr/include/x86_64-linux-gnu/bits/signum-generic.h:
+
+/usr/include/c++/15/bits/fstream.tcc:
+
+/usr/include/c++/15/bits/memoryfwd.h:
+
+/usr/include/c++/15/tr1/beta_function.tcc:
 
 /usr/include/lzo/lzo1z.h:
 
@@ -2416,13 +2453,25 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/main.cpp.o:
 
 /usr/include/c++/15/backward/binders.h:
 
+/usr/include/c++/15/bits/stl_algo.h:
+
 /usr/include/c++/15/bits/cxxabi_forced.h:
+
+/usr/include/c++/15/bits/exception_defines.h:
+
+/usr/include/c++/15/bits/stl_heap.h:
 
 /usr/include/c++/15/bits/cxxabi_init_exception.h:
 
-/usr/lib/gcc/x86_64-linux-gnu/15/crtbeginS.o:
+/usr/include/c++/15/debug/debug.h:
 
-/usr/include/c++/15/bits/range_access.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/libgcc_s.so:
+
+/usr/include/x86_64-linux-gnu/bits/socket_type.h:
+
+/usr/include/c++/15/bits/stl_construct.h:
+
+/usr/include/c++/15/bits/ptr_traits.h:
 
 /usr/include/asm-generic/posix_types.h:
 
@@ -2452,17 +2501,9 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/main.cpp.o:
 
 /usr/include/x86_64-linux-gnu/bits/types/time_t.h:
 
-/usr/include/c++/15/bits/refwrap.h:
-
-/usr/include/c++/15/type_traits:
-
 /usr/include/c++/15/bits/locale_classes.tcc:
 
 /usr/include/x86_64-linux-gnu/bits/iscanonical.h:
-
-/usr/include/lzo/lzodefs.h:
-
-/usr/include/c++/15/tr1/bessel_function.tcc:
 
 /usr/include/c++/15/bits/hashtable.h:
 
@@ -2512,14 +2553,6 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/message_parser.cpp.o:
 
 /usr/include/c++/15/bits/stringfwd.h:
 
-/usr/lib/x86_64-linux-gnu/Scrt1.o:
-
-/usr/include/c++/15/tr1/hypergeometric.tcc:
-
-/usr/include/x86_64-linux-gnu/bits/time.h:
-
-/usr/include/x86_64-linux-gnu/bits/select.h:
-
 services/feed-decoder/CMakeFiles/feed-decoder.dir/src/socket_reader.cpp.o:
 
 /usr/include/c++/15/bits/hashtable_policy.h:
@@ -2530,8 +2563,6 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/socket_reader.cpp.o:
 
 /usr/include/x86_64-linux-gnu/gnu/stubs-64.h:
 
-/home/ubuntu/Desktop/api_gs/trading-platform/services/feed-decoder/src/decompressor.cpp:
-
 /usr/include/c++/15/cmath:
 
 /usr/include/stdint.h:
@@ -2541,10 +2572,6 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/socket_reader.cpp.o:
 /usr/include/c++/15/bits/streambuf.tcc:
 
 /usr/include/c++/15/bits/basic_string.tcc:
-
-/usr/include/c++/15/string_view:
-
-/usr/include/x86_64-linux-gnu/bits/long-double.h:
 
 /usr/include/c++/15/bits/ostream.h:
 
@@ -2565,6 +2592,30 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/socket_reader.cpp.o:
 /usr/include/x86_64-linux-gnu/bits/signum-arch.h:
 
 /usr/include/x86_64-linux-gnu/bits/errno.h:
+
+/usr/include/x86_64-linux-gnu/bits/long-double.h:
+
+/usr/include/c++/15/string_view:
+
+/usr/include/c++/15/system_error:
+
+/usr/include/lzo/lzodefs.h:
+
+/usr/include/c++/15/tr1/bessel_function.tcc:
+
+/usr/include/x86_64-linux-gnu/sys/cdefs.h:
+
+/usr/include/c++/15/tr1/ell_integral.tcc:
+
+/usr/include/c++/15/tr1/gamma.tcc:
+
+/usr/lib/x86_64-linux-gnu/Scrt1.o:
+
+/usr/include/c++/15/tr1/hypergeometric.tcc:
+
+/usr/include/x86_64-linux-gnu/bits/time.h:
+
+/usr/include/x86_64-linux-gnu/bits/select.h:
 
 /usr/include/c++/15/tr1/legendre_function.tcc:
 
@@ -2593,8 +2644,6 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/socket_reader.cpp.o:
 /usr/include/c++/15/cstddef:
 
 /usr/include/errno.h:
-
-/usr/include/features-time64.h:
 
 /usr/include/x86_64-linux-gnu/bits/openat2.h:
 
@@ -2633,10 +2682,6 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/socket_reader.cpp.o:
 /usr/include/x86_64-linux-gnu/bits/types/__FILE.h:
 
 /usr/include/math.h:
-
-/usr/include/x86_64-linux-gnu/bits/xopen_lim.h:
-
-/usr/lib/gcc/x86_64-linux-gnu/15/include/stdint.h:
 
 /usr/include/wctype.h:
 
@@ -2724,10 +2769,6 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/socket_reader.cpp.o:
 
 /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h:
 
-/usr/include/x86_64-linux-gnu/asm/socket.h:
-
-/usr/include/x86_64-linux-gnu/sys/select.h:
-
 /usr/include/x86_64-linux-gnu/bits/timex.h:
 
 /usr/include/x86_64-linux-gnu/bits/stdio_lim.h:
@@ -2788,8 +2829,6 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/socket_reader.cpp.o:
 
 /usr/include/x86_64-linux-gnu/bits/waitflags.h:
 
-/usr/include/x86_64-linux-gnu/bits/wordsize.h:
-
 /usr/include/x86_64-linux-gnu/c++/15/bits/atomic_word.h:
 
 /usr/include/x86_64-linux-gnu/c++/15/bits/c++allocator.h:
@@ -2803,7 +2842,3 @@ services/feed-decoder/CMakeFiles/feed-decoder.dir/src/socket_reader.cpp.o:
 /usr/include/x86_64-linux-gnu/c++/15/bits/cpu_defines.h:
 
 /usr/include/x86_64-linux-gnu/c++/15/bits/error_constants.h:
-
-/home/ubuntu/Desktop/api_gs/trading-platform/services/feed-decoder/include/decoder/decompressor.hpp:
-
-/usr/lib/gcc/x86_64-linux-gnu/15/include/stdarg.h:

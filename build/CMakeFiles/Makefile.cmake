@@ -12,6 +12,7 @@ set(CMAKE_MAKEFILE_DEPENDS
   "CMakeFiles/4.2.3/CMakeCXXCompiler.cmake"
   "CMakeFiles/4.2.3/CMakeSystem.cmake"
   "/home/ubuntu/Desktop/api_gs/trading-platform/services/feed-decoder/CMakeLists.txt"
+  "/home/ubuntu/Desktop/api_gs/trading-platform/services/trade-worker/CMakeLists.txt"
   "/usr/share/cmake-4.2/Modules/CMakeCInformation.cmake"
   "/usr/share/cmake-4.2/Modules/CMakeCXXInformation.cmake"
   "/usr/share/cmake-4.2/Modules/CMakeCommonLanguageInclude.cmake"
@@ -51,10 +52,12 @@ set(CMAKE_MAKEFILE_OUTPUTS
 # Byproducts of CMake generate step:
 set(CMAKE_MAKEFILE_PRODUCTS
   "CMakeFiles/CMakeDirectoryInformation.cmake"
+  "services/trade-worker/CMakeFiles/CMakeDirectoryInformation.cmake"
   "services/feed-decoder/CMakeFiles/CMakeDirectoryInformation.cmake"
   )
 
 # Dependency information for all targets:
 set(CMAKE_DEPEND_INFO_FILES
+  "services/trade-worker/CMakeFiles/trade-worker.dir/DependInfo.cmake"
   "services/feed-decoder/CMakeFiles/feed-decoder.dir/DependInfo.cmake"
   )

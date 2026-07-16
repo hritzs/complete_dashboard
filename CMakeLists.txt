@@ -27,9 +27,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 #     add_subdirectory(services/risk-engine)
 # endif()
 
-# if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/services/trade-worker/CMakeLists.txt")
-#     add_subdirectory(services/trade-worker)
-# endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/services/trade-worker/CMakeLists.txt")
+    add_subdirectory(services/trade-worker)
+endif()
 
 # I see 'feed-decoder' in your build cache, so let's add it too.
 # This check ensures the build won't fail if the directory doesn't exist yet.
@@ -49,4 +49,4 @@ endif()
 
 # After creating this file, simply run "CMake: Configure" in VS Code
 # with the 'trading-platform' folder open. It will discover and
-# configure all your C++ components at once.add_subdirectory(services/trade-worker)
+# configure all your C++ components at once.

@@ -1,0 +1,11 @@
+========================================
+  Starting C++ Trade Worker (Phase 3)  
+========================================
+[TradeWorker] Error: Failed to open prices_shm
+[TradeWorker] Error: Failed to open chain_shm
+[TradeWorker] SHM Segments Attached successfully.
+[TradeWorker] ZMQ PUSH socket connected to Go Gateway at tcp://127.0.0.1:5557
+[TradeWorker] 🚀 Thread successfully pinned to isolated CPU Core 2
+[TradeWorker] Spin-wait hot loop started for trade: TRD_NIFTY_001
+
+[Main] Gracefully shutting down Trade Worker...

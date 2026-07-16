@@ -2,340 +2,345 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
+	_ "github.com/lib/pq"
 	zmq "github.com/pebbe/zmq4"
 
-	"execution-gateway/internal/router"
+	gs "trading-platform/libs/broker-greeksoft"
 	xts "trading-platform/libs/broker-xts"
+	"trading-platform/libs/broker-xts/interactive"
 	broker "trading-platform/libs/go-broker"
+
+	greeksoftbroker "execution-gateway/internal/brokers/greeksoft"
+	"execution-gateway/internal/trading"
 )
 
-// loadEnv is a simple helper to load the .env file
-func loadEnv() {
-	envPath := filepath.Join("..", "..", ".env")
-	data, err := os.ReadFile(envPath)
-	if err != nil {
-		return
-	}
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if len(line) == 0 || strings.HasPrefix(line, "#") {
-			continue
-		}
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) == 2 {
-			key := strings.TrimSpace(parts[0])
-			val := strings.Trim(strings.TrimSpace(parts[1]), `"`) // remove quotes
-			if os.Getenv(key) == "" {
-				os.Setenv(key, val)
-			}
-		}
-	}
-}
-
-// fetchATMData calls the Market Data microservice to get live ATM tokens and lot size
-func fetchATMData(symbol string) (ceToken, peToken, lotSize int, err error) {
-	url := fmt.Sprintf("http://127.0.0.1:8001/api/option-chain/%s", symbol)
-	resp, err := http.Get(url)
-	if err != nil {
-		return 0, 0, 0, fmt.Errorf("failed to connect to market data service: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return 0, 0, 0, fmt.Errorf("market data service returned HTTP %d", resp.StatusCode)
-	}
-
-	var result struct {
-		Success bool `json:"success"`
-		Data    struct {
-			LotSize int `json:"lot_size"`
-			Chain   []struct {
-				IsATM   bool `json:"is_atm"`
-				CEToken int  `json:"ce_token"`
-				PEToken int  `json:"pe_token"`
-			} `json:"chain"`
-		} `json:"data"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return 0, 0, 0, fmt.Errorf("failed to parse JSON: %v", err)
-	}
-
-	for _, row := range result.Data.Chain {
-		if row.IsATM {
-			return row.CEToken, row.PEToken, result.Data.LotSize, nil
-		}
-	}
-	return 0, 0, 0, fmt.Errorf("ATM strike not found in chain")
-}
-
-// =========================================================================
-// INTEGRATED CONTROL API & TRADE MANAGER
-// =========================================================================
-var (
-	globalRouter   *router.Router
-	globalClientID string
-)
-
-// corsMiddleware handles preflight requests from the Vite UI
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		if r.Method == "OPTIONS" {
+
+		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
+
 		next.ServeHTTP(w, r)
 	})
 }
 
-func handleDeployStraddle(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Symbol       string `json:"symbol"`
-		Lots         int    `json:"lots"`
-		DeltaNeutral bool   `json:"delta_neutral"`
-		Strike       int    `json:"strike"`
-		CEToken      int    `json:"ce_token"`
-		PEToken      int    `json:"pe_token"`
-		LotSize      int    `json:"lot_size"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	tradeUID := fmt.Sprintf("TRD_%d", time.Now().Unix())
-	log.Printf("🚀 [Control API] Deploy Straddle requested: %s | UID: %s", req.Symbol, tradeUID)
-
-	// Fallback to fetch tokens if the UI feed omitted them
-	if req.CEToken == 0 || req.PEToken == 0 {
-		log.Printf("⚠️ Tokens missing from UI request, fetching directly from Market Data (Port 8001)...")
-		ce, pe, ls, err := fetchATMData(req.Symbol)
-		if err != nil {
-			log.Printf("❌ Failed to fetch fallback tokens: %v", err)
-		} else {
-			req.CEToken = ce
-			req.PEToken = pe
-			if req.LotSize == 0 {
-				req.LotSize = ls
-			}
-			log.Printf("✅ Fallback successful! CE: %d, PE: %d, LotSize: %d", req.CEToken, req.PEToken, req.LotSize)
-		}
-	}
-
-	// Fire orders asynchronously to the router
-	go func(symbol string, lots int, ceToken int, peToken int, lotSize int) {
-		qty := lotSize * lots
-		if qty == 0 {
-			// Safe fallbacks if lot size extraction failed
-			switch symbol {
-			case "NIFTY":
-				qty = 25 * lots
-			case "BANKNIFTY":
-				qty = 15 * lots
-			case "FINNIFTY":
-				qty = 25 * lots
-			case "MIDCPNIFTY":
-				qty = 50 * lots
-			default:
-				qty = 25 * lots
-			}
-		}
-
-		// Execute CE Leg
-		if ceToken != 0 {
-			ceIntent := broker.OrderIntent{
-				ClientID:        globalClientID,
-				ExchangeSegment: "NSEFO",
-				InstrumentToken: ceToken,
-				Side:            "SELL",
-				OrderType:       "MARKET", // Convert to LIMIT eventually
-				ProductType:     "MIS",
-				Quantity:        qty,
-			}
-			if resp, err := globalRouter.RouteOrder(context.Background(), &ceIntent); err != nil {
-				log.Printf("❌ CE Order Failed: %v", err)
-			} else {
-				log.Printf("✅ CE Order Success! AppOrderID: %s", resp.OrderID)
-			}
-		}
-
-		// Execute PE Leg
-		if peToken != 0 {
-			peIntent := broker.OrderIntent{
-				ClientID:        globalClientID,
-				ExchangeSegment: "NSEFO",
-				InstrumentToken: peToken,
-				Side:            "SELL",
-				OrderType:       "MARKET",
-				ProductType:     "MIS",
-				Quantity:        qty,
-			}
-			if resp, err := globalRouter.RouteOrder(context.Background(), &peIntent); err != nil {
-				log.Printf("❌ PE Order Failed: %v", err)
-			} else {
-				log.Printf("✅ PE Order Success! AppOrderID: %s", resp.OrderID)
-			}
-		}
-	}(req.Symbol, req.Lots, req.CEToken, req.PEToken, req.LotSize)
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"trade_uid": tradeUID,
-		"status":    "BUILDING",
-		"message":   "Straddle deployment initiated",
-	})
+type xtsExecutor struct {
+	client *xts.Client
 }
 
-func handleSquareOff(w http.ResponseWriter, r *http.Request) {
-	// Extracts the trade UID from the URL path: /api/trade/{trade_uid}/square-off
-	parts := strings.Split(r.URL.Path, "/")
-	tradeUID := parts[3]
+func (x *xtsExecutor) ExecuteOrderIntent(ctx context.Context, intent trading.OrderIntent) (*trading.ExecutionResult, error) {
+	orderUID := strings.TrimSpace(intent.OrderUID)
+	if orderUID == "" {
+		orderUID = strings.TrimSpace(intent.IntentID)
+	}
+	if orderUID == "" {
+		orderUID = fmt.Sprintf("XTS-%d", time.Now().UnixNano())
+	}
 
-	log.Printf("🛑 [Control API] Manual Square-Off Triggered for Trade: %s", tradeUID)
-	// TODO: Trigger Layer 3 Router to close open positions (Python square_off.py logic)
+	orderType := strings.ToUpper(strings.TrimSpace(intent.OrderType))
+	if orderType == "" {
+		orderType = "MARKET"
+	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+	productType := strings.ToUpper(strings.TrimSpace(intent.ProductType))
+	if productType == "" {
+		productType = "MIS"
+	}
+
+	side := strings.ToUpper(strings.TrimSpace(intent.Side))
+	if side == "" {
+		side = "SELL"
+	}
+
+	clientID := strings.TrimSpace(intent.AccountID)
+	if clientID == "" {
+		clientID = strings.TrimSpace(os.Getenv("XTS_CLIENT_ID"))
+	}
+
+	limitPrice := 0.0
+	if intent.LimitPrice != nil {
+		limitPrice = *intent.LimitPrice
+	}
+
+	exchangeSegment := strings.ToUpper(strings.TrimSpace(intent.ExchangeSegment))
+	if exchangeSegment == "" {
+		exchangeSegment = "NSEFO"
+	}
+
+	bIntent := broker.OrderIntent{
+		TradeUID:        intent.TradeUID,
+		IntentID:        intent.IntentID,
+		InstrumentToken: int(intent.Token),
+		ExchangeSegment: exchangeSegment,
+		Side:            side,
+		Quantity:        int(intent.Quantity),
+		OrderType:       orderType,
+		ProductType:     productType,
+		TimeInForce:     "DAY",
+		ClientID:        clientID,
+		LimitPrice:      limitPrice,
+		StopPrice:       0,
+		DisclosedQty:    0,
+	}
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	if err := interactive.PlaceOrder(x.client, bIntent, orderUID, limitPrice); err != nil {
+		return nil, err
+	}
+
+	return &trading.ExecutionResult{
+		IntentID:      intent.IntentID,
+		BrokerOrderID: orderUID,
+		Status:        "SUBMITTED",
+		FilledQty:     0,
+		FillPrice:     0,
+		EventReason:   "XTS_ORDER_SENT",
+	}, nil
 }
 
 func main() {
 	log.Println("Starting Execution Gateway...")
 
-	// 1. Initialize the Layer 3 Router
-	r := router.New()
-	globalRouter = r
+	appConfig := LoadConfig()
 
-	// =========================================================================
-	// LIVE TEST: AUTO-LOGIN & SELL STRADDLE
-	// =========================================================================
-	loadEnv()
-	appKey := os.Getenv("XTS_API_KEY")
-	secretKey := os.Getenv("XTS_API_SECRET")
-	baseURL := os.Getenv("XTS_API_BASE_URL")
-	source := os.Getenv("XTS_SOURCE")
-	clientID := os.Getenv("XTS_CLIENT_ID")
-	globalClientID = clientID
-
-	if appKey != "" && secretKey != "" {
-		log.Printf("🔥 LIVE TEST: Logging into XTS for Client %s...", clientID)
-
-		cfg := broker.Config{
-			BrokerName: xts.BrokerName,
-			BaseURL:    baseURL,
-			AppKey:     appKey,
-			SecretKey:  secretKey,
-			Source:     source,
-		}
-		accCfg := broker.AccountConfig{
-			ClientID: clientID,
-		}
-
-		// Create client directly via Factory
-		client, err := xts.NewFactory(cfg)
+	var store trading.Store = trading.NewMemoryStore()
+	if dsn := strings.TrimSpace(os.Getenv("POSTGRES_DSN")); dsn != "" {
+		db, err := sql.Open("postgres", dsn)
 		if err != nil {
-			log.Fatalf("Failed to create XTS client: %v", err)
+			log.Printf("[SQL STORE] open failed err=%v; using memory store", err)
+		} else if err := db.Ping(); err != nil {
+			log.Printf("[SQL STORE] ping failed err=%v; using memory store", err)
+		} else {
+			store = trading.NewPostgresBackedStore(db)
+			log.Printf("[SQL STORE] postgres-backed store enabled")
 		}
-
-		// Perform Login
-		session, err := client.PerformFullLogin(context.Background(), &accCfg)
-		if err != nil {
-			log.Fatalf("Failed to login to XTS: %v", err)
-		}
-		log.Printf("✅ XTS Login Success! Session Token: %s", session.AuthToken)
-
-		// Register client with the router so RouteOrder() can find it
-		r.AddClient(clientID, client)
-
 	} else {
-		log.Println("⚠️  Skipping Live Test: Missing XTS credentials in .env")
+		log.Printf("[SQL STORE] POSTGRES_DSN empty; using memory store")
 	}
-	// =========================================================================
 
-	// Start Integrated HTTP Control API for UI requests (Port 8005)
-	go func() {
-		mux := http.NewServeMux()
-		mux.HandleFunc("/api/straddle/sell", handleDeployStraddle)
-		mux.HandleFunc("/api/trade/", handleSquareOff) // Covers /api/trade/{uid}/square-off
-		log.Println("🌐 Control API listening on :8005")
-		http.ListenAndServe(":8005", corsMiddleware(mux))
-	}()
+	service := trading.NewService(store, appConfig.XTSClientID)
+	service.Snapshot = &trading.SnapshotClient{BaseURL: appConfig.SnapshotServiceURL}
+	service.LotSize = &trading.LotSizeClient{BaseURL: appConfig.ContractMasterURL}
 
-	// 2. Setup ZeroMQ Subscriber
-	subscriber, err := zmq.NewSocket(zmq.SUB)
+	xtsClient := xts.NewClient()
+
+	factory := trading.NewDefaultBrokerFactory()
+
+	factory.Register(
+		"XTS",
+		func(userID string, accountID string) (trading.Executor, error) {
+			return &xtsExecutor{client: xtsClient}, nil
+		},
+	)
+
+	var greekMu sync.Mutex
+	greekExecutors := map[string]trading.Executor{}
+
+	factory.Register(
+		"GREEKSOFT",
+		func(userID string, accountID string) (trading.Executor, error) {
+			greekMu.Lock()
+			defer greekMu.Unlock()
+
+			accountID = strings.ToUpper(strings.TrimSpace(accountID))
+			if accountID == "" {
+				accountID = "HRITIK"
+			}
+
+			if existing, ok := greekExecutors[accountID]; ok && existing != nil {
+				return existing, nil
+			}
+
+			if strings.TrimSpace(appConfig.GreekAuthURL) == "" {
+				return nil, fmt.Errorf("GREEK_API_AUTH_URL is required")
+			}
+			if strings.TrimSpace(appConfig.GreekRestURL) == "" {
+				return nil, fmt.Errorf("GREEK_API_REST_URL is required")
+			}
+			if strings.TrimSpace(appConfig.GreekPassword) == "" {
+				return nil, fmt.Errorf("GREEK_PASSWORD is required")
+			}
+			if appConfig.GreekBrokerID <= 0 {
+				return nil, fmt.Errorf("GREEK_BROKER_ID is required")
+			}
+			if strings.TrimSpace(appConfig.GreekPanDob) == "" {
+				return nil, fmt.Errorf("GREEK_PAN_DOB is required")
+			}
+
+			gsClient := gs.NewClient(appConfig.GreekAuthURL, appConfig.GreekRestURL)
+
+			loginCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			session, err := gsClient.PerformFullLogin(loginCtx, &broker.AccountConfig{
+				Name:       "greeksoft-" + strings.ToLower(accountID),
+				BrokerType: "greeksoft",
+				APIKey:     accountID,
+				APISecret:  appConfig.GreekPassword,
+				ClientID:   accountID,
+				BrokerID:   appConfig.GreekBrokerID,
+				PanDob:     appConfig.GreekPanDob,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("greeksoft login failed for account %s: %w", accountID, err)
+			}
+
+			log.Printf("Greeksoft executor ready account=%s user_id=%s", accountID, session.UserID)
+
+			executor := greeksoftbroker.NewExecutor(gsClient)
+			greekExecutors[accountID] = executor
+
+			return executor, nil
+		},
+	)
+
+	service.BrokerFactory = factory
+
+	handlers := trading.NewHandlers(service, store)
+
+	go startHTTPServer(appConfig, handlers)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go waitForShutdown(cancel)
+	go startZMQListener(ctx, appConfig, xtsClient)
+
+	<-ctx.Done()
+	log.Println("Execution Gateway stopped")
+}
+
+func startHTTPServer(cfg *Config, handlers *trading.Handlers) {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/api/health", handlers.Health)
+	mux.HandleFunc("/api/trade/straddle", handlers.DeployStraddle)
+	mux.HandleFunc("/api/straddle/sell", handlers.DeployStraddle)
+	mux.HandleFunc("/api/trade/straddle/automated", handlers.ConfigBuild)
+	mux.HandleFunc("/api/trade/straddle/custom", handlers.CustomSell)
+
+	mux.HandleFunc("/api/straddles", handlers.GetStraddles)
+	mux.HandleFunc("/api/straddles/active", handlers.GetActiveStraddles)
+	mux.HandleFunc("/api/snapshots/", handlers.GetSnapshot)
+	mux.HandleFunc("/api/pnl/", handlers.GetPnL)
+	mux.HandleFunc("/api/orders/", handlers.GetOrders)
+
+	mux.HandleFunc("/api/positions", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "positions endpoint not implemented", http.StatusNotImplemented)
+	})
+
+	mux.HandleFunc("/api/trade/", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/square-off"):
+			handlers.SquareOff(w, r)
+		case strings.HasSuffix(r.URL.Path, "/partial-square-off"):
+			handlers.PartialSquareOff(w, r)
+		case strings.HasSuffix(r.URL.Path, "/manual-hedge"):
+			handlers.ManualHedge(w, r)
+		case strings.HasSuffix(r.URL.Path, "/manual-roll"):
+			handlers.ManualRoll(w, r)
+		case strings.HasSuffix(r.URL.Path, "/manual-verify"):
+			handlers.ManualVerify(w, r)
+		case strings.HasSuffix(r.URL.Path, "/cancel-action"):
+			handlers.CancelAction(w, r)
+		default:
+			handlers.TradeStatus(w, r)
+		}
+	})
+
+	log.Printf("Control API listening on %s", cfg.ControlAPIPort)
+	if err := http.ListenAndServe(cfg.ControlAPIPort, corsMiddleware(mux)); err != nil {
+		log.Fatalf("HTTP server failed: %v", err)
+	}
+}
+
+func waitForShutdown(cancel context.CancelFunc) {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	<-sigChan
+	log.Println("Shutting down Execution Gateway...")
+	cancel()
+}
+
+func startZMQListener(ctx context.Context, cfg *Config, xtsClient *xts.Client) {
+	socket, err := zmq.NewSocket(zmq.SUB)
 	if err != nil {
 		log.Fatalf("Failed to create ZMQ socket: %v", err)
 	}
-	defer subscriber.Close()
+	defer socket.Close()
 
-	// Bind to the port where the C++ Trade Worker publishes OrderIntents
-	zmqEndpoint := "tcp://127.0.0.1:5557"
-	err = subscriber.Bind(zmqEndpoint)
-	if err != nil {
-		log.Fatalf("Failed to bind ZMQ to %s: %v", zmqEndpoint, err)
+	if err := socket.Bind(cfg.ZMQEndpoint); err != nil {
+		log.Fatalf("Failed to bind ZMQ to %s: %v", cfg.ZMQEndpoint, err)
 	}
-	err = subscriber.SetSubscribe("") // Subscribe to all messages
-	if err != nil {
-		log.Fatalf("Failed to set ZMQ subscription: %v", err)
+	if err := socket.SetSubscribe(""); err != nil {
+		log.Fatalf("Failed to subscribe to ZMQ topic: %v", err)
 	}
 
-	log.Printf("Listening for OrderIntents on ZMQ %s", zmqEndpoint)
+	log.Printf("Listening for OrderIntents on ZMQ %s", cfg.ZMQEndpoint)
 
-	// 3. Graceful shutdown handler
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-		<-sigChan
-		log.Println("Shutting down Execution Gateway...")
-		cancel()
-	}()
-
-	// 4. Main Event Loop
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			// Read message from ZMQ (blocking)
-			msg, err := subscriber.Recv(0)
+			msg, err := socket.Recv(0)
 			if err != nil {
 				continue
 			}
 
 			var intent broker.OrderIntent
 			if err := json.Unmarshal([]byte(msg), &intent); err != nil {
-				log.Printf("Failed to unmarshal OrderIntent: %v\nRaw: %s", err, msg)
+				log.Printf("Failed to unmarshal OrderIntent: %v | raw: %s", err, msg)
 				continue
 			}
 
-			log.Printf("Received OrderIntent for Client %q", intent.ClientID)
+			if intent.ExchangeSegment == "" {
+				intent.ExchangeSegment = "NSEFO"
+			}
+			if intent.ProductType == "" {
+				intent.ProductType = "MIS"
+			}
+			if intent.OrderType == "" {
+				intent.OrderType = "MARKET"
+			}
+			if intent.ClientID == "" {
+				intent.ClientID = cfg.XTSClientID
+			}
+			if intent.Side == "" {
+				intent.Side = "SELL"
+			}
 
-			// 5. Route the Order to the correct Broker Client asynchronously
-			go func(orderIntent broker.OrderIntent) {
-				resp, err := r.RouteOrder(context.Background(), &orderIntent)
-				if err != nil {
-					log.Printf("Failed to route/execute order: %v", err)
-					// TODO: Publish a reject OrderUpdate back to ZMQ/Reconciler
-					return
+			uid := "ZMQ_" + time.Now().Format("150405.000000")
+
+			go func(i broker.OrderIntent, u string) {
+				if err := interactive.PlaceOrder(xtsClient, i, u, i.LimitPrice); err != nil {
+					log.Printf("ZMQ Execution Failed: %v", err)
+				} else {
+					log.Printf("ZMQ Order Sent: %s", u)
 				}
-				log.Printf("Order Executed Successfully! OrderID: %s", resp.OrderID)
-				// TODO: Publish a success OrderUpdate back to ZMQ/Reconciler
-			}(intent)
+			}(intent, uid)
 		}
 	}
 }

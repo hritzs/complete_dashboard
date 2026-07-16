@@ -1,351 +1,1239 @@
-import { createSignal, onMount, For, Index, onCleanup } from 'solid-js';
-import './App.css';
+  import { createSignal, createMemo, onMount, onCleanup, Index, Show, For } from 'solid-js';
+  import './App.css';
 
-function App() {
-  const [snapshots, setSnapshots] = createSignal({});
-  const [wsStatus, setWsStatus] = createSignal('Connecting...');
-  const [logs, setLogs] = createSignal([]);
-  const [optionChain, setOptionChain] = createSignal([]);
-  const [lastCppUpdate, setLastCppUpdate] = createSignal(0);
-  const [dataSource, setDataSource] = createSignal('C++ Feed');
-  const [selectedSymbol, setSelectedSymbol] = createSignal('NIFTY');
-  const availableSymbols = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'];
-  const [visibleStrikes, setVisibleStrikes] = createSignal(10); // Show 10 strikes above and 10 below ATM
-  
-  // Configuration defaults as defined in legacy JS
-  const [tradeConfig, setTradeConfig] = createSignal({
-    size: 77,
-    sl_bps: 14,
-    hedge_div: 57,
-    straddle_div: 4,
-    roll_straddle_div: 0.2,
-    buy_buffer: 2,
-    sell_buffer: 2,
-    order_lots_per_call: 1
-  });
+  const normalize = (s) => (s || '').toString().trim().toUpperCase();
 
-  const updateConfig = (key, value) => {
-    setTradeConfig(prev => ({ ...prev, [key]: parseFloat(value) || value }));
+  const toNum = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
   };
 
-  onMount(() => {
-    const HOST = window.location.hostname;
-    
-    // --- PYTHON XTS FALLBACK POLLER ---
-    const fetchPythonFallback = async () => {
-      const timeSinceUpdate = Date.now() - lastCppUpdate();
-      // If C++ is dead/zero for > 5 seconds, pull live chain from Python
-      if (timeSinceUpdate > 5000) {
+  const hasValue = (v) => {
+    return v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
+  };
+
+  const fmt = (v, d = 2) => {
+    return hasValue(v) ? Number(v).toFixed(d) : '—';
+  };
+
+  async function safeFetchJson(url, options = {}) {
+    const res = await fetch(url, options);
+    const text = await res.text();
+
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      throw new Error(`Invalid backend response from ${url}`);
+    }
+
+    if (!res.ok) {
+      throw new Error(data?.error || data?.message || `HTTP ${res.status}`);
+    }
+
+    return data;
+  }
+
+  function App() {
+    const [activeTab, setActiveTab] = createSignal('terminal');
+    const [wsStatus, setWsStatus] = createSignal('Connecting...');
+    const [dataSource, setDataSource] = createSignal('Waiting...');
+    const [selectedSymbol, setSelectedSymbol] = createSignal('NIFTY');
+    const [selectedExpiry, setSelectedExpiry] = createSignal('');
+    const [visibleStrikes, setVisibleStrikes] = createSignal(14);
+    const [sellStatus, setSellStatus] = createSignal('');
+    const [eventLogs, setEventLogs] = createSignal([]);
+    const [portfolioItems, setPortfolioItems] = createSignal([]);
+    const [customCeStrike, setCustomCeStrike] = createSignal('');
+    const [customPeStrike, setCustomPeStrike] = createSignal('');
+
+    const [executionPrefs, setExecutionPrefs] = createSignal({
+      user_id: 'U001',
+      broker_name: 'greeksoft',
+      account_id: 'HRITIK',
+      product_type: 'NRML',
+      exchange_segment: 'NSEFO',
+      order_lots_per_call: 1,
+      delta_neutral: true
+    });
+
+    const [automationConfig, setAutomationConfig] = createSignal({
+      symbol: 'NIFTY',
+      size: 1,
+      entry_time: '',
+      exit_time: '',
+      hedge_div: 57,
+      straddle_div: 4,
+      roll_straddle_div: 0.2,
+      hedge_frac: 1.0,
+      sl_bps: 14,
+      buy_buffer: 2,
+      sell_buffer: 2,
+      order_lots_per_call: 1,
+      idv: 11.4,
+      idv_divisor: 1.5,
+      straddle_filter: 250,
+      sl_monitor_interval: 60,
+      hedge_monitor_interval: 60,
+      roll_monitor_interval: 60,
+      hedge_start_time: '',
+      sl_start_time: '',
+      roll_start_time: ''
+    });
+
+    const [optionChain, setOptionChain] = createSignal({
+      symbol: 'NIFTY',
+      synthetic_future: 0,
+      future_ltp: 0,
+      atm: 0,
+      expiry: '',
+      available_expiries: [],
+      chain: []
+    });
+
+    const availableSymbols = [
+      'NIFTY',
+      'BANKNIFTY',
+      'FINNIFTY',
+      'MIDCPNIFTY',
+      'SENSEX',
+      'BANKEX'
+    ];
+
+    const brokerOptions = ['xts', 'greeksoft', 'mock'];
+    const greeksoftAccounts = ['HRITIK', 'HRITIK1'];
+
+    let ws = null;
+    let reconnectTimer = null;
+    let heartbeatTimer = null;
+
+    const appendEventLog = (level, message) => {
+      const entry = {
+        ts: new Date().toLocaleTimeString(),
+        level: level.toUpperCase(),
+        message
+      };
+      setEventLogs((prev) => [entry, ...prev].slice(0, 300));
+    };
+
+    const underlying = createMemo(() => {
+      const oc = optionChain();
+      if (toNum(oc.synthetic_future) > 0) return toNum(oc.synthetic_future);
+      if (toNum(oc.future_ltp) > 0) return toNum(oc.future_ltp);
+      return 0;
+    });
+
+    const normalizePayload = (rawSymbol, d) => {
+      const chainRows = Array.isArray(d?.chain) ? d.chain : [];
+      const currentExpiry = d?.expiry || '';
+
+      const availableExpiries =
+        Array.isArray(d?.available_expiries) && d.available_expiries.length > 0
+          ? d.available_expiries
+          : currentExpiry
+            ? [currentExpiry]
+            : [];
+
+      return {
+        symbol: normalize(rawSymbol || d?.symbol),
+        synthetic_future: toNum(d?.synthetic_future ?? d?.synthetic_spot),
+        future_ltp: toNum(d?.future_ltp ?? d?.fut_ltp),
+        atm: toNum(d?.atm),
+        expiry: currentExpiry,
+        available_expiries: availableExpiries,
+        chain: chainRows.map((row) => ({
+          strike: toNum(row?.strike),
+          ce_token: toNum(row?.ce_token),
+          pe_token: toNum(row?.pe_token),
+          ce_ltp: toNum(row?.ce_ltp),
+          pe_ltp: toNum(row?.pe_ltp),
+          ce_iv: hasValue(row?.ce_iv) ? Number(row.ce_iv) : null,
+          pe_iv: hasValue(row?.pe_iv) ? Number(row.pe_iv) : null,
+          ce_delta: hasValue(row?.ce_delta) ? Number(row.ce_delta) : null,
+          pe_delta: hasValue(row?.pe_delta) ? Number(row.pe_delta) : null,
+          ce_gamma: hasValue(row?.ce_gamma) ? Number(row.ce_gamma) : null,
+          pe_gamma: hasValue(row?.pe_gamma) ? Number(row.pe_gamma) : null,
+          ce_theta: hasValue(row?.ce_theta) ? Number(row.ce_theta) : null,
+          pe_theta: hasValue(row?.pe_theta) ? Number(row.pe_theta) : null,
+          ce_vega: hasValue(row?.ce_vega) ? Number(row.ce_vega) : null,
+          pe_vega: hasValue(row?.pe_vega) ? Number(row.pe_vega) : null,
+          is_atm: !!row?.is_atm
+        }))
+      };
+    };
+
+    const connectSocket = () => {
+      const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      const url = `${proto}://${window.location.hostname}:8003/ws/snapshots`;
+
+      if (ws) {
         try {
-          const res = await fetch(`http://${HOST}:8001/api/option-chain/${selectedSymbol()}`);
-          if (!res.ok) return; // FIX: Silently abort if the fallback API returns 404 to prevent JSON crash
-          
-          const text = await res.text();
-          if (!text || text.includes("404")) return;
-          
-          let data;
-          try {
-            data = JSON.parse(text);
-          } catch (e) { return; } // Safely ignore non-JSON error pages
-          
-          if (data.success && data.data) {
-            const chainArray = data.data.chain || data.data.data || [];
-            setOptionChain({
-              spot: data.data.fut_ltp || data.data.spot || 0,
-              synthetic_spot: data.data.synthetic_spot || data.data.fut_ltp || 0,
-              atm: data.data.atm,
-              chain: chainArray,
-              lot_size: data.data.lot_size || 0,
-              expiry: data.data.expiry || data.data.expiry_date || ''
-            });
-            setDataSource('🐍 Python XTS Fallback');
-          }
-        } catch (e) {
-          console.error("XTS Fallback failed:", e);
-        }
+          ws.close();
+        } catch (_) {}
       }
-    };
 
-    const poller = setInterval(fetchPythonFallback, 2000);
-    onCleanup(() => clearInterval(poller));
-    // ----------------------------------
-
-    const connectSnapshots = () => {
       setWsStatus('Connecting...');
-      const socket = new WebSocket(`ws://${HOST}:8003/ws/snapshots`);
+      ws = new WebSocket(url);
 
-      socket.onopen = () => {
-        setWsStatus('Connected');
+      ws.onopen = () => {
+        setWsStatus('LIVE');
+        appendEventLog('info', 'Snapshot websocket connected');
       };
 
-      socket.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.type === 'log') {
-          setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), msg: data.message }].slice(-50));
-        } else if (data.trade_uid) {
-          setSnapshots(prev => ({
-            ...prev,
-            [data.trade_uid]: data
-          }));
-        } else if (data.type === 'option_chain' && data.symbol === selectedSymbol()) {
-          const chainArray = data.data ?? data.chain ?? data.options ?? [];
-          
-          // Detect if C++ is transmitting pure zeros
-          const atmRow = chainArray.find(row => row.is_atm);
-          const isZero = atmRow ? (atmRow.ce_ltp === 0 && atmRow.pe_ltp === 0) : false;
+      ws.onmessage = (event) => {
+        try {
+          const raw = JSON.parse(event.data);
 
-          if (Array.isArray(chainArray) && chainArray.length > 0) {
-            // Allow update if we have good data, OR if the screen is currently blank
-            if (!isZero || optionChain()?.chain?.length === 0) {
-              setOptionChain({
-                spot: data.spot || data.fut_ltp || 0,
-                synthetic_spot: data.synthetic_spot || data.syn_fut || data.syn_spot || data.spot || data.fut_ltp || 0,
-                atm: data.atm,
-                chain: chainArray,
-                lot_size: data.lot_size || 0,
-                expiry: data.expiry || data.expiry_date || ''
-              });
-              setLastCppUpdate(Date.now());
-              if (!isZero) setDataSource('⚡ C++ Feed');
-            }
-          } else {
-            console.warn("Received option chain but array is empty or missing:", data);
+          if (raw.type !== 'option_chain_update' && raw.type !== 'option_chain') {
+            return;
           }
+
+          const payload =
+            raw?.data && typeof raw.data === 'object'
+              ? raw.data
+              : raw;
+
+          const incomingSymbol = normalize(raw?.symbol || payload?.symbol);
+          if (incomingSymbol !== normalize(selectedSymbol())) return;
+
+          const next = normalizePayload(incomingSymbol, payload);
+
+          if (selectedExpiry() && next.expiry !== selectedExpiry()) return;
+
+          if (next.chain.length > 0) {
+            setOptionChain(next);
+
+            if (!selectedExpiry()) {
+              setSelectedExpiry(next.expiry || '');
+            }
+
+            setDataSource('C++ Feed');
+          }
+        } catch (err) {
+          console.error('WS parse error:', err);
+          appendEventLog('error', 'WebSocket parse error');
         }
       };
 
-      socket.onclose = () => {
-        setWsStatus('Disconnected. Retrying...');
-        setTimeout(connectSnapshots, 2000);
+      ws.onerror = () => {
+        appendEventLog('error', 'WebSocket error');
+        try {
+          ws.close();
+        } catch (_) {}
       };
 
-      socket.onerror = (error) => socket.close();
+      ws.onclose = () => {
+        setWsStatus('Disconnected');
+        appendEventLog('warn', 'WebSocket disconnected, retrying...');
+        reconnectTimer = setTimeout(connectSocket, 2000);
+      };
     };
 
-    connectSnapshots();
-  });
+    onMount(() => {
+      connectSocket();
+      setUiDefaults();
+      loadPortfolioFromBackend();
 
-  const handleSquareOff = async (tradeUid) => {
-    try {
-      setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), msg: `Sending square-off command for ${tradeUid}...` }]);
-      // Hits the Go Execution Gateway
-      const res = await fetch(`http://${window.location.hostname}:8005/api/trade/${tradeUid}/square-off`, { method: 'POST' });
-      if (!res.ok) throw new Error('Square-off failed');
-      setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), msg: `✅ Square-off triggered for ${tradeUid}` }]);
-      console.log(`Square-off triggered for ${tradeUid}`);
-    } catch (err) {
-      setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), msg: `❌ Error squaring off: ${err.message}` }]);
-      console.error(err);
-    }
-  };
+      heartbeatTimer = setInterval(() => {
+        appendEventLog('info', `Heartbeat • ${selectedSymbol()} • ${selectedExpiry() || 'no-expiry'}`);
+      }, 10000);
+    });
 
-  const handleDeployStraddle = async () => {
-    try {
-      const currentChain = optionChain();
-      const atmRow = currentChain?.chain?.find(row => row.is_atm);
-      const ce_token = atmRow?.ce_token ?? atmRow?.CE?.token ?? atmRow?.ceToken ?? 0;
-      const pe_token = atmRow?.pe_token ?? atmRow?.PE?.token ?? atmRow?.peToken ?? 0;
-      const lot_size = atmRow?.ce_lot_size ?? atmRow?.lot_size ?? currentChain?.lot_size ?? 0;
+    onCleanup(() => {
+      if (ws) ws.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+    });
 
-      setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), msg: `Initiating ${selectedSymbol()} Straddle deployment (CE: ${ce_token}, PE: ${pe_token})...` }]);
-      const payload = { 
-        symbol: selectedSymbol(), 
-        lots: 1, 
-        delta_neutral: true,
-        strike: currentChain?.atm || 0,
-        ce_token: ce_token,
-        pe_token: pe_token,
-        lot_size: lot_size,
-        ...tradeConfig() // Unpacks size, hedge_div, sl_bps, etc.
-      };
+    const handleSymbolChange = (e) => {
+      const sym = e.target.value.toUpperCase();
+      setSelectedSymbol(sym);
+      setSelectedExpiry('');
+      setSellStatus('');
+      appendEventLog('info', `Symbol changed to ${sym}`);
 
-      // Hits the Go Execution Gateway
-      const res = await fetch(`http://${window.location.hostname}:8005/api/straddle/sell`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (!res.ok) {
-         const errText = await res.text();
-         throw new Error(`Deploy failed: ${errText}`);
-      }
-      const data = await res.json();
-      setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), msg: `✅ Go Gateway accepted! UID: ${data.trade_uid || 'Unknown'}` }]);
-      console.log(`Straddle deployment initiated!`, data);
-    } catch (err) {
-      setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), msg: `❌ Error starting trade: ${err.message}` }]);
-      console.error('Error starting trade:', err);
-    }
-  };
+      const isSensex = sym.includes('SENSEX');
+      const defaultBuffer = isSensex ? 6 : 2;
 
-  const handleSymbolChange = (e) => {
-    setSelectedSymbol(e.target.value);
-    setOptionChain([]); // Clear table until new data arrives
-    
-    // Auto-set buffer defaults for specific symbols
-    const defaultBuffer = e.target.value.toUpperCase().includes('SENSEX') ? 6 : 2;
-    setTradeConfig(prev => ({
+      setAutomationConfig((prev) => ({
         ...prev,
+        symbol: sym,
         buy_buffer: defaultBuffer,
         sell_buffer: defaultBuffer
-    }));
-  };
+      }));
 
-  const getVisibleChain = () => {
-    const chain = optionChain()?.chain || [];
-    if (chain.length === 0) return [];
+      setOptionChain({
+        symbol: sym,
+        synthetic_future: 0,
+        future_ltp: 0,
+        atm: 0,
+        expiry: '',
+        available_expiries: [],
+        chain: []
+      });
+    };
 
-    const atmIndex = chain.findIndex(row => row.is_atm);
-    if (atmIndex === -1) {
-      // If no ATM, just show the middle part of the chain
-      const middle = Math.floor(chain.length / 2);
-      const start = Math.max(0, middle - visibleStrikes());
-      const end = Math.min(chain.length, middle + visibleStrikes() + 1);
-      return chain.slice(start, end);
-    }
+    const handleExpiryChange = (e) => {
+      setSelectedExpiry(e.target.value);
+      setSellStatus('');
+      appendEventLog('info', `Expiry changed to ${e.target.value}`);
+    };
 
-    const start = Math.max(0, atmIndex - visibleStrikes());
-    const end = Math.min(chain.length, atmIndex + visibleStrikes() + 1);
-    return chain.slice(start, end);
-  };
+    const filteredChain = createMemo(() => {
+      const oc = optionChain();
+      const chain = oc.chain || [];
 
-  return (
-    <div class="App">
-      <header class="App-header">
-        <h1>Live Trade Monitor</h1>
-        <p>Unified Data Feed: <span class={wsStatus() === 'Connected' ? 'connected' : 'disconnected'}>{wsStatus()}</span></p>
-      </header>
-      <main>
-        <div class="quick-actions" style={{ "margin-bottom": "20px", "text-align": "left", "padding": "15px", "background": "#2c2c2c", "border-radius": "8px" }}>
-          <h3 style={{ "margin-top": "0" }}>Trade Configuration</h3>
-          <div style={{ "display": "grid", "grid-template-columns": "repeat(auto-fit, minmax(130px, 1fr))", "gap": "10px", "margin-bottom": "15px" }}>
-            <div><label style={{"font-size":"12px","color":"#aaa"}}>Lots (Size)</label><br/><input type="number" style={{"width":"100%","padding":"5px","background":"#444","color":"white","border":"none"}} value={tradeConfig().size} onInput={(e) => updateConfig('size', e.target.value)} /></div>
-            <div><label style={{"font-size":"12px","color":"#aaa"}}>SL BPS</label><br/><input type="number" style={{"width":"100%","padding":"5px","background":"#444","color":"white","border":"none"}} value={tradeConfig().sl_bps} onInput={(e) => updateConfig('sl_bps', e.target.value)} /></div>
-            <div><label style={{"font-size":"12px","color":"#aaa"}}>Hedge Div</label><br/><input type="number" style={{"width":"100%","padding":"5px","background":"#444","color":"white","border":"none"}} value={tradeConfig().hedge_div} onInput={(e) => updateConfig('hedge_div', e.target.value)} /></div>
-            <div><label style={{"font-size":"12px","color":"#aaa"}}>Straddle Div</label><br/><input type="number" style={{"width":"100%","padding":"5px","background":"#444","color":"white","border":"none"}} value={tradeConfig().straddle_div} onInput={(e) => updateConfig('straddle_div', e.target.value)} /></div>
-            <div><label style={{"font-size":"12px","color":"#aaa"}}>Roll Div</label><br/><input type="number" step="0.1" style={{"width":"100%","padding":"5px","background":"#444","color":"white","border":"none"}} value={tradeConfig().roll_straddle_div} onInput={(e) => updateConfig('roll_straddle_div', e.target.value)} /></div>
-            <div><label style={{"font-size":"12px","color":"#aaa"}}>Buy Buffer</label><br/><input type="number" style={{"width":"100%","padding":"5px","background":"#444","color":"white","border":"none"}} value={tradeConfig().buy_buffer} onInput={(e) => updateConfig('buy_buffer', e.target.value)} /></div>
-            <div><label style={{"font-size":"12px","color":"#aaa"}}>Sell Buffer</label><br/><input type="number" style={{"width":"100%","padding":"5px","background":"#444","color":"white","border":"none"}} value={tradeConfig().sell_buffer} onInput={(e) => updateConfig('sell_buffer', e.target.value)} /></div>
-            <div><label style={{"font-size":"12px","color":"#aaa"}}>Lots/Call</label><br/><input type="number" style={{"width":"100%","padding":"5px","background":"#444","color":"white","border":"none"}} value={tradeConfig().order_lots_per_call} onInput={(e) => updateConfig('order_lots_per_call', e.target.value)} /></div>
+      if (!chain.length) return [];
+
+      const atm = oc.atm;
+      const idx = chain.findIndex((r) => r.strike === atm || r.is_atm);
+      const span = visibleStrikes();
+
+      if (idx === -1) {
+        const mid = Math.floor(chain.length / 2);
+        return chain.slice(
+          Math.max(0, mid - span),
+          Math.min(chain.length, mid + span + 1)
+        );
+      }
+
+      return chain.slice(
+        Math.max(0, idx - span),
+        Math.min(chain.length, idx + span + 1)
+      );
+    });
+
+    const atmRow = createMemo(() => {
+      const chain = optionChain().chain || [];
+      return chain.find((r) => r.is_atm || r.strike === optionChain().atm) || null;
+    });
+
+    const atmStraddle = createMemo(() => {
+      const row = atmRow();
+      return (row?.ce_ltp || 0) + (row?.pe_ltp || 0);
+    });
+
+    const stats = createMemo(() => {
+      const chain = optionChain().chain || [];
+      return {
+        ceActive: chain.filter((r) => (r.ce_ltp || 0) > 0).length,
+        peActive: chain.filter((r) => (r.pe_ltp || 0) > 0).length
+      };
+    });
+
+    const cellClass = (v, side) => {
+      if (!hasValue(v) || Number(v) === 0) return 'cell-zero';
+      return side === 'ce' ? 'cell-ce' : 'cell-pe';
+    };
+
+    const dedupePortfolio = (items) => {
+      const seen = new Set();
+      return items.filter((item) => {
+        const key = item.tradeUid || item.id;
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    };
+
+    const storePortfolioEntry = (payload, responseData) => {
+      const tradeData = responseData?.data?.straddleData || responseData?.data || responseData;
+
+      const item = {
+        id: tradeData.trade_uid || `LOCAL-${Date.now()}`,
+        symbol: tradeData.symbol || payload.symbol,
+        expiry: tradeData.expiry || payload.targetExpiry || optionChain().expiry || "",
+        strike: tradeData.strike || payload.strike || optionChain().atm || 0,
+        lots: tradeData.lots || payload.lots || 0,
+        status: tradeData.status || responseData.status || "ACTIVE",
+        createdAt: tradeData.created_at
+          ? new Date(tradeData.created_at).toLocaleTimeString()
+          : new Date().toLocaleTimeString(),
+        tradeUid: tradeData.trade_uid || "",
+        brokerName: payload.broker_name || tradeData.broker_name || executionPrefs().broker_name,
+        accountId: payload.account_id || payload.accountID || tradeData.account_id || executionPrefs().account_id,
+        exchangeSegment:
+          tradeData.exchange_segment || payload.exchange_segment || payload.exchangeSegment || executionPrefs().exchange_segment,
+        lotSize: tradeData.lot_size || payload.lot_size || payload.lotSize || 0,
+        ceToken: tradeData.ce_token,
+        peToken: tradeData.pe_token,
+        ceQty: tradeData.ce_quantity || tradeData.ceqty,
+        peQty: tradeData.pe_quantity || tradeData.peqty,
+        ceLtp: tradeData.ce_entry_price ?? tradeData.ce_ltp ?? 0,
+        peLtp: tradeData.pe_entry_price ?? tradeData.pe_ltp ?? 0,
+        netDelta: tradeData.net_delta ?? 0
+      };
+
+      setPortfolioItems((prev) => dedupePortfolio([item, ...prev]));
+    };
+
+    const buildBasePayload = () => {
+      const prefs = executionPrefs();
+
+      return {
+        user_id: prefs.user_id || 'U001',
+        broker_name: normalize(prefs.broker_name || 'greeksoft').toLowerCase(),
+        account_id: prefs.account_id || 'HRITIK',
+        symbol: selectedSymbol(),
+        delta_neutral: !!prefs.delta_neutral,
+        product_type: prefs.product_type || 'NRML',
+        target_expiry: selectedExpiry() || optionChain().expiry,
+        order_lots_per_call: toNum(prefs.order_lots_per_call) || 1,
+        exchange_segment: prefs.exchange_segment || 'NSEFO'
+      };
+    };
+
+    const handleSellStraddle = async () => {
+      const row = atmRow();
+      if (!row) {
+        setSellStatus("ATM row not available yet");
+        appendEventLog("error", "Sell failed: ATM row not available");
+        return;
+      }
+
+      if (!executionPrefs().account_id && executionPrefs().broker_name === "xts") {
+        setSellStatus("XTS accountID is required");
+        appendEventLog("error", "Sell failed: missing XTS accountID");
+        return;
+      }
+
+      const payload = {
+        ...buildBasePayload(),
+        lots: toNum(automationConfig().size) || 1,
+        strike: Math.round(row.strike),
+        ce_token: row.ce_token,
+        pe_token: row.pe_token,
+        lot_size: 0,
+        ce_strike_price: Math.round(row.strike),
+        pe_strike_price: Math.round(row.strike)
+      };
+
+      setSellStatus(
+        `Sending ${payload.broker_name.toUpperCase()} order for ${payload.symbol} ${payload.strike}...`
+      );
+
+      appendEventLog(
+        "info",
+        `Sell request sent via ${payload.broker_name} for ${payload.symbol} ATM ${payload.strike}`
+      );
+
+      try {
+        const data = await safeFetchJson("/api/trade/straddle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (data.success) {
+          setSellStatus(
+            `✅ Success via ${payload.broker_name.toUpperCase()}! Trade ID: ${data.trade_uid || "Created"}`
+          );
+          appendEventLog(
+            "success",
+            `Trade created via ${payload.broker_name}: ${data.trade_uid || "Created"}`
+          );
+          storePortfolioEntry(payload, data);
+          setActiveTab("portfolio");
+        } else {
+          setSellStatus(`Failed: ${data.error || "Unknown error"}`);
+          appendEventLog("error", `Trade failed: ${data.error || "Unknown error"}`);
+        }
+      } catch (err) {
+        setSellStatus(`Network Error: ${err.message}`);
+        appendEventLog("error", `Sell network error: ${err.message}`);
+      }
+    };
+
+
+    const handleSellCustomStraddle = async () => {
+      const ceStrike = toNum(customCeStrike());
+      const peStrike = toNum(customPeStrike());
+
+      if (!ceStrike || !peStrike) {
+        setSellStatus("Both CE and PE strikes are required");
+        appendEventLog("error", "Custom sell failed: Both strikes required");
+        return;
+      }
+
+      if (!executionPrefs().account_id && executionPrefs().broker_name === "xts") {
+        setSellStatus("XTS accountID is required");
+        appendEventLog("error", "Custom sell failed: missing XTS accountID");
+        return;
+      }
+
+      const payload = {
+        ...buildBasePayload(),
+        lots: toNum(automationConfig().size) || 1,
+        ce_strike_price: Math.round(ceStrike),
+        pe_strike_price: Math.round(peStrike)
+      };
+
+      setSellStatus(
+        `Sending custom ${payload.broker_name.toUpperCase()} order for ${payload.symbol}...`
+      );
+      appendEventLog(
+        "info",
+        `Custom sell request sent via ${payload.broker_name} for ${payload.symbol} CE ${ceStrike}, PE ${peStrike}`
+      );
+
+      try {
+        const data = await safeFetchJson("/api/trade/straddle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (data.success) {
+          setSellStatus(
+            `✅ Success via ${payload.broker_name.toUpperCase()}! Trade ID: ${data.trade_uid || "Created"}`
+          );
+          appendEventLog(
+            "success",
+            `Trade created via ${payload.broker_name}: ${data.trade_uid || "Created"}`
+          );
+          storePortfolioEntry(payload, data);
+          setActiveTab("portfolio");
+        } else {
+          setSellStatus(`Failed: ${data.error || "Unknown error"}`);
+          appendEventLog("error", `Trade failed: ${data.error || "Unknown error"}`);
+        }
+      } catch (err) {
+        setSellStatus(`Network Error: ${err.message}`);
+        appendEventLog("error", `Sell network error: ${err.message}`);
+      }
+    };
+
+
+    const loadPortfolioFromBackend = async () => {
+      try {
+        const data = await safeFetchJson("/api/straddles");
+
+        const rows = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.data)
+            ? data.data
+            : Array.isArray(data?.trades)
+              ? data.trades
+              : [];
+
+        if (!rows.length) return;
+
+        const mapped = rows.map((tr) => ({
+          id: tr.trade_uid || tr.id || `DB-${Date.now()}`,
+          symbol: tr.symbol || "—",
+          expiry: tr.expiry || "",
+          strike: tr.strike || 0,
+          lots: tr.lots || 0,
+          status: tr.status || "ACTIVE",
+          createdAt: tr.created_at
+            ? new Date(tr.created_at).toLocaleTimeString()
+            : "",
+          tradeUid: tr.trade_uid || "",
+          brokerName: tr.broker_name || tr.brokerName || "—",
+          accountId: tr.account_id || tr.accountId || "—",
+          exchangeSegment: tr.exchange_segment || tr.exchangeSegment || "",
+          lotSize: tr.lot_size || tr.lotSize || 0,
+          ceToken: tr.ce_token,
+          peToken: tr.pe_token,
+          ceQty: tr.ce_quantity || tr.ceQty,
+          peQty: tr.pe_quantity || tr.peQty,
+          ceLtp: tr.ce_entry_price ?? tr.ce_ltp ?? 0,
+          peLtp: tr.pe_entry_price ?? tr.pe_ltp ?? 0,
+          netDelta: tr.net_delta ?? 0
+        }));
+
+        setPortfolioItems((prev) => dedupePortfolio([...mapped, ...prev]));
+        appendEventLog("info", `Loaded ${mapped.length} saved trades from backend`);
+      } catch (err) {
+        appendEventLog("warn", `Could not load saved trades: ${err.message}`);
+      }
+    };
+
+    const setUiDefaults = () => {
+      const now = new Date();
+      now.setMinutes(now.getMinutes() + 1);
+      now.setSeconds(0);
+      now.setMilliseconds(0);
+
+      const nextMinuteStr = now.toLocaleTimeString('en-GB', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+
+      let exitTimeStr = '15:27:00';
+      const marketExit = new Date();
+      marketExit.setHours(15, 27, 0, 0);
+
+      if (now >= marketExit) {
+        const testExit = new Date(now);
+        testExit.setHours(testExit.getHours() + 1);
+        exitTimeStr = testExit.toLocaleTimeString('en-GB', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false
+        });
+      }
+
+      const isSensex = selectedSymbol().includes('SENSEX');
+      const defaultBuffer = isSensex ? 6 : 2;
+
+      setAutomationConfig((prev) => ({
+        ...prev,
+        symbol: selectedSymbol(),
+        entry_time: nextMinuteStr,
+        exit_time: exitTimeStr,
+        sl_start_time: nextMinuteStr,
+        hedge_start_time: nextMinuteStr,
+        roll_start_time: nextMinuteStr,
+        size: 77,
+        hedge_div: 57,
+        straddle_div: 4,
+        roll_straddle_div: 0.2,
+        buy_buffer: defaultBuffer,
+        sell_buffer: defaultBuffer
+      }));
+    };
+
+    const handleAutomationBuild = async () => {
+      const cfg = automationConfig();
+
+      const payload = {
+        user_id: executionPrefs().user_id || 'U001',
+        broker_name: executionPrefs().broker_name,
+        account_id: executionPrefs().account_id,
+        exchange_segment: executionPrefs().exchange_segment,
+        symbol: cfg.symbol,
+        size: cfg.size,
+        lots: cfg.size,
+        entry_time: cfg.entry_time,
+        exit_time: cfg.exit_time,
+        idv: cfg.idv,
+        idv_divisor: cfg.idv_divisor,
+        straddle_filter: cfg.straddle_filter,
+        sl_bps: cfg.sl_bps,
+        buy_buffer: cfg.buy_buffer,
+        sell_buffer: cfg.sell_buffer,
+        hedge_div: cfg.hedge_div,
+        straddle_div: cfg.straddle_div,
+        roll_straddle_div: cfg.roll_straddle_div,
+        sl_start_time: cfg.sl_start_time,
+        hedge_start_time: cfg.hedge_start_time,
+        roll_start_time: cfg.roll_start_time,
+        order_lots_per_call: cfg.order_lots_per_call,
+        target_expiry: selectedExpiry() || optionChain().expiry
+      };
+
+      appendEventLog(
+        "info",
+        `Automation build trigger via ${payload.broker_name} for ${payload.symbol}`
+      );
+
+      try {
+        const data = await safeFetchJson("/api/trade/straddle/automated", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (data.success) {
+          appendEventLog("success", `Automation build scheduled: ${data.message}`);
+        } else {
+          appendEventLog("error", `Automation build failed: ${data.error || "Unknown error"}`);
+        }
+      } catch (err) {
+        appendEventLog("error", `Automation build error: ${err.message}`);
+      }
+    };
+
+    return (
+      <div class="terminal-shell">
+        <header class="topbar">
+          <div class="brand">
+            <div class="brand-title">TRADING TERMINAL</div>
+            <div class="brand-subtitle">
+              Live option chain • low-latency feed • execution ready
+            </div>
           </div>
-          <button class="action-btn deploy" style={{ "background-color": "#4CAF50", "padding": "10px 20px", "font-size": "16px", "font-weight": "bold", "width": "100%" }} onClick={handleDeployStraddle}>
-            ⚡ One-Click Sell {selectedSymbol()} Straddle
+          <div class="topbar-right">
+            <div class="status-chip">{wsStatus()}</div>
+            <div class="status-chip muted">{dataSource()}</div>
+          </div>
+        </header>
+
+        <div class="main-tabs">
+          <button
+            class={`tab-btn ${activeTab() === 'terminal' ? 'active' : ''}`}
+            onClick={() => setActiveTab('terminal')}
+          >
+            Terminal
+          </button>
+          <button
+            class={`tab-btn ${activeTab() === 'portfolio' ? 'active' : ''}`}
+            onClick={() => setActiveTab('portfolio')}
+          >
+            Portfolio
+          </button>
+          <button
+            class={`tab-btn ${activeTab() === 'automation' ? 'active' : ''}`}
+            onClick={() => setActiveTab('automation')}
+          >
+            Automation
+          </button>
+          <button
+            class={`tab-btn ${activeTab() === 'logs' ? 'active' : ''}`}
+            onClick={() => setActiveTab('logs')}
+          >
+            Logs
           </button>
         </div>
 
-        <table>
-          <thead>
-            <tr>
-              <th>Trade UID</th>
-              <th>Status</th>
-              <th>Total P&L</th>
-              <th>Unrealized P&L</th>
-              <th>Net Delta</th>
-              <th>Net Gamma</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <Index each={Object.values(snapshots())}>
-              {(snap) => (
-                <tr>
-                  <td>{snap().trade_uid}</td>
-                  <td>{snap().status}</td>
-                  <td class={snap().total_pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}>
-                    {snap().total_pnl.toFixed(2)}
-                  </td>
-                  <td>{snap().unrealized_pnl.toFixed(2)}</td>
-                  <td>{snap().net_delta.toFixed(2)}</td>
-                  <td>{snap().net_gamma.toFixed(4)}</td>
-                  <td>
-                    <button class="action-btn square-off" onClick={() => handleSquareOff(snap().trade_uid)}>
-                      Square Off
-                    </button>
-                  </td>
-                </tr>
-              )}
-            </Index>
-          </tbody>
-        </table>
-
-      <div class="option-chain-container" style={{ "margin-top": "30px", "text-align": "center" }}>
-        <div style={{ "display": "flex", "justify-content": "center", "align-items": "center", "gap": "15px" }}>
-          <h3 style={{ margin: 0 }}>🔴 LIVE OPTION CHAIN <span style={{ "font-size": "16px", "margin-left": "10px", "color": dataSource().includes('C++') ? '#4CAF50' : '#2196F3' }}>[{dataSource()}]</span></h3>
-          <select 
-            value={selectedSymbol()} 
-            onChange={handleSymbolChange}
-            style={{ "padding": "5px 10px", "font-size": "16px", "background": "#333", "color": "#fff", "border": "1px solid #555", "border-radius": "4px", "cursor": "pointer" }}
-          >
-            <For each={availableSymbols}>
-              {(sym) => <option value={sym}>{sym}</option>}
-            </For>
-          </select>
-          <div style={{ "display": "flex", "align-items": "center", "gap": "10px", "margin-left": "20px" }}>
-            <label for="strike-slider" style={{"font-size": "14px"}}>Strikes:</label>
-            <input 
-              type="range" 
-              id="strike-slider"
-              min="5" 
-              max="40" 
-              value={visibleStrikes()} 
-              onInput={(e) => setVisibleStrikes(parseInt(e.target.value))}
-            />
-            <span>{visibleStrikes() * 2 + 1}</span>
-          </div>
-        </div>
-        
-        {optionChain() && optionChain().spot && (
-          <div style={{ "margin-bottom": "15px", "font-size": "1.1rem" }}>
-            <strong>Equity Spot:</strong> {optionChain().spot?.toFixed(2)} | <strong style={{ "margin-left": "15px" }}>Synthetic Spot:</strong> {optionChain().synthetic_spot?.toFixed(2)} | <strong style={{ "margin-left": "15px" }}>ATM:</strong> {optionChain().atm} | <strong style={{ "margin-left": "15px" }}>Expiry:</strong> {optionChain().expiry}
-          </div>
-        )}
-        
-        <table class="option-chain-table" style={{ "width": "100%", "background": "#1e1e1e", "border-radius": "8px", "table-layout": "fixed" }}>
-          <thead>
-            <tr>
-              <th>CE LTP</th>
-              <th>CE Delta</th>
-              <th>CE Gamma</th>
-              <th style={{ "background": "#333" }}>STRIKE</th>
-              <th>PE LTP</th>
-              <th>PE Delta</th>
-              <th>PE Gamma</th>
-            </tr>
-          </thead>
-          <tbody>
-            <Index each={getVisibleChain()}>
-              {(row) => (
-                <tr style={{ "background-color": row().is_atm ? "#444" : "transparent" }}>
-                  <td style={{"color": "#4CAF50"}}>{(row().ce_ltp ?? row().CE?.ltp ?? row().CE?.LTP ?? 0).toFixed(2)}</td>
-                  <td>{(row().ce_delta ?? row().CE?.delta ?? 0).toFixed(4)}</td>
-                  <td>{(row().ce_gamma ?? row().CE?.gamma ?? 0).toFixed(4)}</td>
-                  <td style={{ "font-weight": "bold", "font-size": "16px", "color": row().is_atm ? "#FFD700" : "#fff" }}>
-                    {row().strike} {row().is_atm ? "(ATM)" : ""}
-                  </td>
-                  <td style={{"color": "#F44336"}}>{(row().pe_ltp ?? row().PE?.ltp ?? row().PE?.LTP ?? 0).toFixed(2)}</td>
-                  <td>{(row().pe_delta ?? row().PE?.delta ?? 0).toFixed(4)}</td>
-                  <td>{(row().pe_gamma ?? row().PE?.gamma ?? 0).toFixed(4)}</td>
-                </tr>
-              )}
-            </Index>
-          </tbody>
-        </table>
-      </div>
-
-        <div class="logs-container" style={{ "margin-top": "30px", "text-align": "left", "background": "#1e1e1e", "padding": "15px", "border-radius": "8px", "height": "250px", "overflow-y": "auto", "font-family": "monospace", "font-size": "14px", "border": "1px solid #333" }}>
-          <h3 style={{ "margin-top": "0", "color": "#aaa", "border-bottom": "1px solid #333", "padding-bottom": "10px" }}>System Logs</h3>
-          <For each={logs()}>
-            {(log) => (
-              <div style={{ "margin-bottom": "8px", "line-height": "1.4" }}>
-                <span style={{ "color": "#4CAF50", "margin-right": "10px" }}>[{log.time}]</span>
-                <span style={{ "color": "#e0e0e0" }}>{log.msg}</span>
+        <Show when={activeTab() === 'terminal'}>
+          <section class="toolbar">
+            <div class="toolbar-left">
+              <div class="control-block">
+                <label class="control-label">Symbol</label>
+                <select class="symbol-select" value={selectedSymbol()} onChange={handleSymbolChange}>
+                  <Index each={availableSymbols}>
+                    {(s) => <option value={s()}>{s()}</option>}
+                  </Index>
+                </select>
               </div>
-            )}
-          </For>
-        </div>
-      </main>
-    </div>
-  );
-}
 
-export default App;
+              <div class="control-block">
+                <label class="control-label">Expiry</label>
+                <select class="symbol-select" value={selectedExpiry()} onChange={handleExpiryChange}>
+                  <For each={(optionChain().available_expiries || []).length ? optionChain().available_expiries : [optionChain().expiry || '']}>
+                    {(exp) => <option value={exp}>{exp || '—'}</option>}
+                  </For>
+                </select>
+              </div>
+
+              <div class="control-block">
+                <label class="control-label">Broker</label>
+                <select
+                  class="symbol-select"
+                  value={executionPrefs().broker_name}
+                  onChange={(e) =>
+                    setExecutionPrefs((prev) => ({
+                      ...prev,
+                      broker_name: e.target.value
+                    }))
+                  }
+                >
+                  <For each={brokerOptions}>
+                    {(b) => <option value={b}>{b.toUpperCase()}</option>}
+                  </For>
+                </select>
+              </div>
+              <div class="control-block">
+                <label class="control-label">Account</label>
+                <select
+                  class="symbol-select"
+                  value={executionPrefs().account_id}
+                  onChange={(e) =>
+                    setExecutionPrefs((prev) => ({
+                      ...prev,
+                      account_id: e.target.value
+                    }))
+                  }
+                >
+                  <For each={greeksoftAccounts}>
+                    {(acc) => <option value={acc}>{acc}</option>}
+                  </For>
+                </select>
+              </div>
+
+
+<div class="range-wrap">
+                <label>Visible strikes</label>
+                <input
+                  type="range"
+                  min="8"
+                  max="30"
+                  value={visibleStrikes()}
+                  onInput={(e) => setVisibleStrikes(parseInt(e.target.value, 10))}
+                />
+                <span>{visibleStrikes() * 2 + 1}</span>
+              </div>
+            </div>
+
+            <div class="toolbar-right">
+              <div class="metric-card">
+                <div class="metric-label">Underlying (Synthetic)</div>
+                <div class="metric-value spot">₹ {fmt(underlying(), 2)}</div>
+                <div class="metric-sub">
+                  Synthetic: {toNum(optionChain().synthetic_future) > 0 ? `₹ ${fmt(optionChain().synthetic_future, 2)}` : '—'}
+                </div>
+                <div class="metric-sub">
+                  Future LTP: {toNum(optionChain().future_ltp) > 0 ? `₹ ${fmt(optionChain().future_ltp, 2)}` : '—'}
+                </div>
+              </div>
+
+              <div class="metric-card">
+                <div class="metric-label">ATM</div>
+                <div class="metric-value atm-value">{optionChain().atm || '—'}</div>
+                <div class="metric-sub">No UI smoothing</div>
+              </div>
+
+              <div class="metric-card highlight">
+                <div class="metric-label">ATM Straddle</div>
+                <div class="metric-value">₹ {fmt(atmStraddle(), 2)}</div>
+                <div class="metric-sub">
+                  {atmRow()
+                    ? `CE ${fmt(atmRow().ce_ltp, 2)} + PE ${fmt(atmRow().pe_ltp, 2)}`
+                    : 'ATM row unavailable'}
+                </div>
+                <div class="metric-sub">
+                  Broker: {executionPrefs().broker_name.toUpperCase()} • Account: {executionPrefs().account_id} • Symbol: {selectedSymbol()}
+                </div>
+                <button class="sell-btn" onClick={handleSellStraddle}>
+                  SELL STRADDLE
+                </button>
+                <Show when={sellStatus()}>
+                  <div class="metric-sub sell-status">{sellStatus()}</div>
+                </Show>
+              </div>
+
+              <div class="metric-card">
+                <div class="metric-label">Custom Strangle/Straddle</div>
+                <div class="custom-strike-inputs">
+                  <input
+                    type="number"
+                    placeholder="CE Strike"
+                    value={customCeStrike()}
+                    onInput={(e) => setCustomCeStrike(e.target.value)}
+                  />
+                  <input
+                    type="number"
+                    placeholder="PE Strike"
+                    value={customPeStrike()}
+                    onInput={(e) => setCustomPeStrike(e.target.value)}
+                  />
+                </div>
+                <button class="sell-btn" onClick={handleSellCustomStraddle}>
+                  SELL CUSTOM
+                </button>
+              </div>
+
+              <div class="metric-card">
+                <div class="metric-label">Expiry</div>
+                <div class="metric-value">{selectedExpiry() || optionChain().expiry || '—'}</div>
+                <div class="metric-sub">Rows: {optionChain().chain.length}</div>
+              </div>
+
+              <div class="metric-card">
+                <div class="metric-label">Active Quotes</div>
+                <div class="metric-value">
+                  CE {stats().ceActive} / PE {stats().peActive}
+                </div>
+                <div class="metric-sub">Symbol: {selectedSymbol()}</div>
+              </div>
+            </div>
+          </section>
+
+          <section class="chain-panel">
+            <div class="panel-header">
+              <div class="panel-title">{selectedSymbol()} OPTION CHAIN</div>
+              <div class="panel-subtitle">Raw backend ATM • synthetic-only underlying</div>
+            </div>
+
+            <Show
+              when={filteredChain().length > 0}
+              fallback={<div class="empty-state">Waiting for live option-chain data…</div>}
+            >
+              <div class="table-wrap">
+                <table class="chain-table">
+                  <thead>
+                    <tr>
+                      <th class="group-h ce-head" colSpan="6">CALLS</th>
+                      <th class="strike-head">STRIKE</th>
+                      <th class="group-h pe-head" colSpan="6">PUTS</th>
+                    </tr>
+                    <tr>
+                      <th>LTP</th>
+                      <th>IV</th>
+                      <th>Δ</th>
+                      <th>Γ</th>
+                      <th>Θ</th>
+                      <th>Vega</th>
+                      <th class="strike-col">Strike</th>
+                      <th>LTP</th>
+                      <th>IV</th>
+                      <th>Δ</th>
+                      <th>Γ</th>
+                      <th>Θ</th>
+                      <th>Vega</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <Index each={filteredChain()}>
+                      {(row) => (
+                        <tr class={row().is_atm ? 'atm-row' : ''}>
+                          <td class={cellClass(row().ce_ltp, 'ce')}>
+                            {row().ce_ltp > 0 ? fmt(row().ce_ltp, 2) : '—'}
+                          </td>
+                          <td>{fmt(row().ce_iv, 4)}</td>
+                          <td>{fmt(row().ce_delta, 4)}</td>
+                          <td>{fmt(row().ce_gamma, 6)}</td>
+                          <td>{fmt(row().ce_theta, 2)}</td>
+                          <td>{fmt(row().ce_vega, 2)}</td>
+
+                          <td class="strike-col">
+                            <div class="strike-box">
+                              <span class="strike-value">{row().strike}</span>
+                              <Show when={row().is_atm}>
+                                <span class="atm-badge">ATM</span>
+                              </Show>
+                            </div>
+                          </td>
+
+                          <td class={cellClass(row().pe_ltp, 'pe')}>
+                            {row().pe_ltp > 0 ? fmt(row().pe_ltp, 2) : '—'}
+                          </td>
+                          <td>{fmt(row().pe_iv, 4)}</td>
+                          <td>{fmt(row().pe_delta, 4)}</td>
+                          <td>{fmt(row().pe_gamma, 6)}</td>
+                          <td>{fmt(row().pe_theta, 2)}</td>
+                          <td>{fmt(row().pe_vega, 2)}</td>
+                        </tr>
+                      )}
+                    </Index>
+                  </tbody>
+                </table>
+              </div>
+            </Show>
+          </section>
+        </Show>
+
+        <Show when={activeTab() === 'portfolio'}>
+          <section class="tab-panel">
+            <div class="panel-header">
+              <div class="panel-title">Portfolio / Recent Builds</div>
+              <div class="panel-subtitle">Local UI history from successful build requests</div>
+            </div>
+
+            <Show
+              when={portfolioItems().length > 0}
+              fallback={<div class="empty-state">No portfolio items yet. Build or sell a straddle first.</div>}
+            >
+              <div class="portfolio-list">
+                <For each={portfolioItems()}>
+                  {(item) => (
+                    <div class="portfolio-card">
+                      <div class="portfolio-header">
+                        <strong>{item.symbol}</strong> • {item.expiry || '—'}
+                        <span class={`status-badge ${(item.status || 'ACTIVE').toLowerCase()}`}>
+                          {item.status}
+                        </span>
+                      </div>
+
+                      <div class="portfolio-meta">
+                        <span>Strike: <strong>{item.strike || '—'}</strong></span>
+                        <span>Lots: <strong>{item.lots}</strong></span>
+                        <span>UID: <strong>{item.tradeUid}</strong></span>
+                      </div>
+
+                      <div class="portfolio-meta">
+                        <span>Broker: <strong>{(item.brokerName || '—').toUpperCase()}</strong></span>
+                        <span>Lot Size: <strong>{item.lotSize || '—'}</strong></span>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '15px', 'margin-top': '10px' }}>
+                        <div style={{ background: '#2c2c2c', padding: '10px', 'border-radius': '4px', flex: 1 }}>
+                          <div style={{ color: '#4caf50', 'font-size': '12px', 'margin-bottom': '5px' }}>
+                            CE LEG
+                          </div>
+                          <div style={{ 'font-size': '13px' }}>Token: {item.ceToken || '—'}</div>
+                          <div style={{ 'font-size': '13px' }}>Qty: {item.ceQty || '—'}</div>
+                          <div style={{ 'font-size': '13px' }}>Price: ₹{fmt(item.ceLtp, 2)}</div>
+                        </div>
+
+                        <div style={{ background: '#2c2c2c', padding: '10px', 'border-radius': '4px', flex: 1 }}>
+                          <div style={{ color: '#f44336', 'font-size': '12px', 'margin-bottom': '5px' }}>
+                            PE LEG
+                          </div>
+                          <div style={{ 'font-size': '13px' }}>Token: {item.peToken || '—'}</div>
+                          <div style={{ 'font-size': '13px' }}>Qty: {item.peQty || '—'}</div>
+                          <div style={{ 'font-size': '13px' }}>Price: ₹{fmt(item.peLtp, 2)}</div>
+                        </div>
+                      </div>
+
+                      <div class="portfolio-footer" style={{ 'margin-top': '15px', 'font-size': '12px', color: '#aaa' }}>
+                        <span>Net Delta: {fmt(item.netDelta, 4)}</span>
+                        <span style={{ float: 'right' }}>Created: {item.createdAt}</span>
+                      </div>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </Show>
+          </section>
+        </Show>
+
+        <Show when={activeTab() === 'automation'}>
+          <section class="tab-panel">
+            <div class="panel-header">
+              <div class="panel-title">Automation</div>
+              <div class="panel-subtitle">Config-driven build UI mapped to current backend</div>
+            </div>
+
+            <div class="automation-grid">
+              <div class="control-block">
+                <label class="control-label">Symbol</label>
+                <select
+                  class="symbol-select"
+                  value={automationConfig().symbol}
+                  onChange={(e) => setAutomationConfig((prev) => ({ ...prev, symbol: e.target.value }))}
+                >
+                  <For each={availableSymbols}>
+                    {(sym) => <option value={sym}>{sym}</option>}
+                  </For>
+                </select>
+              </div>
+
+              <div class="control-block">
+                <label class="control-label">Broker</label>
+                <select
+                  class="symbol-select"
+                  value={executionPrefs().broker_name}
+                  onChange={(e) =>
+                    setExecutionPrefs((prev) => ({
+                      ...prev,
+                      broker_name: e.target.value
+                    }))
+                  }
+                >
+                  <For each={brokerOptions}>
+                    {(b) => <option value={b}>{b.toUpperCase()}</option>}
+                  </For>
+                </select>
+              </div>
+              <div class="control-block">
+                <label class="control-label">Account</label>
+                <select
+                  class="symbol-select"
+                  value={executionPrefs().account_id}
+                  onChange={(e) =>
+                    setExecutionPrefs((prev) => ({
+                      ...prev,
+                      account_id: e.target.value
+                    }))
+                  }
+                >
+                  <For each={greeksoftAccounts}>
+                    {(acc) => <option value={acc}>{acc}</option>}
+                  </For>
+                </select>
+              </div>
+
+
+              <div class="control-block">
+                <label class="control-label">Lots</label>
+                <input
+                  class="symbol-select"
+                  type="number"
+                  value={automationConfig().size}
+                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, size: Number(e.target.value) || 1 }))}
+                />
+              </div>
+
+              <div class="control-block">
+                <label class="control-label">Entry Time</label>
+                <input
+                  class="symbol-select"
+                  type="text"
+                  value={automationConfig().entry_time}
+                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, entry_time: e.target.value }))}
+                />
+              </div>
+
+              <div class="control-block">
+                <label class="control-label">Exit Time</label>
+                <input
+                  class="symbol-select"
+                  type="text"
+                  value={automationConfig().exit_time}
+                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, exit_time: e.target.value }))}
+                />
+              </div>
+
+              <div class="control-block">
+                <label class="control-label">Hedge Divisor</label>
+                <input
+                  class="symbol-select"
+                  type="number"
+                  value={automationConfig().hedge_div}
+                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, hedge_div: Number(e.target.value) || 0 }))}
+                />
+              </div>
+
+              <div class="control-block">
+                <label class="control-label">Straddle Divisor</label>
+                <input
+                  class="symbol-select"
+                  type="number"
+                  value={automationConfig().straddle_div}
+                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, straddle_div: Number(e.target.value) || 0 }))}
+                />
+              </div>
+
+              <div class="control-block">
+                <label class="control-label">Roll Straddle Divisor</label>
+                <input
+                  class="symbol-select"
+                  type="number"
+                  value={automationConfig().roll_straddle_div}
+                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, roll_straddle_div: Number(e.target.value) || 0 }))}
+                />
+              </div>
+
+              <div class="control-block">
+                <label class="control-label">SL (bps)</label>
+                <input
+                  class="symbol-select"
+                  type="number"
+                  value={automationConfig().sl_bps}
+                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, sl_bps: Number(e.target.value) || 0 }))}
+                />
+              </div>
+
+              <div class="control-block">
+                <label class="control-label">IDV</label>
+                <input
+                  class="symbol-select"
+                  type="number"
+                  step="0.1"
+                  value={automationConfig().idv}
+                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, idv: Number(e.target.value) || 0 }))}
+                />
+              </div>
+
+              <div class="control-block">
+                <label class="control-label">IDV Divisor</label>
+                <input
+                  class="symbol-select"
+                  type="number"
+                  step="0.1"
+                  value={automationConfig().idv_divisor}
+                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, idv_divisor: Number(e.target.value) || 0 }))}
+                />
+              </div>
+
+              <div class="control-block">
+                <label class="control-label">Straddle Price Filter</label>
+                <input
+                  class="symbol-select"
+                  type="number"
+                  value={automationConfig().straddle_filter}
+                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, straddle_filter: Number(e.target.value) || 0 }))}
+                />
+              </div>
+
+              <div class="control-block">
+                <label class="control-label">SL Interval (s)</label>
+                <input
+                  class="symbol-select"
+                  type="number"
+                  value={automationConfig().sl_monitor_interval}
+                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, sl_monitor_interval: Number(e.target.value) || 60 }))}
+                />
+              </div>
+
+              <div class="control-block">
+                <label class="control-label">Hedge Interval (s)</label>
+                <input
+                  class="symbol-select"
+                  type="number"
+                  value={automationConfig().hedge_monitor_interval}
+                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, hedge_monitor_interval: Number(e.target.value) || 60 }))}
+                />
+              </div>
+
+              <div class="control-block">
+                <label class="control-label">Roll Interval (s)</label>
+                <input
+                  class="symbol-select"
+                  type="number"
+                  value={automationConfig().roll_monitor_interval}
+                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, roll_monitor_interval: Number(e.target.value) || 60 }))}
+                />
+              </div>
+
+              <div class="control-block">
+                <label class="control-label">SL Start Time</label>
+                <input
+                  class="symbol-select"
+                  type="text"
+                  placeholder="HH:MM:SS"
+                  value={automationConfig().sl_start_time}
+                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, sl_start_time: e.target.value }))}
+                />
+              </div>
+
+              <div class="control-block">
+                <label class="control-label">Buy Buffer</label>
+                <input
+                  class="symbol-select"
+                  type="number"
+                  value={automationConfig().buy_buffer}
+                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, buy_buffer: Number(e.target.value) || 0 }))}
+                />
+              </div>
+
+              <div class="control-block">
+                <label class="control-label">Sell Buffer</label>
+                <input
+                  class="symbol-select"
+                  type="number"
+                  value={automationConfig().sell_buffer}
+                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, sell_buffer: Number(e.target.value) || 0 }))}
+                />
+              </div>
+
+              <div class="control-block">
+                <label class="control-label">Lots Per Call</label>
+                <input
+                  class="symbol-select"
+                  type="number"
+                  value={automationConfig().order_lots_per_call}
+                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, order_lots_per_call: Number(e.target.value) || 1 }))}
+                />
+              </div>
+            </div>
+
+            <div class="button-row">
+              <button class="sell-btn" onClick={handleAutomationBuild}>
+                START AUTOMATED BUILD
+              </button>
+            </div>
+          </section>
+        </Show>
+
+        <Show when={activeTab() === 'logs'}>
+          <section class="tab-panel">
+            <div class="panel-header">
+              <div class="panel-title">Event Logs</div>
+              <div class="panel-subtitle">UI runtime + websocket + request logs</div>
+            </div>
+
+            <div class="log-container">
+              <For each={eventLogs()}>
+                {(entry) => (
+                  <div class={`log-line log-${entry.level.toLowerCase()}`}>
+                    <span class="log-ts">{entry.ts}</span>
+                    <span class="log-lvl">{entry.level}</span>
+                    <span class="log-msg">{entry.message}</span>
+                  </div>
+                )}
+              </For>
+            </div>
+          </section>
+        </Show>
+      </div>
+    );
+  }
+
+  export default App;
