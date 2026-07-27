@@ -124,15 +124,17 @@ func main() {
 	log.Println("Starting Execution Gateway...")
 
 	appConfig := LoadConfig()
-
+	var sqlDB *sql.DB
 	var store trading.Store = trading.NewMemoryStore()
-	if dsn := strings.TrimSpace(os.Getenv("POSTGRES_DSN")); dsn != "" {
+	dsn := strings.TrimSpace(os.Getenv("POSTGRES_DSN"))
+	if dsn != "" {
 		db, err := sql.Open("postgres", dsn)
 		if err != nil {
 			log.Printf("[SQL STORE] open failed err=%v; using memory store", err)
 		} else if err := db.Ping(); err != nil {
 			log.Printf("[SQL STORE] ping failed err=%v; using memory store", err)
 		} else {
+			sqlDB = db
 			store = trading.NewPostgresBackedStore(db)
 			log.Printf("[SQL STORE] postgres-backed store enabled")
 		}
@@ -151,7 +153,18 @@ func main() {
 	factory.Register(
 		"XTS",
 		func(userID string, accountID string) (trading.Executor, error) {
+			// This is a placeholder and would need a real implementation
 			return &xtsExecutor{client: xtsClient}, nil
+		},
+	)
+
+	factory.Register(
+		"SIM",
+		func(userID string, accountID string) (trading.Executor, error) {
+			if sqlDB == nil {
+				return nil, fmt.Errorf("SIM broker requires a postgres database connection")
+			}
+			return trading.NewSimExecutor(sqlDB, store)
 		},
 	)
 
@@ -235,6 +248,10 @@ func main() {
 func startHTTPServer(cfg *Config, handlers *trading.Handlers) {
 	mux := http.NewServeMux()
 
+	if pgStore, ok := handlers.Store.(*trading.PostgresBackedStore); ok && pgStore.DB() != nil {
+		trading.RegisterSimOrderBookRoutes(mux, pgStore.DB())
+	}
+
 	mux.HandleFunc("/api/health", handlers.Health)
 	mux.HandleFunc("/api/trade/straddle", handlers.DeployStraddle)
 	mux.HandleFunc("/api/straddle/sell", handlers.DeployStraddle)
@@ -246,6 +263,7 @@ func startHTTPServer(cfg *Config, handlers *trading.Handlers) {
 	mux.HandleFunc("/api/snapshots/", handlers.GetSnapshot)
 	mux.HandleFunc("/api/pnl/", handlers.GetPnL)
 	mux.HandleFunc("/api/orders/", handlers.GetOrders)
+	mux.HandleFunc("/api/trade/execution-summary", handlers.ExecutionSummary)
 
 	mux.HandleFunc("/api/positions", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "positions endpoint not implemented", http.StatusNotImplemented)
