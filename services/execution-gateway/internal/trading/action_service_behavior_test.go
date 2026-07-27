@@ -2,6 +2,7 @@ package trading
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 
 	_ "github.com/lib/pq"
@@ -10,15 +11,18 @@ import (
 func countOrdersByPhaseForTrade(t *testing.T, db *sql.DB, tradeUID string, phase string) int {
 	t.Helper()
 
+	phase = strings.ToUpper(strings.TrimSpace(phase))
+
 	var count int
 	err := db.QueryRow(`
 		SELECT COUNT(*)
 		FROM orders
 		WHERE trade_uid = $1
 		  AND (
-			UPPER(COALESCE(raw_broker_request::text, '')) LIKE '%' || $2 || '%'
-			OR UPPER(COALESCE(intent_id, '')) LIKE '%' || $2 || '%'
-			OR UPPER(COALESCE(order_uid, '')) LIKE '%' || $2 || '%'
+			UPPER(COALESCE(intent_id, '')) LIKE $2 || '_%'
+			OR UPPER(COALESCE(order_uid, '')) LIKE $2 || '_%'
+			OR UPPER(COALESCE(raw_broker_request::text, '')) LIKE '%"PHASE":"' || $2 || '"%'
+			OR UPPER(COALESCE(raw_broker_request::text, '')) LIKE '%"PHASE": "' || $2 || '"%'
 		  )
 	`, tradeUID, phase).Scan(&count)
 	if err != nil {
@@ -28,7 +32,7 @@ func countOrdersByPhaseForTrade(t *testing.T, db *sql.DB, tradeUID string, phase
 	return count
 }
 
-func TestCurrentSquareOffDoesNotCreateSQFOrders_ExposesBug(t *testing.T) {
+func TestSquareOffCreatesSQFIntentRowsForFilledBuild(t *testing.T) {
 	db := openIntegrationDB(t)
 	defer db.Close()
 
@@ -37,7 +41,7 @@ func TestCurrentSquareOffDoesNotCreateSQFOrders_ExposesBug(t *testing.T) {
 		Store: store,
 	}
 
-	tradeUID := uniqueTradeUID("CURRENT_SQF_BUG")
+	tradeUID := uniqueTradeUID("SQF_EXPECTED")
 	cleanupTestTrade(t, db, tradeUID)
 	defer cleanupTestTrade(t, db, tradeUID)
 
@@ -84,9 +88,9 @@ func TestCurrentSquareOffDoesNotCreateSQFOrders_ExposesBug(t *testing.T) {
 
 	afterSQFOrders := countOrdersByPhaseForTrade(t, db, tradeUID, "SQF")
 
-	if afterSQFOrders != beforeSQFOrders {
+	if afterSQFOrders <= beforeSQFOrders {
 		t.Fatalf(
-			"expected current SquareOff stub to create 0 SQF orders; before=%d after=%d",
+			"expected SquareOff to create SQF order rows; before=%d after=%d",
 			beforeSQFOrders,
 			afterSQFOrders,
 		)
@@ -97,7 +101,7 @@ func TestCurrentSquareOffDoesNotCreateSQFOrders_ExposesBug(t *testing.T) {
 		t.Fatalf("trade not found after SquareOff")
 	}
 
-	if tr.Status != "CLOSED" {
-		t.Fatalf("expected current SquareOff stub to mark CLOSED, got %s", tr.Status)
+	if tr.Status == "CLOSED" {
+		t.Fatalf("SquareOff must not mark CLOSED until SQF orders are actually filled")
 	}
 }

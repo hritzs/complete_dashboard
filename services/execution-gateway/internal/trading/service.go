@@ -642,7 +642,16 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 		return fmt.Errorf("trade not found")
 	}
 
-	tr.Status = "CLOSED"
+	if tr.Status == TradeStatusPendingFill {
+		return fmt.Errorf("cannot square off %s while trade is PENDING_FILL", tradeUID)
+	}
+
+	created, err := s.createSQFIntentsFromFilledNetPosition(tr)
+	if err != nil {
+		return err
+	}
+
+	tr.Status = "SQUARING_OFF"
 	tr.LastUpdateTime = time.Now()
 	s.Store.UpdateTrade(tr)
 
@@ -650,6 +659,11 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 		close(rt.StopCh)
 		s.Store.DeleteRuntime(tradeUID)
 	}
+
+	if created <= 0 {
+		return fmt.Errorf("no SQF intents created for %s", tradeUID)
+	}
+
 	return nil
 }
 
