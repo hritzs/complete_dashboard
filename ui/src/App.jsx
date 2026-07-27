@@ -399,7 +399,7 @@
 
       const payload = {
         ...buildBasePayload(),
-        lots: toNum(automationConfig().size) || 1,
+        lots: Math.max(1, Math.min(1, toNum(automationConfig().size) || 1)),
         strike: Math.round(row.strike),
         ce_token: row.ce_token,
         pe_token: row.pe_token,
@@ -463,7 +463,7 @@
 
       const payload = {
         ...buildBasePayload(),
-        lots: toNum(automationConfig().size) || 1,
+        lots: Math.max(1, Math.min(1, toNum(automationConfig().size) || 1)),
         ce_strike_price: Math.round(ceStrike),
         pe_strike_price: Math.round(peStrike)
       };
@@ -588,7 +588,7 @@
         sl_start_time: nextMinuteStr,
         hedge_start_time: nextMinuteStr,
         roll_start_time: nextMinuteStr,
-        size: 77,
+        size: 1,
         hedge_div: 57,
         straddle_div: 4,
         roll_straddle_div: 0.2,
@@ -1031,13 +1031,18 @@
 
 
               <div class="control-block">
-                <label class="control-label">Lots</label>
+                <label class="control-label">Number of Straddles</label>
                 <input
                   class="symbol-select"
                   type="number"
+                  min="1"
+                  step="1"
                   value={automationConfig().size}
                   onInput={(e) => setAutomationConfig((prev) => ({ ...prev, size: Number(e.target.value) || 1 }))}
                 />
+                <small style={{opacity:0.75}}>
+                  1 straddle = 1 CE lot + 1 PE lot
+                </small>
               </div>
 
               <div class="control-block">
