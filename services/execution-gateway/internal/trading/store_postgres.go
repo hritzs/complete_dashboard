@@ -31,7 +31,16 @@ func (s *PostgresBackedStore) UpdateTrade(tr StoredTrade) {
 }
 
 func (s *PostgresBackedStore) LoadTrade(tradeUID string) (StoredTrade, bool) {
-	return s.mem.LoadTrade(tradeUID)
+	if tr, ok := s.mem.LoadTrade(tradeUID); ok {
+		return tr, true
+	}
+
+	tr, ok := s.loadTradeFromDB(tradeUID)
+	if ok {
+		s.mem.SaveTrade(tr)
+	}
+
+	return tr, ok
 }
 
 func (s *PostgresBackedStore) AllTrades() []StoredTrade {
@@ -54,7 +63,17 @@ func (s *PostgresBackedStore) AppendIntent(tradeUID string, intent OrderIntent) 
 }
 
 func (s *PostgresBackedStore) LoadIntents(tradeUID string) []StoredIntent {
-	return s.mem.LoadIntents(tradeUID)
+	memIntents := s.mem.LoadIntents(tradeUID)
+	if len(memIntents) > 0 {
+		return memIntents
+	}
+
+	dbIntents := s.loadIntentsFromDB(tradeUID)
+	for _, si := range dbIntents {
+		s.mem.AppendIntent(tradeUID, si.Intent)
+	}
+
+	return dbIntents
 }
 
 func (s *PostgresBackedStore) SaveSnapshot(snapshot TradeSnapshot) {
@@ -228,6 +247,59 @@ func (s *PostgresBackedStore) MarkOrderSubmitted(intentID string, brokerOrderID 
 	}
 }
 
+func (s *PostgresBackedStore) loadTradeFromDB(tradeUID string) (StoredTrade, bool) {
+	if s == nil || s.db == nil {
+		return StoredTrade{}, false
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	var (
+		dbTradeUID string
+		userID     string
+		brokerName string
+		accountID  string
+		symbol     string
+		status     string
+		rawConfig  sql.NullString
+		createdAt  time.Time
+	)
+
+	err := s.db.QueryRowContext(ctx, `
+		SELECT
+			trade_uid,
+			COALESCE(user_id, ''),
+			COALESCE(broker_name, ''),
+			COALESCE(account_id, ''),
+			COALESCE(symbol, ''),
+			COALESCE(status, ''),
+			config,
+			created_at
+		FROM trades
+		WHERE trade_uid = $1
+	`, tradeUID).Scan(
+		&dbTradeUID,
+		&userID,
+		&brokerName,
+		&accountID,
+		&symbol,
+		&status,
+		&rawConfig,
+		&createdAt,
+	)
+
+	if err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("[SQL STORE] load trade failed trade_uid=%s err=%v", tradeUID, err)
+		}
+		return StoredTrade{}, false
+	}
+
+	tr := hydrateStoredTradeFromDB(dbTradeUID, userID, brokerName, accountID, symbol, status, rawConfig, createdAt)
+	return tr, true
+}
+
 func (s *PostgresBackedStore) loadTradesFromDB() []StoredTrade {
 	if s == nil || s.db == nil {
 		return nil
@@ -242,8 +314,9 @@ func (s *PostgresBackedStore) loadTradesFromDB() []StoredTrade {
 			COALESCE(user_id, ''),
 			COALESCE(broker_name, ''),
 			COALESCE(account_id, ''),
-			symbol,
-			status,
+			COALESCE(symbol, ''),
+			COALESCE(status, ''),
+			config,
 			created_at
 		FROM trades
 		ORDER BY created_at DESC
@@ -257,20 +330,193 @@ func (s *PostgresBackedStore) loadTradesFromDB() []StoredTrade {
 
 	out := []StoredTrade{}
 	for rows.Next() {
-		var tr StoredTrade
+		var (
+			tradeUID   string
+			userID     string
+			brokerName string
+			accountID  string
+			symbol     string
+			status     string
+			rawConfig  sql.NullString
+			createdAt  time.Time
+		)
+
 		if err := rows.Scan(
-			&tr.TradeUID,
-			&tr.UserID,
-			&tr.BrokerName,
-			&tr.AccountID,
-			&tr.Symbol,
-			&tr.Status,
-			&tr.CreatedAt,
+			&tradeUID,
+			&userID,
+			&brokerName,
+			&accountID,
+			&symbol,
+			&status,
+			&rawConfig,
+			&createdAt,
 		); err != nil {
 			log.Printf("[SQL STORE] scan trade failed err=%v", err)
 			continue
 		}
-		out = append(out, tr)
+
+		out = append(out, hydrateStoredTradeFromDB(
+			tradeUID,
+			userID,
+			brokerName,
+			accountID,
+			symbol,
+			status,
+			rawConfig,
+			createdAt,
+		))
+	}
+
+	return out
+}
+
+func hydrateStoredTradeFromDB(
+	tradeUID string,
+	userID string,
+	brokerName string,
+	accountID string,
+	symbol string,
+	status string,
+	rawConfig sql.NullString,
+	createdAt time.Time,
+) StoredTrade {
+	tr := StoredTrade{}
+
+	if rawConfig.Valid && rawConfig.String != "" {
+		if err := json.Unmarshal([]byte(rawConfig.String), &tr); err != nil {
+			log.Printf("[SQL STORE] unmarshal stored trade config failed trade_uid=%s err=%v", tradeUID, err)
+		}
+	}
+
+	if tr.TradeUID == "" {
+		tr.TradeUID = tradeUID
+	}
+	if tr.UserID == "" {
+		tr.UserID = userID
+	}
+	if tr.BrokerName == "" {
+		tr.BrokerName = brokerName
+	}
+	if tr.AccountID == "" {
+		tr.AccountID = accountID
+	}
+	if tr.Symbol == "" {
+		tr.Symbol = symbol
+	}
+	if tr.Status == "" {
+		tr.Status = status
+	}
+	if tr.CreatedAt.IsZero() {
+		tr.CreatedAt = createdAt
+	}
+
+	return tr
+}
+
+func (s *PostgresBackedStore) loadIntentsFromDB(tradeUID string) []StoredIntent {
+	if s == nil || s.db == nil {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			intent_id,
+			COALESCE(order_uid, ''),
+			COALESCE(broker_name, ''),
+			COALESCE(account_id, ''),
+			COALESCE(side, ''),
+			COALESCE(quantity, 0),
+			COALESCE(order_type, ''),
+			limit_price,
+			raw_broker_request,
+			created_at
+		FROM orders
+		WHERE trade_uid = $1
+		ORDER BY created_at ASC
+	`, tradeUID)
+
+	if err != nil {
+		log.Printf("[SQL STORE] load intents failed trade_uid=%s err=%v", tradeUID, err)
+		return nil
+	}
+	defer rows.Close()
+
+	out := []StoredIntent{}
+
+	for rows.Next() {
+		var (
+			intentID   string
+			orderUID   string
+			brokerName string
+			accountID  string
+			side       string
+			quantity   int64
+			orderType  string
+			limitPrice sql.NullFloat64
+			rawReq     sql.NullString
+			createdAt  time.Time
+		)
+
+		if err := rows.Scan(
+			&intentID,
+			&orderUID,
+			&brokerName,
+			&accountID,
+			&side,
+			&quantity,
+			&orderType,
+			&limitPrice,
+			&rawReq,
+			&createdAt,
+		); err != nil {
+			log.Printf("[SQL STORE] scan intent failed trade_uid=%s err=%v", tradeUID, err)
+			continue
+		}
+
+		intent := OrderIntent{}
+		if rawReq.Valid && rawReq.String != "" {
+			if err := json.Unmarshal([]byte(rawReq.String), &intent); err != nil {
+				log.Printf("[SQL STORE] unmarshal order intent failed trade_uid=%s intent_id=%s err=%v", tradeUID, intentID, err)
+			}
+		}
+
+		if intent.IntentID == "" {
+			intent.IntentID = intentID
+		}
+		if intent.OrderUID == "" {
+			intent.OrderUID = orderUID
+		}
+		if intent.TradeUID == "" {
+			intent.TradeUID = tradeUID
+		}
+		if intent.BrokerName == "" {
+			intent.BrokerName = brokerName
+		}
+		if intent.AccountID == "" {
+			intent.AccountID = accountID
+		}
+		if intent.Side == "" {
+			intent.Side = side
+		}
+		if intent.Quantity == 0 {
+			intent.Quantity = quantity
+		}
+		if intent.OrderType == "" {
+			intent.OrderType = orderType
+		}
+		if intent.LimitPrice == nil && limitPrice.Valid {
+			lp := limitPrice.Float64
+			intent.LimitPrice = &lp
+		}
+
+		_ = createdAt
+
+		out = append(out, StoredIntent{
+			Intent: intent,
+		})
 	}
 
 	return out
