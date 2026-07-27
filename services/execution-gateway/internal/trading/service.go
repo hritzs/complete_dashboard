@@ -294,6 +294,17 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 		return nil, fmt.Errorf("computed invalid quantities ce=%d pe=%d", ceQty, peQty)
 	}
 
+	if ceRow.CELtp <= 0 || peRow.PELtp <= 0 {
+		return nil, fmt.Errorf(
+			"invalid live option price for %s expiry=%s strike=%.0f: ce_ltp=%.2f pe_ltp=%.2f; refusing to create 0.05 fallback orders",
+			req.Symbol,
+			chain.Expiry,
+			selectedStrike,
+			ceRow.CELtp,
+			peRow.PELtp,
+		)
+	}
+
 	now := time.Now()
 	tradeUID := BuildTradeUID(req.UserID, req.BrokerName, req.AccountID, req.Symbol, chain.Expiry, selectedStrike, now)
 
