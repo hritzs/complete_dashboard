@@ -1,175 +1,249 @@
 #include "TradeStateMachine.hpp"
 #include <iostream>
+#include <sstream>
 
 namespace trading {
 
-TradeStateMachine::TradeStateMachine(std::string trade_uid, IntentBuilder builder)
-    : m_trade_uid(std::move(trade_uid)), 
-      m_state(TradeState::INIT), 
-      m_builder(std::move(builder)), 
-      m_current_chunk_idx(0), 
+TradeStateMachine::TradeStateMachine(const std::string& trade_uid,
+                                     const IntentBuilder& builder,
+                                     std::function<void(const std::string&)> emit_func)
+    : m_trade_uid(trade_uid),
+      m_state(TradeState::INIT),
+      m_emit_func(std::move(emit_func)),
+      m_builder(builder),
+      m_current_chunk_idx(0),
       m_chase_attempts(0) {}
 
-void TradeStateMachine::on_command_deploy(int target_lots, double ce_ltp, double pe_ltp, double ce_delta, double pe_delta, int ce_token, int pe_token) {
-    if (m_state != TradeState::INIT) return;
+// Called when control layer wants to deploy a straddle
+void TradeStateMachine::on_command_deploy(int    target_lots,
+                                          double ce_ltp,
+                                          double pe_ltp,
+                                          double ce_delta,
+                                          double pe_delta,
+                                          int    ce_token,
+                                          int    pe_token) {
+    std::cout << "[TradeStateMachine] on_command_deploy for " << m_trade_uid
+              << " lots=" << target_lots << std::endl;
 
-    std::cout << "[TradeStateMachine] Deploying Delta-Neutral Straddle: " << m_trade_uid << "\n";
-    m_state = TradeState::BUILDING;
+    // Delta-neutral allocation using IntentBuilder
+    AllocationResult alloc = m_builder.calculate_delta_neutral(
+        ce_delta,
+        pe_delta,
+        target_lots
+    );
 
-    // 1. Calculate Delta Neutral Quantities
-    auto allocation = m_builder.calculate_delta_neutral(ce_delta, pe_delta, target_lots);
-    
-    // 2. Slice into chunks
+    std::cout << "[TradeStateMachine] Delta-neutral allocation: "
+              << "CE lots=" << alloc.ce_lots
+              << " PE lots=" << alloc.pe_lots
+              << " CE qty=" << alloc.ce_quantity
+              << " PE qty=" << alloc.pe_quantity
+              << " net_delta=" << alloc.net_delta
+              << std::endl;
+
+    // Build chunked orders
     m_chunks = m_builder.generate_chunked_orders(
-        m_trade_uid, 
-        ce_token, allocation.ce_lots, ce_ltp,
-        pe_token, allocation.pe_lots, pe_ltp, 
+        m_trade_uid,
+        ce_token,
+        alloc.ce_lots,
+        ce_ltp,
+        pe_token,
+        alloc.pe_lots,
+        pe_ltp,
         "SELL"
     );
 
     m_current_chunk_idx = 0;
-    execute_current_chunk();
-}
+    m_chase_attempts    = 0;
 
-void TradeStateMachine::execute_current_chunk() {
-    if (m_current_chunk_idx >= m_chunks.size()) {
-        std::cout << "[TradeStateMachine] All chunks executed. Trade is ACTIVE.\n";
-        m_state = TradeState::ACTIVE;
+    if (m_chunks.empty()) {
+        std::cerr << "[TradeStateMachine] No chunks generated for "
+                  << m_trade_uid << std::endl;
+        m_state = TradeState::CLOSED;
         return;
     }
 
-    m_state = TradeState::CHASING;
-    m_chase_attempts = 0;
-    m_pending_intents.clear();
+    m_state = TradeState::BUILDING;
     m_chunk_start_time = std::chrono::steady_clock::now();
 
-    std::cout << "[TradeStateMachine] Executing Chunk " << (m_current_chunk_idx + 1) << "/" << m_chunks.size() << "\n";
-    
-    const auto& current_chunk = m_chunks[m_current_chunk_idx];
-    for (const auto& intent : current_chunk) {
-        m_pending_intents[intent.uid] = intent;
-        emit_intent_to_gateway(intent, false); // place order
-    }
+    execute_current_chunk();
 }
 
-void TradeStateMachine::on_order_update(const std::string& intent_id, const std::string& status, int filled_qty, const std::string& exchange_order_id) {
-    if (m_pending_intents.find(intent_id) == m_pending_intents.end()) return;
+// Called when an order update arrives from gateway/broker
+void TradeStateMachine::on_order_update(const std::string& intent_id,
+                                        const std::string& status,
+                                        int                filled_qty,
+                                        const std::string& exchange_order_id) {
+    auto it = m_pending_intents.find(intent_id);
+    if (it == m_pending_intents.end()) {
+        std::cout << "[TradeStateMachine] Unknown intent_id update: "
+                  << intent_id << std::endl;
+        return;
+    }
 
-    // Track the exchange order ID so we can modify it if it gets stuck
+    std::cout << "[TradeStateMachine] Order update for " << intent_id
+              << " status=" << status
+              << " filled=" << filled_qty << std::endl;
+
     if (!exchange_order_id.empty()) {
         m_exchange_order_ids[intent_id] = exchange_order_id;
     }
 
     if (status == "FILLED" || status == "COMPLETE") {
-        std::cout << "[TradeStateMachine] Intent " << intent_id << " filled.\n";
-        m_pending_intents.erase(intent_id);
-    } 
-    else if (status == "REJECTED" || status == "CANCELLED") {
-        std::cout << "[TradeStateMachine] Intent " << intent_id << " failed (" << status << "). Triggering abort/recovery.\n";
+        m_pending_intents.erase(it);
+        if (m_pending_intents.empty()) {
+            // move to next chunk
+            m_current_chunk_idx++;
+            if (m_current_chunk_idx >= m_chunks.size()) {
+                m_state = TradeState::ACTIVE;
+                std::cout << "[TradeStateMachine] All chunks filled. "
+                          << "Trade ACTIVE: " << m_trade_uid << std::endl;
+            } else {
+                m_state = TradeState::BUILDING;
+                m_chunk_start_time = std::chrono::steady_clock::now();
+                execute_current_chunk();
+            }
+        }
+    } else if (status == "REJECTED" || status == "CANCELED") {
         handle_fatal_rejection(intent_id, status);
-    }
-
-    // If all intents in the current chunk are filled, move to the next chunk
-    if (m_pending_intents.empty() && m_state == TradeState::CHASING) {
-        m_current_chunk_idx++;
-        execute_current_chunk();
+    } else {
+        // other statuses: keep pending
     }
 }
 
+// Called frequently by worker loop
 void TradeStateMachine::on_timer_tick() {
-    if (m_state != TradeState::CHASING) return;
+    if (m_state != TradeState::BUILDING &&
+        m_state != TradeState::CHASING) {
+        return;
+    }
 
-    auto now = std::chrono::steady_clock::now();
-    auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_chunk_start_time).count();
+    auto now   = std::chrono::steady_clock::now();
+    double elapsed = std::chrono::duration<double>(now - m_chunk_start_time).count();
 
-    // Timeout logic: If 1500ms have passed and chunk is not filled, escalate limit buffer
-    if (elapsed_ms > 1500) {
+    const double chase_timeout_sec = 3.0;
+    if (elapsed > chase_timeout_sec && !m_pending_intents.empty()) {
+        std::cout << "[TradeStateMachine] Chunk timeout for " << m_trade_uid
+                  << ", escalating and chasing.\n";
         escalate_and_chase();
     }
 }
 
-void TradeStateMachine::escalate_and_chase() {
-    m_chase_attempts++;
-    if (m_chase_attempts > 3) {
-        std::cout << "[TradeStateMachine] Max chase attempts reached. Fallback to sweeping (market orders).\n";
-        // Implement Sweeping logic here
+// Risk checks reading SHM (placeholder)
+void TradeStateMachine::perform_risk_checks(const shm::MarketStateBlock* market_data) {
+    if (!market_data) return;
+    // TODO: implement when you integrate market_state.hpp
+}
+
+// Send all intents in current chunk
+void TradeStateMachine::execute_current_chunk() {
+    if (m_current_chunk_idx >= m_chunks.size()) {
         return;
     }
 
-    std::cout << "[TradeStateMachine] Chasing pending orders (Attempt " << m_chase_attempts << "). Escalating buffer.\n";
+    const auto& chunk = m_chunks[m_current_chunk_idx];
+    m_pending_intents.clear();
 
-    for (auto& pair : m_pending_intents) {
-        auto& intent = pair.second;
-        
-        // Escalate the tick buffer (e.g., 2 -> 4 -> 6)
-        intent.limit_order_buffer_ticks += 2; 
-        
-        // Request modification from Go Gateway
-        std::string exch_id = m_exchange_order_ids[intent.uid];
-        if (!exch_id.empty()) {
-            emit_intent_to_gateway(intent, true, exch_id); // true = modify
-        }
+    std::cout << "[TradeStateMachine] Executing chunk "
+              << m_current_chunk_idx + 1 << "/" << m_chunks.size()
+              << " for " << m_trade_uid
+              << " (" << chunk.size() << " intents)\n";
+
+    for (const auto& intent : chunk) {
+        m_pending_intents[intent.uid] = intent;
+        emit_intent_to_gateway(intent, /*is_modify*/ false);
     }
-    
-    // Reset the timer for the next chase cycle
+
     m_chunk_start_time = std::chrono::steady_clock::now();
 }
 
-void TradeStateMachine::handle_fatal_rejection(const std::string& intent_id, const std::string& status) {
-    if (m_state == TradeState::SQUARING_OFF) {
-        std::cout << "[TradeStateMachine] CRITICAL: Rejection during SQUARING_OFF for intent " << intent_id << ". Entering panic sweep.\n";
-        // In SQUARING_OFF, we must close. Escalate immediately to market order or max limit.
-        auto intent = m_pending_intents[intent_id];
-        // Generate a new intent ID to prevent exchange rejection of duplicate IDs
-        intent.uid = intent.uid + "_RTRY"; 
-        intent.limit_order_buffer_ticks += 10; // Massive buffer to simulate market order
-        
-        m_pending_intents.erase(intent_id);
-        m_pending_intents[intent.uid] = intent;
-        emit_intent_to_gateway(intent, false); // Resend as new order
-    } else {
-        std::cout << "[TradeStateMachine] Aborting trade build due to rejection on intent " << intent_id << "\n";
-        m_state = TradeState::CLOSED; // Simplification: move to closed or recovery state
-        m_pending_intents.clear();
+// Adjust prices/buffer and re-emit pending intents
+void TradeStateMachine::escalate_and_chase() {
+    m_state = TradeState::CHASING;
+    m_chase_attempts++;
+
+    double buffer_multiplier = 1.0 + 0.2 * m_chase_attempts;
+
+    std::cout << "[TradeStateMachine] Chase attempt " << m_chase_attempts
+              << " for " << m_trade_uid
+              << " buffer_multiplier=" << buffer_multiplier << std::endl;
+
+    for (auto& kv : m_pending_intents) {
+        OrderIntent& intent = kv.second;
+        intent.limit_order_buffer_ticks =
+            static_cast<int>(intent.limit_order_buffer_ticks * buffer_multiplier);
+
+        auto ex_it = m_exchange_order_ids.find(intent.uid);
+        std::string ex_order_id = (ex_it != m_exchange_order_ids.end())
+                                  ? ex_it->second
+                                  : "";
+
+        emit_intent_to_gateway(intent,
+                               /*is_modify*/ !ex_order_id.empty(),
+                               ex_order_id);
     }
+
+    m_chunk_start_time = std::chrono::steady_clock::now();
 }
 
-void TradeStateMachine::perform_risk_checks(const shm::MarketStateBlock* market_data) {
-    if (m_state != TradeState::ACTIVE) return;
-    if (!market_data) return;
-
-    // Example: Assuming we saved the tokens we are trading during the BUILDING phase
-    // int ce_token = ...; 
-    // int pe_token = ...;
-    
-    // Instant O(1) lock-free read from Shared Memory! No JSON, no ZMQ parsing, no Python GIL.
-    // double current_ce_price = market_data->ticks[ce_token].ltp.load(std::memory_order_relaxed);
-    // double current_pe_price = market_data->ticks[pe_token].ltp.load(std::memory_order_relaxed);
-
-    // Calculate live PnL here...
-    // if (live_pnl <= m_sl_threshold) {
-    //     std::cout << "[TradeStateMachine] SL HIT! Moving to SQUARING_OFF.\n";
-    //     m_state = TradeState::SQUARING_OFF;
-    // }
+void TradeStateMachine::handle_fatal_rejection(const std::string& intent_id,
+                                               const std::string& status) {
+    std::cerr << "[TradeStateMachine] Fatal rejection for " << m_trade_uid
+              << " intent=" << intent_id
+              << " status=" << status << std::endl;
+    m_state = TradeState::CLOSED;
+    m_pending_intents.clear();
 }
 
-void TradeStateMachine::emit_intent_to_gateway(const OrderIntent& intent, bool is_modify, const std::string& exchange_order_id) {
-    // In production, build a fast JSON string or Protobuf
-    std::string payload = "{"
-        "\"trade_uid\":\"" + m_trade_uid + "\","
-        "\"intent_id\":\"" + intent.uid + "\","
-        "\"token\":" + std::to_string(intent.token) + ","
-        "\"action\":\"" + intent.action + "\","
-        "\"option_type\":\"" + intent.option_type + "\","
-        "\"quantity\":" + std::to_string(intent.quantity) + ","
-        "\"limit_price\":" + std::to_string(intent.limit_price) + ","
-        "\"limit_order_buffer_ticks\":" + std::to_string(intent.limit_order_buffer_ticks) + ","
-        "\"is_modify\":" + (is_modify ? "true" : "false") + ","
-        "\"exchange_order_id\":\"" + exchange_order_id + "\""
-        "}";
+// Serialize intent as a simple string and send to Go gateway via emit_func
+void TradeStateMachine::emit_intent_to_gateway(const OrderIntent& intent,
+                                               bool               is_modify,
+                                               const std::string& exchange_order_id) {
+    std::ostringstream oss;
+    oss << m_trade_uid << "|"
+        << intent.uid << "|"
+        << intent.token << "|"
+        << intent.option_type << "|"
+        << intent.action << "|"
+        << intent.quantity << "|"
+        << intent.limit_price << "|"
+        << intent.limit_order_buffer_ticks << "|"
+        << (is_modify ? "1" : "0") << "|"
+        << exchange_order_id;
 
-    // Emit via ZMQ to Go Execution Gateway
-    std::cout << "[ZMQ -> Gateway] " << payload << "\n";
+    m_emit_func(oss.str());
+}
+
+// Hedge helpers (stubs for now)
+
+HedgeSnapshot TradeStateMachine::get_snapshot(const std::string& trade_uid) const {
+    HedgeSnapshot s{};
+    s.valid          = false;
+    s.pts_out        = 0.0;
+    s.points_allowed = 0.0;
+    s.net_delta      = 0.0;
+    s.atm_strike     = 0;
+    std::cout << "[TradeStateMachine] get_snapshot stub for "
+              << trade_uid << std::endl;
+    return s;
+}
+
+void TradeStateMachine::save_hedge_params(const std::string& trade_uid,
+                                          double net_delta,
+                                          double target_delta_reduction,
+                                          int atm_strike) {
+    std::cout << "[TradeStateMachine] save_hedge_params for " << trade_uid
+              << " net_delta=" << net_delta
+              << " target_delta_reduction=" << target_delta_reduction
+              << " atm_strike=" << atm_strike
+              << std::endl;
+}
+
+void TradeStateMachine::emit_event(const std::string& event_type,
+                                   const std::string& trade_uid,
+                                   int priority) {
+    std::cout << "[TradeStateMachine] emit_event type=" << event_type
+              << " trade_uid=" << trade_uid
+              << " priority=" << priority << std::endl;
 }
 
 } // namespace trading

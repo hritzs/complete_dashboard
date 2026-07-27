@@ -5,9 +5,26 @@ accounts:
     api_secret: "Mrbp544@RD"
     client_id: "TEST49"
     source: "WEBAPI"
+
   - name: "xts-marketdata"
     broker_type: "xts"
     api_key: "47ef3f7c6708d059dab991"
     api_secret: "Fkte223@Zq"
     client_id: "TEST49"
     source: "WEBAPI"
+
+  - name: "greeksoft-hritik"
+    broker_type: "greeksoft"
+    api_key: "HRITIK"
+    api_secret: "greek@123"
+    client_id: "HRITIK"
+    broker_id: 22
+    pan_dob: "01/01/1901"
+
+  - name: "greeksoft-hritik1"
+    broker_type: "greeksoft"
+    api_key: "HRITIK1"
+    api_secret: "greek@123"
+    client_id: "HRITIK1"
+    broker_id: 22
+    pan_dob: "01/01/1901"

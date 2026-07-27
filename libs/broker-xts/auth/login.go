@@ -4,49 +4,39 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"time"
+	"log"
+
+	xts "trading-platform/libs/broker-xts"
+	"trading-platform/libs/broker-xts/models"
 )
 
-type LoginRequest struct {
-	SecretKey string `json:"secretKey"`
-	AppKey    string `json:"appKey"`
-	Source    string `json:"source"`
-}
+func EnsureLogin(c *xts.Client) error {
+	c.Mu.Lock()
+	defer c.Mu.Unlock()
 
-type LoginResponse struct {
-	Type        string `json:"type"`
-	Code        string `json:"code"`
-	Description string `json:"description"`
-	Result      struct {
-		Token  string `json:"token"`
-		UserID string `json:"userID"`
-	} `json:"result"`
-}
+	if c.Token != "" {
+		return nil
+	}
 
-// InteractiveLogin performs the auth flow against the Symphony XTS Interactive API
-func InteractiveLogin(baseURL, appKey, secretKey, source string) (string, string, error) {
-	url := baseURL + "/interactive/user/session"
+	if c.AppKey == "" || c.SecretKey == "" {
+		return fmt.Errorf("missing XTS API credentials")
+	}
 
-	reqBody, _ := json.Marshal(LoginRequest{
-		SecretKey: secretKey,
-		AppKey:    appKey,
-		Source:    source,
-	})
+	reqBody := models.LoginRequest{AppKey: c.AppKey, SecretKey: c.SecretKey, Source: "WEBAPI"}
+	lb, _ := json.Marshal(reqBody)
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Post(url, "application/json", bytes.NewBuffer(reqBody))
+	lresp, err := c.HTTP.Post(c.BaseURL+"/interactive/user/session", "application/json", bytes.NewBuffer(lb))
 	if err != nil {
-		return "", "", fmt.Errorf("XTS HTTP POST failed: %w", err)
+		return err
 	}
-	defer resp.Body.Close()
+	defer lresp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
-	var loginRes LoginResponse
-	if err := json.Unmarshal(body, &loginRes); err != nil || loginRes.Type != "success" {
-		return "", "", fmt.Errorf("XTS login failed: %s (Raw: %s)", loginRes.Description, string(body))
+	var lr models.LoginResponse
+	if err := json.NewDecoder(lresp.Body).Decode(&lr); err == nil && lr.Type == "success" && lr.Result.Token != "" {
+		c.Token = lr.Result.Token
+		log.Println("✅ XTS Interactive Login successful.")
+		return nil
 	}
 
-	return loginRes.Result.Token, loginRes.Result.UserID, nil
+	return fmt.Errorf("XTS Login failed with status %d", lresp.StatusCode)
 }

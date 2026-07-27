@@ -1,94 +1,150 @@
-package broker
 package greeksoft
 
-// Credentials holds the authentication details for the broker.
-type Credentials struct {
+type sessionTokenRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
-	APIKey   string `json:"apiKey"`
-	APISecret string `json:"apiSecret"`
-// JLoginRequest wraps the outer request envelope for Greeksoft APIs
-type JLoginRequest struct {
-	Request JLoginRequestData `json:"request"`
+	BrokerID int    `json:"brokerId,omitempty"`
+	ValidFor string `json:"validFor"`
 }
 
-// SessionTokenResponse matches the JSON from the /sessiontoken endpoint.
-type SessionTokenResponse struct {
-	Type        string `json:"type"`
-	Description string `json:"description"`
-	Result      struct {
-		SessionToken     string `json:"sessionToken"`
-		GCID             string `json:"gcid"`
-		IsInvestorClient bool   `json:"isInvestorClient"`
-	} `json:"result"`
-type JLoginRequestData struct {
-	Data     JLoginData `json:"data"`
-	SvcName  string     `json:"svcName"`
-	SvcGroup string     `json:"svcGroup"`
+type sessionTokenResponse struct {
+	ID           int    `json:"id"`
+	SessionToken string `json:"sessionToken"`
+	Message      string `json:"message"`
 }
 
-// OrderBookResponse matches the structure of the order book API call.
-type OrderBookResponse struct {
-	Type        string `json:"type"`
-	Description string `json:"description"`
-	Result      struct {
-		OrderList []BrokerOrder `json:"orderList"`
-	} `json:"result"`
-type JLoginData struct {
+type greekEnvelope struct {
+	Request greekRequestPayload `json:"request"`
+}
+
+type greekRequestPayload struct {
+	Data           interface{} `json:"data"`
+	SvcName        string      `json:"svcName,omitempty"`
+	SvcGroup       string      `json:"svcGroup,omitempty"`
+	SvcVersion     string      `json:"svcVersion,omitempty"`
+	Gscid          string      `json:"gscid,omitempty"`
+	ResponseFormat string      `json:"response_format,omitempty"`
+	RequestType    string      `json:"request_type,omitempty"`
+	StreamingType  string      `json:"streaming_type,omitempty"`
+}
+
+type jloginRequestData struct {
 	PanDob         string `json:"pan_dob"`
 	DeviceID       string `json:"deviceId"`
 	Gscid          string `json:"gscid"`
 	DeviceDetails  string `json:"deviceDetails"`
 	DeviceType     string `json:"deviceType"`
-	Pass           string `json:"pass"` // MD5 hashed password
+	Password       string `json:"pass"`
 	TransPass      string `json:"transPass"`
 	UserType       string `json:"userType"`
-	BrokerID       string `json:"brokerid"` // Note: usually "1" for jloginNew
+	BrokerID       string `json:"brokerid"`
 	PassType       string `json:"passType"`
 	VersionNo      string `json:"version_no"`
 	EncryptionType string `json:"encryptionType"`
 }
 
-// BrokerOrder represents a single order as returned by the broker's API.
-// Field names are mapped from the Python code's usage.
-type BrokerOrder struct {
-	AppOrderID              string  `json:"AppOrderID"`
-	OrderUniqueIdentifier   string  `json:"OrderUniqueIdentifier"`
-	OrderStatus             string  `json:"OrderStatus"`
-	OrderSide               string  `json:"OrderSide"`
-	ExchangeInstrumentID    int64   `json:"ExchangeInstrumentID"`
-	TradingSymbol           string  `json:"TradingSymbol"`
-	OrderQuantity           int64   `json:"OrderQuantity"`
-	CumulativeQuantity      int64   `json:"CumulativeQuantity"`
-	OrderAverageTradedPrice float64 `json:"OrderAverageTradedPrice"`
-	OrderRejectionReason    string  `json:"OrderRejectionReason"`
-// JLoginResponse represents the incoming response from the broker
-type JLoginResponse struct {
-	Response struct {
-		Data      JLoginResponseData `json:"data"`
-		SessionID string             `json:"sessionId"`
-	} `json:"response"`
+type jloginResponse struct {
+	Response jloginInnerResponse `json:"response"`
 }
 
-// WsLoginRequest is the payload for authenticating a WebSocket connection.
-type WsLoginRequest struct {
-	T          string `json:"t"`
-	UID        string `json:"uid"`
-	ActID      string `json:"actid"`
-	Source     string `json:"source"`
-	Susertoken string `json:"susertoken"`
-type JLoginResponseData struct {
-	ErrorCode  int    `json:"ErrorCode"`
-	ClientCode string `json:"ClientCode"` // This maps to the GCID
-	IrisIP     string `json:"Iris_IP"`
-	IrisPort   int    `json:"Iris_Port"`
-	ApolloIP   string `json:"Apollo_IP"`
-	ApolloPort int    `json:"Apollo_Port"`
+type jloginInnerResponse struct {
+	ErrorCode  int                `json:"ErrorCode"`
+	AppID      string             `json:"appID"`
+	InfoID     string             `json:"infoID"`
+	MsgID      string             `json:"msgID"`
+	ServerTime int64              `json:"serverTime"`
+	SessionID  string             `json:"sessionId"`
+	SvcGroup   string             `json:"svcGroup"`
+	SvcName    string             `json:"svcName"`
+	SvcVersion string             `json:"svcVersion"`
+	Data       jloginResponseData `json:"data"`
 }
 
-type SessionDetails struct {
-	GCID               string `json:"gcid"`
-	WebsocketSessionID string `json:"websocket_session_id"`
-	IrisEndpoint       string `json:"iris_endpoint"`
-	ApolloEndpoint     string `json:"apollo_endpoint"`
+type jloginResponseData struct {
+	ErrorCode           int    `json:"ErrorCode"`
+	Message             string `json:"message"`
+	ClientCode          int `json:"ClientCode"`
+	Gscid               string `json:"gscid"`
+	IrisIP              string `json:"Iris_IP"`
+	IrisPort            int    `json:"Iris_Port"`
+	ApolloIP            string `json:"Apollo_IP"`
+	ApolloPort          int    `json:"Apollo_Port"`
+	ArachneIP           string `json:"Arachne_IP"`
+	ArachnePort         int    `json:"Arachne_Port"`
+	BroadcastSenderPort int    `json:"BroadcastSender_Port"`
+	OrderSenderPort     int    `json:"OrderSender_Port"`
+}
+
+type flagValuesResponse struct {
+	Response flagValuesInnerResponse `json:"response"`
+}
+
+type flagValuesInnerResponse struct {
+	ErrorCode  int            `json:"ErrorCode"`
+	AppID      string         `json:"appID"`
+	InfoID     string         `json:"infoID"`
+	MsgID      string         `json:"msgID"`
+	ServerTime int64          `json:"serverTime"`
+	SessionID  string         `json:"sessionId"`
+	SvcGroup   string         `json:"svcGroup"`
+	SvcName    string         `json:"svcName"`
+	SvcVersion string         `json:"svcVersion"`
+	Data       flagValuesData `json:"data"`
+}
+
+type flagValuesData struct {
+	IrisIP              string `json:"Iris_IP"`
+	IrisPort            int    `json:"Iris_Port"`
+	ApolloIP            string `json:"Apollo_IP"`
+	ApolloPort          int    `json:"Apollo_Port"`
+	ArachneIP           string `json:"Arachne_IP"`
+	ArachnePort         int    `json:"Arachne_Port"`
+	BroadcastSenderPort int    `json:"BroadcastSender_Port"`
+	OrderSenderPort     int    `json:"OrderSender_Port"`
+}
+
+type newOrderRequestData struct {
+	TriggerPrice  string `json:"trigger_price"`
+	GToken        string `json:"gtoken"`
+	Side          string `json:"side"`
+	GCID          string `json:"gcid"`
+	Validity      string `json:"validity"`
+	Price         string `json:"price"`
+	Exchange      string `json:"exchange"`
+	DisclosedQty  string `json:"disclosed_qty"`
+	TradeSymbol   string `json:"tradeSymbol"`
+	Lot           string `json:"lot"`
+	OrderType     string `json:"order_type"`
+	Product       string `json:"product"`
+	Qty           string `json:"qty"`
+	COrderID      string `json:"corderid"`
+	AMO           string `json:"amo"`
+	IProCli       string `json:"iprocli"`
+	GTDExpiry     int    `json:"gtdExpiry"`
+	IsPostClosed  string `json:"is_post_closed"`
+	IsPreOpen     string `json:"is_preopen_order"`
+	IsSqOffOrder  string `json:"isSqOffOrder"`
+	Offline       string `json:"offline"`
+	IsRestAPI     string `json:"is_restapi"`
+	StrategyName  string `json:"strategyName"`
+	AccountNumber string `json:"AccountNumber,omitempty"`
+	AlgoID        string `json:"algoId,omitempty"`
+}
+
+type newOrderResponse struct {
+	Response newOrderInnerResponse `json:"response"`
+	Message  string                `json:"message,omitempty"`
+}
+
+type newOrderInnerResponse struct {
+	ErrorCode  int                    `json:"ErrorCode"`
+	AppID      string                 `json:"appID"`
+	InfoID     string                 `json:"infoID"`
+	MsgID      string                 `json:"msgID"`
+	ServerTime string                 `json:"serverTime"`
+	SessionID  string                 `json:"sessionId"`
+	SvcGroup   string                 `json:"svcGroup"`
+	SvcName    string                 `json:"svcName"`
+	SvcVersion string                 `json:"svcVersion"`
+	Data       map[string]interface{} `json:"data"`
 }

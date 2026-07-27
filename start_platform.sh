@@ -1,82 +1,270 @@
 #!/bin/bash
+set -e
 
-BASE_DIR=$(pwd)
+BASE_DIR=$(cd "$(dirname "$0")" && pwd)
+LOG_DIR="$BASE_DIR/logs"
+BUILD_DIR="$BASE_DIR/build"
 
-echo "🧹 Cleaning up old zombie processes..."
-# Kill anything holding our known ports
-fuser -k 8003/tcp 2>/dev/null
-fuser -k 5555/tcp 2>/dev/null
-fuser -k 5556/tcp 2>/dev/null
-fuser -k 5557/tcp 2>/dev/null
-fuser -k 5558/tcp 2>/dev/null
-fuser -k 3000/tcp 2>/dev/null
+mkdir -p "$LOG_DIR"
 
-pkill -9 -f "market-data-gateway|feed-decoder|snapshot-service|execution-gateway|vite" 2>/dev/null
+MODE=${1:-normal}
 
-sleep 1
+FORCE_RESTART=0
+BUILD_CPP=1
+CLEAR_LOGS=1
 
-# Create a fresh logs directory
-mkdir -p "$BASE_DIR/logs"
-rm -f "$BASE_DIR/logs"/*.log
+case "$MODE" in
+  normal)
+    FORCE_RESTART=1
+    BUILD_CPP=1
+    CLEAR_LOGS=1
+    ;;
+  fast)
+    FORCE_RESTART=0
+    BUILD_CPP=0
+    CLEAR_LOGS=0
+    ;;
+  fast-restart)
+    FORCE_RESTART=1
+    BUILD_CPP=0
+    CLEAR_LOGS=1
+    ;;
+  *)
+    echo "Unknown mode: $MODE"
+    echo "Usage: ./start_platform.sh [normal|fast|fast-restart]"
+    exit 1
+    ;;
+esac
 
-echo "🔑 Loading XTS Credentials from .env file..."
-if [ -f "$BASE_DIR/.env" ]; then
-    # Strip Windows carriage returns (\r) to prevent XTS login errors
-    sed -i 's/\r$//' "$BASE_DIR/.env"
-    set -a
-    source "$BASE_DIR/.env"
-    set +a
-    echo "   ✅ Loaded from $BASE_DIR/.env"
-elif [ -f "$BASE_DIR/../.env" ]; then
-    # Strip Windows carriage returns (\r)
-    sed -i 's/\r$//' "$BASE_DIR/../.env"
-    set -a
-    source "$BASE_DIR/../.env"
-    set +a
-    echo "   ✅ Loaded from $BASE_DIR/../.env"
-else
-    echo "⚠️  WARNING: No .env file found in $BASE_DIR! Services may fail to login to XTS."
+echo "Mode: $MODE"
+echo "BASE_DIR: $BASE_DIR"
+echo "LOG_DIR: $LOG_DIR"
+
+is_port_open() {
+  ss -ltn "( sport = :$1 )" | grep -q ":$1" || return 1
+  return 0
+}
+
+is_proc_running() {
+  pgrep -f "$1" > /dev/null 2>&1
+}
+
+kill_by_port() {
+  local PORT="$1"
+
+  if is_port_open "$PORT"; then
+    fuser -k "${PORT}/tcp" > /dev/null 2>&1 || true
+    sleep 1
+  fi
+}
+
+kill_by_match() {
+  local MATCH="$1"
+
+  if is_proc_running "$MATCH"; then
+    pkill -f "$MATCH" || true
+    sleep 1
+  fi
+}
+
+start_if_needed() {
+  local NAME="$1"
+  local PORT="$2"
+  local MATCH="$3"
+  local CMD="$4"
+  local LOG_FILE="$5"
+
+  if [ "$FORCE_RESTART" = "1" ]; then
+    echo "Force restarting $NAME"
+    kill_by_port "$PORT"
+    kill_by_match "$MATCH"
+  fi
+
+  if is_port_open "$PORT"; then
+    echo "$NAME already healthy on port $PORT"
+    return
+  fi
+
+  if is_proc_running "$MATCH"; then
+    echo "$NAME process exists but port $PORT unhealthy, killing"
+    kill_by_match "$MATCH"
+  fi
+
+  echo "Starting $NAME"
+  (
+    eval "$CMD"
+  ) > "$LOG_FILE" 2>&1 &
+}
+
+safe_curl() {
+  local URL="$1"
+  curl -s "$URL" || true
+}
+
+if [ "$MODE" = "normal" ]; then
+  echo "Cleaning old processes"
+
+  for port in 8001 8003 8005 8010 5555 5556 5557 5558 3000; do
+    kill_by_port "$port"
+  done
+
+  pkill -9 -f contract-master || true
+  pkill -9 -f feed-decoder || true
+  pkill -9 -f snapshot-service || true
+  pkill -9 -f execution-gateway || true
+  pkill -9 -f trade-worker || true
+  pkill -9 -f vite || true
+  pkill -9 -f market-data-gateway || true
+
+  sleep 1
 fi
 
-echo "🚀 Starting Ultra-Low Latency Trading Platform (Core 6 Services)..."
+if [ "$CLEAR_LOGS" = "1" ]; then
+  rm -f "$LOG_DIR"/*.log || true
+fi
 
-# 1. Database & Infra (Docker)
-echo "   -> Starting Infra (Postgres/Redis)..."
-docker compose up -d
+echo "Loading environment variables"
 
-# 2. Market Data Gateway (Go)
-echo "   -> Starting Market Data Gateway..."
-((cd "$BASE_DIR/services/market-data-gateway" && go run cmd/main.go > "$BASE_DIR/logs/1_market-data.log" 2>&1) & echo $! > /tmp/md.pid)
+ENV_FILE="$BASE_DIR/.env"
 
-# Give MD Gateway time to login to XTS and bind ZMQ 5555
+if [ -f "$ENV_FILE" ]; then
+  sed -i 's/\r$//' "$ENV_FILE"
+  set -a
+  source "$ENV_FILE"
+  set +a
+  echo ".env loaded from $ENV_FILE"
+else
+  echo ".env file missing at $ENV_FILE"
+  exit 1
+fi
+
+if [ -z "$POSTGRES_DSN" ]; then
+  export POSTGRES_DSN="postgres://postgres:postgres@localhost:5432/trading?sslmode=disable"
+  echo "Using fallback POSTGRES_DSN"
+fi
+
+echo "Applying DB migration"
+
+if [ -f "$BASE_DIR/libs/db/migrations/0003_contract_master_raw.sql" ]; then
+  psql "$POSTGRES_DSN" -f "$BASE_DIR/libs/db/migrations/0003_contract_master_raw.sql" > /dev/null 2>&1 || true
+fi
+
+echo "DB ready"
+
+if [ "$BUILD_CPP" = "1" ]; then
+  echo "Building C++ services"
+  cmake -B "$BUILD_DIR" "$BASE_DIR"
+  cmake --build "$BUILD_DIR" -j"$(nproc)"
+else
+  echo "Fast mode: skipping C++ build"
+fi
+
+echo "Ensuring services"
+
+start_if_needed \
+  "Contract Master" \
+  "8010" \
+  "contract-master" \
+  "cd '$BASE_DIR/services/contract-master' && go run ./cmd" \
+  "$LOG_DIR/1_contract-master.log"
+
 sleep 3
 
-# 3. Feed Decoder (C++)
-echo "   -> Starting C++ Feed Decoder..."
-((cd "$BASE_DIR/services/feed-decoder/build" && ./feed-decoder > "$BASE_DIR/logs/2_feed-decoder.log" 2>&1) & echo $! > /tmp/fd.pid)
+start_if_needed \
+  "Market Data Gateway" \
+  "8001" \
+  "market-data-gateway" \
+  "cd '$BASE_DIR/services/market-data-gateway' && go run ./cmd" \
+  "$LOG_DIR/1b_market-data-gateway.log"
 
-# Give C++ a second to map the memory
-sleep 1
+sleep 5
 
-# 4. Snapshot Service (Go)
-echo "   -> Starting Snapshot Service..."
-((cd "$BASE_DIR/services/snapshot-service" && go run cmd/main.go > "$BASE_DIR/logs/3_snapshot.log" 2>&1) & echo $! > /tmp/snap.pid)
+start_if_needed \
+  "Feed Decoder" \
+  "5556" \
+  "feed-decoder" \
+  "cd '$BUILD_DIR' && ./services/feed-decoder/feed-decoder" \
+  "$LOG_DIR/2_feed-decoder.log"
 
-# 5. Execution Gateway (Go)
-echo "   -> Starting Execution Gateway..."
-((cd "$BASE_DIR/services/execution-gateway" && go run main.go > "$BASE_DIR/logs/4_execution.log" 2>&1) & echo $! > /tmp/exec.pid)
-
-# 6. React UI (Vite)
-echo "   -> Starting React UI Server..."
-((cd "$BASE_DIR/ui" && export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" && npm install && npm run dev -- --host > "$BASE_DIR/logs/8_ui.log" 2>&1) & echo $! > /tmp/ui.pid)
-
-echo "✅ All services running in background!"
-echo "📜 Tailing logs... (Press Ctrl+C to shutdown everything)"
-echo "------------------------------------------------------"
-
-# Trap Ctrl+C to kill all background processes cleanly
-trap "echo -e '\n🛑 Shutting down all services...'; kill \$(cat /tmp/md.pid) \$(cat /tmp/fd.pid) \$(cat /tmp/snap.pid) \$(cat /tmp/exec.pid) \$(cat /tmp/ui.pid) 2>/dev/null; docker compose down 2>/dev/null; exit 0" SIGINT SIGTERM
-
-# Give services a second to create log files, then tail them
 sleep 2
-tail -f "$BASE_DIR"/logs/*.log
+
+start_if_needed \
+  "Snapshot Service" \
+  "8003" \
+  "snapshot-service" \
+  "cd '$BASE_DIR/services/snapshot-service' && go run ./cmd" \
+  "$LOG_DIR/3_snapshot.log"
+
+sleep 2
+
+start_if_needed \
+  "Execution Gateway" \
+  "8005" \
+  "execution-gateway" \
+  "cd '$BASE_DIR/services/execution-gateway' && go run ." \
+  "$LOG_DIR/4_execution.log"
+
+sleep 2
+
+if [ "$FORCE_RESTART" = "1" ]; then
+  kill_by_match "trade-worker"
+fi
+
+if is_proc_running "trade-worker"; then
+  echo "Trade Worker already running"
+else
+  echo "Starting Trade Worker"
+  (
+    cd "$BUILD_DIR"
+    ./services/trade-worker/trade-worker
+  ) > "$LOG_DIR/5_trade-worker.log" 2>&1 &
+fi
+
+if [ "$FORCE_RESTART" = "1" ]; then
+  kill_by_port 3000
+  pkill -f vite || true
+fi
+
+if is_port_open 3000; then
+  echo "UI already running on port 3000"
+else
+  echo "Starting UI"
+  (
+    cd "$BASE_DIR/ui"
+    if [ ! -d "node_modules" ]; then
+      npm install
+    fi
+    npm run dev -- --host
+  ) > "$LOG_DIR/8_ui.log" 2>&1 &
+fi
+
+sleep 5
+
+HTTP_PROTO="http"
+
+echo "Port status"
+ss -lntp | egrep '8001|5555|5556|8003|8005|8010|3000' || true
+echo
+
+echo "Contract Master"
+safe_curl "${HTTP_PROTO}://localhost:8010/api/health"
+echo
+
+echo "Snapshot Service"
+safe_curl "${HTTP_PROTO}://localhost:8003/api/health"
+echo
+
+echo "Chain readiness"
+safe_curl "${HTTP_PROTO}://localhost:8003/api/option-chain/NIFTY" | grep -o '"success":[^,]*' || true
+echo
+
+echo "SYSTEM READY"
+echo "UI: ${HTTP_PROTO}://localhost:3000"
+echo
+
+if compgen -G "$LOG_DIR/*.log" > /dev/null; then
+  tail -f "$LOG_DIR"/*.log
+else
+  echo "No log files found in $LOG_DIR"
+  echo "Use: ls -la $LOG_DIR"
+fi

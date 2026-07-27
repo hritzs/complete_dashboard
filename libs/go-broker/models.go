@@ -25,6 +25,7 @@ type OrderIntent struct {
 	TradeUID        string  `json:"trade_uid"`
 	IntentID        string  `json:"intent_id,omitempty"` // XTS Compatibility
 	InstrumentToken int     `json:"instrument_token"`    // XTS expects int
+	Symbol          string  `json:"symbol"`
 	ExchangeSegment string  `json:"exchange_segment"`
 	Side            string  `json:"side"`
 	Quantity        int     `json:"quantity"`

@@ -5,87 +5,100 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
-	"strconv"
+	"strings"
 	"time"
 
 	broker "trading-platform/libs/go-broker"
 )
 
-// Client implements the broker.Client interface for Greeksoft.
 type Client struct {
-	RestURL    string
-	HTTPClient *http.Client
-	Session    *broker.SessionDetails // Replaces the global variables from your JS/Python
+	HTTPClient     *http.Client
+	AuthBaseURL    string
+	RestAPIBaseURL string
+	Session        *broker.SessionDetails
 }
 
-// NewClient initializes a native Greeksoft Go client.
-func NewClient(restURL string) *Client {
+func NewClient(authURL string, restURL string) *Client {
 	return &Client{
-		RestURL: restURL,
 		HTTPClient: &http.Client{
-			Timeout: 3 * time.Second, // Low latency timeout
+			Timeout: 30 * time.Second,
 		},
+		AuthBaseURL:    strings.TrimRight(authURL, "/"),
+		RestAPIBaseURL: strings.TrimRight(restURL, "/"),
 	}
 }
 
-// PlaceOrder completely bypasses the Python proxy and constructs the NewOrderRequest payload natively.
-func (c *Client) PlaceOrder(ctx context.Context, intent *broker.OrderIntent) (*broker.OrderResponse, error) {
-	if c.Session == nil || c.Session.BrokerSpecific["gcid"] == nil {
-		return nil, fmt.Errorf("greeksoft session not initialized or missing gcid")
+func (c *Client) doJSON(
+	ctx context.Context,
+	method string,
+	url string,
+	sessionToken string,
+	reqBody interface{},
+	resBody interface{},
+) (*http.Response, []byte, error) {
+	var bodyReader io.Reader
+
+	if reqBody != nil {
+		bodyBytes, err := json.Marshal(reqBody)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to marshal request body: %w", err)
+		}
+		bodyReader = bytes.NewBuffer(bodyBytes)
 	}
 
-	gcid := c.Session.BrokerSpecific["gcid"].(string)
-
-	sideCode := "1" // 1 = BUY
-	if intent.Side == "SELL" {
-		sideCode = "2" // 2 = SELL
-	}
-
-	// Replicating the exact JSON structure required by Greeksoft API
-	payload := map[string]interface{}{
-		"request": map[string]interface{}{
-			"data": map[string]interface{}{
-				"gtoken":           intent.InstrumentToken,
-				"side":             sideCode,
-				"gcid":             gcid,
-				"price":            fmt.Sprintf("%.2f", intent.LimitPrice),
-				"order_type":       "1", // 1 for LIMIT order
-				"qty":              strconv.Itoa(intent.Quantity),
-				"validity":         "0", // 0 = DAY
-				"exchange":         intent.ExchangeSegment,
-				"tradeSymbol":      intent.TradeUID, // Usually mapped from a Contract Master
-				"product":          "0",             // 0 for MIS/NRML
-				"is_preopen_order": "0",
-				"is_post_closed":   "0",
-				"is_restapi":       "1",
-				"disclosed_qty":    "0",
-				"lot":              "1", // Assumes pre-calculated lot sizing
-			},
-			"response_format": "json",
-			"request_type":    "subscribe",
-			"streaming_type":  "NewOrderRequest",
-		},
-	}
-
-	jsonData, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, "POST", c.RestURL+"/NewOrderRequest", bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
 	if err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	
-	// Inject Greeksoft Session Token
-	if c.Session.AuthToken != "" {
-		req.Header.Set("Authorization", c.Session.AuthToken)
+
+	if reqBody != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	if sessionToken != "" {
+		req.Header.Set("Authorization", sessionToken)
 	}
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("greeksoft native order request failed: %w", err)
+		return nil, nil, fmt.Errorf("http request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// In a complete implementation, you'd parse the specific response here.
-	return &broker.OrderResponse{Status: "SUBMITTED"}, nil
+	rawBody, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return resp, nil, fmt.Errorf("failed to read response body: %w", readErr)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return resp, rawBody, fmt.Errorf("api error: status=%d body=%s", resp.StatusCode, string(rawBody))
+	}
+
+	if resBody != nil && len(rawBody) > 0 {
+		if err := json.Unmarshal(rawBody, resBody); err != nil {
+			return resp, rawBody, fmt.Errorf("failed to decode json response: %w body=%s", err, string(rawBody))
+		}
+	}
+
+	return resp, rawBody, nil
+}
+
+func (c *Client) postJSON(
+	ctx context.Context,
+	url string,
+	sessionToken string,
+	reqBody interface{},
+	resBody interface{},
+) (*http.Response, []byte, error) {
+	return c.doJSON(ctx, http.MethodPost, url, sessionToken, reqBody, resBody)
+}
+
+func (c *Client) getRaw(
+	ctx context.Context,
+	url string,
+	sessionToken string,
+) (*http.Response, []byte, error) {
+	return c.doJSON(ctx, http.MethodGet, url, sessionToken, nil, nil)
 }

@@ -137,6 +137,14 @@
     <div id="post-login-actions" class="login-container" style="display:none; width: 500px;">
         <h2>Post-Login Actions</h2>
         <button id="fetch-contracts-btn">1. Fetch Contracts</button>
+        <div class="form-group" style="margin-top: 15px;">
+            <label for="account-select">Greeksoft Account</label>
+            <select id="account-select" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px;">
+                <option value="HRITIK">HRITIK</option>
+                <option value="HRITIK1">HRITIK1</option>
+            </select>
+        </div>
+
         <div class="form-group" style="margin-top: 15px; margin-bottom: 5px;">
             <label for="pan-dob-input">PAN / Date of Birth (for JLogin)</label>
             <input type="text" id="pan-dob-input" value="01/01/1901" placeholder="DD/MM/YYYY">
@@ -749,7 +757,13 @@
             showResults('Selling ATM Straddle...', { symbol, lots });
 
             try {
-                const response = await fetch('/api/straddle/sell', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbol, lots }) });
+                const response = await fetch('/api/straddle/sell', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+                    symbol,
+                    lots,
+                    broker_name: "GREEKSOFT",
+                    account_id: document.getElementById('account-select')?.value || "HRITIK",
+                    product_type: "NRML"
+                }) });
                 const data = await response.json();
                 showResults(`Sell Straddle Response (Status: ${response.status})`, data);
             } catch (error) {

@@ -3,6 +3,17 @@ import solidPlugin from 'vite-plugin-solid';
 
 export default defineConfig({
   plugins: [solidPlugin()],
-  server: { host: '0.0.0.0', port: 3000 },
-  build: { outDir: 'dist' },
+  server: {
+    port: 3000,
+    host: true, // Allow access from network
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:8005',
+        changeOrigin: true,
+      },
+    },
+  },
+  build: {
+    target: 'esnext',
+  },
 });

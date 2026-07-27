@@ -1,13 +1,14 @@
 #!/bin/bash
+set -euo pipefail
 
-# XTS Interactive API Credentials (from cred.py)
-export XTS_API_KEY="6debd1fc7b75c6d2291950"
-export XTS_API_SECRET="Mrbp544@RD"
-export XTS_SOURCE="WEBAPI"
-# For PRO/Dealer accounts, ClientID is strictly required! Set this to your target Client ID.
-export XTS_CLIENT_ID="TEST49"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-echo "Loading credentials and starting Execution Gateway..."
+if [ -f "$ROOT_DIR/.env" ]; then
+  set -a
+  source "$ROOT_DIR/.env"
+  set +a
+fi
 
-# Run the Go application
-go run main.go
+echo "Starting Execution Gateway..."
+cd "$ROOT_DIR/services/execution-gateway"
+exec ./execution-gateway
