@@ -260,6 +260,15 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 	if req.Lots <= 0 {
 		return nil, fmt.Errorf("invalid lots: %d", req.Lots)
 	}
+	if req.Lots > 1 {
+		return nil, fmt.Errorf("refusing unsafe test deployment: lots=%d; use lots=1 for UI/demo straddle test", req.Lots)
+	}
+	if req.OrderLotsPerCall <= 0 {
+		req.OrderLotsPerCall = 1
+	}
+	if req.OrderLotsPerCall > req.Lots {
+		req.OrderLotsPerCall = req.Lots
+	}
 
 	ceLots := req.Lots
 	peLots := req.Lots
