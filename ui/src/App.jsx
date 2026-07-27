@@ -100,7 +100,7 @@
       'BANKEX'
     ];
 
-    const brokerOptions = ['xts', 'greeksoft', 'mock'];
+    const brokerOptions = ['greeksoft', 'sim', 'xts', 'mock'];
     const greeksoftAccounts = ['HRITIK', 'HRITIK1'];
 
     let ws = null;
