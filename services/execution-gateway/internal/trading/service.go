@@ -485,13 +485,36 @@ func (s *Service) executeBuild(ctx context.Context, executor Executor, trade Sto
 				}
 
 				if updater, ok := s.Store.(interface {
+					MarkOrderExecution(intentID string, brokerOrderID string, status string, filledQty int64, pendingQty int64, fillPrice float64, rawResponse string)
+				}); ok {
+
+					updater.MarkOrderExecution(intent.IntentID, res.BrokerOrderID, res.Status, res.FilledQty, res.PendingQty, res.FillPrice, res.RawResponse)
+
+				} else if updater, ok := s.Store.(interface {
 					MarkOrderSubmitted(intentID string, brokerOrderID string, status string, rawResponse string)
 				}); ok {
+
 					updater.MarkOrderSubmitted(intent.IntentID, res.BrokerOrderID, res.Status, res.RawResponse)
+
 				}
 
-				if res.Status != "FILLED" && res.Status != "SUCCESS" && res.Status != "ACKED" && res.Status != "SUBMITTED" {
+				switch res.Status {
+				case "FILLED", "SUCCESS":
+					// Completed leg. Continue to next order.
+				case "REJECTED", "CANCELLED":
+					// Terminal failure. Retry according to retry policy.
 					nextRetry = append(nextRetry, order)
+				default:
+					// Broker accepted/open/pending/partial is not a fill.
+					// Stop here so we do not create duplicate live orders.
+					return fmt.Errorf(
+						"build order not fully filled: intent_id=%s broker_order_id=%s status=%s filled_qty=%d pending_qty=%d",
+						intent.IntentID,
+						res.BrokerOrderID,
+						res.Status,
+						res.FilledQty,
+						res.PendingQty,
+					)
 				}
 			}
 
@@ -742,9 +765,17 @@ func (s *Service) ManualHedge(ctx context.Context, tradeUID string) error {
 		return fmt.Errorf("hedge CE failed: %w", err)
 	}
 	if updater, ok := s.Store.(interface {
+		MarkOrderExecution(intentID string, brokerOrderID string, status string, filledQty int64, pendingQty int64, fillPrice float64, rawResponse string)
+	}); ok {
+
+		updater.MarkOrderExecution(ceIntent.IntentID, ceRes.BrokerOrderID, ceRes.Status, ceRes.FilledQty, ceRes.PendingQty, ceRes.FillPrice, ceRes.RawResponse)
+
+	} else if updater, ok := s.Store.(interface {
 		MarkOrderSubmitted(intentID string, brokerOrderID string, status string, rawResponse string)
 	}); ok {
+
 		updater.MarkOrderSubmitted(ceIntent.IntentID, ceRes.BrokerOrderID, ceRes.Status, ceRes.RawResponse)
+
 	}
 
 	peRes, err := executor.ExecuteOrderIntent(ctx, peIntent)
@@ -752,9 +783,17 @@ func (s *Service) ManualHedge(ctx context.Context, tradeUID string) error {
 		return fmt.Errorf("hedge PE failed: %w", err)
 	}
 	if updater, ok := s.Store.(interface {
+		MarkOrderExecution(intentID string, brokerOrderID string, status string, filledQty int64, pendingQty int64, fillPrice float64, rawResponse string)
+	}); ok {
+
+		updater.MarkOrderExecution(peIntent.IntentID, peRes.BrokerOrderID, peRes.Status, peRes.FilledQty, peRes.PendingQty, peRes.FillPrice, peRes.RawResponse)
+
+	} else if updater, ok := s.Store.(interface {
 		MarkOrderSubmitted(intentID string, brokerOrderID string, status string, rawResponse string)
 	}); ok {
+
 		updater.MarkOrderSubmitted(peIntent.IntentID, peRes.BrokerOrderID, peRes.Status, peRes.RawResponse)
+
 	}
 
 	return nil

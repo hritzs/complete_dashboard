@@ -20,6 +20,13 @@ func NewPostgresBackedStore(db *sql.DB) *PostgresBackedStore {
 	}
 }
 
+func (s *PostgresBackedStore) DB() *sql.DB {
+	if s == nil {
+		return nil
+	}
+	return s.db
+}
+
 func (s *PostgresBackedStore) SaveTrade(tr StoredTrade) {
 	s.mem.SaveTrade(tr)
 	s.upsertTrade(tr)
@@ -244,6 +251,52 @@ func (s *PostgresBackedStore) MarkOrderSubmitted(intentID string, brokerOrderID 
 
 	if err != nil {
 		log.Printf("[SQL STORE] insert order event failed order_id=%d err=%v", orderID, err)
+	}
+}
+
+func (s *PostgresBackedStore) MarkOrderExecution(intentID string, brokerOrderID string, status string, filledQty int64, pendingQty int64, fillPrice float64, rawResponse string) {
+	if s == nil || s.db == nil {
+		return
+	}
+
+	if status == "" {
+		status = "SUBMITTED"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	var orderID int64
+	err := s.db.QueryRowContext(ctx, `
+		UPDATE orders
+		SET broker_order_id = $2,
+		    status = $3,
+		    filled_qty = $4,
+		    pending_qty = $5,
+		    avg_fill_price = $6,
+		    updated_at = NOW()
+		WHERE intent_id = $1
+		RETURNING id
+	`, intentID, brokerOrderID, status, filledQty, pendingQty, fillPrice).Scan(&orderID)
+
+	if err != nil {
+		log.Printf("[SQL STORE] mark order execution failed intent_id=%s broker_order_id=%s err=%v", intentID, brokerOrderID, err)
+		return
+	}
+
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO order_events (
+			order_id,
+			status,
+			reason_text,
+			event_timestamp,
+			raw_broker_response
+		)
+		VALUES ($1,$2,$3,NOW(),$4)
+	`, orderID, status, "BROKER_EXECUTION", rawResponse)
+
+	if err != nil {
+		log.Printf("[SQL STORE] insert execution event failed order_id=%d err=%v", orderID, err)
 	}
 }
 

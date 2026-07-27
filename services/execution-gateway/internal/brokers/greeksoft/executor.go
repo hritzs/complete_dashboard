@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,6 +39,10 @@ func (e *Executor) ExecuteOrderIntent(
 	rawResponse := resp.RawResponse
 	eventReason := "GREEKSOFT_ORDER_SENT"
 
+	filledQty := int64(0)
+	pendingQty := int64(0)
+	fillPrice := float64(0)
+
 	if status == "" {
 		status = "SUBMITTED"
 	}
@@ -54,18 +59,27 @@ func (e *Executor) ExecuteOrderIntent(
 		}, nil
 	}
 
-	if brokerOrderID != "" {
-		orderStatus, orderBookRaw, err := e.waitOrderStatusFromOrderBook(
-			ctx,
-			brokerOrderID,
-			8,
-			250*time.Millisecond,
-		)
-		if err == nil && strings.TrimSpace(orderStatus) != "" {
-			status = normalizeGreeksoftOrderStatus(orderStatus)
-			eventReason = "GREEKSOFT_ORDERBOOK_CONFIRMED"
-			if strings.TrimSpace(orderBookRaw) != "" {
-				rawResponse = orderBookRaw
+	orderStatus, orderBookRaw, err := e.waitOrderStatusFromOrderBook(
+		ctx,
+		brokerOrderID,
+		8,
+		250*time.Millisecond,
+	)
+	if err == nil && strings.TrimSpace(orderStatus) != "" {
+		status = normalizeGreeksoftOrderStatus(orderStatus)
+		eventReason = "GREEKSOFT_ORDERBOOK_CONFIRMED"
+
+		if strings.TrimSpace(orderBookRaw) != "" {
+			rawResponse = orderBookRaw
+		}
+
+		filledQty, pendingQty, fillPrice = extractGreeksoftExecutionFields(rawResponse)
+
+		if filledQty > 0 && status != "REJECTED" && status != "CANCELLED" {
+			if pendingQty == 0 && intent.Quantity > 0 && filledQty >= intent.Quantity {
+				status = "FILLED"
+			} else {
+				status = "PARTIALLY_FILLED"
 			}
 		}
 	}
@@ -74,8 +88,9 @@ func (e *Executor) ExecuteOrderIntent(
 		IntentID:      intent.IntentID,
 		BrokerOrderID: brokerOrderID,
 		Status:        status,
-		FilledQty:     0,
-		FillPrice:     0,
+		FilledQty:     filledQty,
+		PendingQty:    pendingQty,
+		FillPrice:     fillPrice,
 		EventReason:   eventReason,
 		RawResponse:   rawResponse,
 	}, nil
@@ -345,4 +360,124 @@ func firstStringValue(m map[string]interface{}, keys ...string) string {
 	}
 
 	return ""
+}
+
+func extractGreeksoftExecutionFields(raw string) (int64, int64, float64) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, 0, 0
+	}
+
+	var v interface{}
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		return 0, 0, 0
+	}
+
+	filledQty := int64(firstFloatLikeField(v,
+		"tradedqty",
+		"traded_qty",
+		"tradedQty",
+		"filledqty",
+		"filled_qty",
+		"filledQty",
+		"execQty",
+		"executedQty",
+		"CumulativeQuantity",
+		"cumulative_quantity",
+	))
+
+	pendingQty := int64(firstFloatLikeField(v,
+		"pendingqty",
+		"pending_qty",
+		"pendingQty",
+		"remainingQty",
+		"LeavesQuantity",
+		"leaves_quantity",
+	))
+
+	avgPrice := firstFloatLikeField(v,
+		"AvgTrdPrice",
+		"avgTrdPrice",
+		"avg_trd_price",
+		"OrderAverageTradedPrice",
+		"order_avg_price",
+		"avg_price",
+		"fillPrice",
+		"fill_price",
+	)
+
+	return filledQty, pendingQty, avgPrice
+}
+
+func firstFloatLikeField(v interface{}, keys ...string) float64 {
+	want := map[string]bool{}
+	for _, k := range keys {
+		want[normalizeGreeksoftFieldKey(k)] = true
+	}
+
+	var walk func(interface{}) (float64, bool)
+	walk = func(x interface{}) (float64, bool) {
+		switch t := x.(type) {
+		case map[string]interface{}:
+			for k, v := range t {
+				if want[normalizeGreeksoftFieldKey(k)] {
+					if f, ok := numberLikeToFloat64(v); ok {
+						return f, true
+					}
+				}
+			}
+			for _, child := range t {
+				if f, ok := walk(child); ok {
+					return f, true
+				}
+			}
+		case []interface{}:
+			for _, child := range t {
+				if f, ok := walk(child); ok {
+					return f, true
+				}
+			}
+		}
+		return 0, false
+	}
+
+	if f, ok := walk(v); ok {
+		return f
+	}
+	return 0
+}
+
+func normalizeGreeksoftFieldKey(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.ReplaceAll(s, "_", "")
+	s = strings.ReplaceAll(s, "-", "")
+	s = strings.ReplaceAll(s, " ", "")
+	return s
+}
+
+func numberLikeToFloat64(v interface{}) (float64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return x, true
+	case float32:
+		return float64(x), true
+	case int:
+		return float64(x), true
+	case int64:
+		return float64(x), true
+	case int32:
+		return float64(x), true
+	case json.Number:
+		f, err := x.Float64()
+		return f, err == nil
+	case string:
+		x = strings.TrimSpace(x)
+		if x == "" {
+			return 0, false
+		}
+		f, err := strconv.ParseFloat(x, 64)
+		return f, err == nil
+	default:
+		return 0, false
+	}
 }
