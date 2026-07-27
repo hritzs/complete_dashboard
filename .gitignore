@@ -65,3 +65,29 @@ services/trade-worker/trade-worker
 *.bak
 *.bak.*
 *.broken.*
+
+# generated files
+build/
+build_worker/
+logs/
+ui/node_modules/
+node_modules/
+ui/dist/
+venv/
+
+# binaries
+services/execution-gateway/execution-gateway
+services/snapshot-service/snapshot-service
+services/contract-master/cmd/cmd
+services/control-api/control-api
+services/market-data-gateway/market-data-gateway
+
+# temporary dumps/backups
+*.bak
+*.bak.*
+*.broken.*
+selected-services-libs-dump.txt
+selected_dump_part_*
+control-api-complete-dump.txt
+copilot_decoder_dump.txt
+trading-first-dump.txt
