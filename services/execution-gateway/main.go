@@ -265,6 +265,7 @@ func startHTTPServer(cfg *Config, handlers *trading.Handlers) {
 	mux.HandleFunc("/api/orders/", handlers.GetOrders)
 	mux.HandleFunc("/api/trade/execution-summary", handlers.ExecutionSummary)
 	mux.HandleFunc("/api/trade/squareoff-plan", handlers.SquareOffPlan)
+	mux.HandleFunc("/api/trade/refresh-lifecycle", handlers.RefreshTradeLifecycle)
 
 	mux.HandleFunc("/api/positions", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "positions endpoint not implemented", http.StatusNotImplemented)

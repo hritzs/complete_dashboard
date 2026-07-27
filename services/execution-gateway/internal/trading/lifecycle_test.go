@@ -81,3 +81,59 @@ func TestBuildRetryableTerminalStatuses(t *testing.T) {
 		}
 	}
 }
+
+func TestDeriveTradeStatusFromBuildCountsAllFilled(t *testing.T) {
+	got := deriveTradeStatusFromBuildCounts(BuildOrderLifecycleCounts{
+		Total:  2,
+		Filled: 2,
+	})
+
+	if got != TradeStatusActive {
+		t.Fatalf("expected %s, got %s", TradeStatusActive, got)
+	}
+}
+
+func TestDeriveTradeStatusFromBuildCountsPending(t *testing.T) {
+	got := deriveTradeStatusFromBuildCounts(BuildOrderLifecycleCounts{
+		Total:   2,
+		Pending: 2,
+	})
+
+	if got != TradeStatusPendingFill {
+		t.Fatalf("expected %s, got %s", TradeStatusPendingFill, got)
+	}
+}
+
+func TestDeriveTradeStatusFromBuildCountsPartialFill(t *testing.T) {
+	got := deriveTradeStatusFromBuildCounts(BuildOrderLifecycleCounts{
+		Total:   2,
+		Filled:  1,
+		Pending: 1,
+	})
+
+	if got != TradeStatusPendingFill {
+		t.Fatalf("expected %s, got %s", TradeStatusPendingFill, got)
+	}
+}
+
+func TestDeriveTradeStatusFromBuildCountsRejected(t *testing.T) {
+	got := deriveTradeStatusFromBuildCounts(BuildOrderLifecycleCounts{
+		Total:        2,
+		TerminalFail: 2,
+	})
+
+	if got != TradeStatusFailed {
+		t.Fatalf("expected %s, got %s", TradeStatusFailed, got)
+	}
+}
+
+func TestDeriveTradeStatusFromBuildCountsUnknown(t *testing.T) {
+	got := deriveTradeStatusFromBuildCounts(BuildOrderLifecycleCounts{
+		Total:   2,
+		Unknown: 2,
+	})
+
+	if got != TradeStatusPendingFill {
+		t.Fatalf("expected %s, got %s", TradeStatusPendingFill, got)
+	}
+}

@@ -9,6 +9,7 @@ import (
 const (
 	TradeStatusPendingFill = "PENDING_FILL"
 	TradeStatusFailed      = "FAILED"
+	TradeStatusActive      = "ACTIVE"
 )
 
 type BuildPendingFillError struct {
@@ -33,6 +34,7 @@ func (e *BuildPendingFillError) Error() string {
 	if e == nil {
 		return "build order pending fill"
 	}
+
 	return fmt.Sprintf(
 		"build order not fully filled: intent_id=%s broker_order_id=%s status=%s filled_qty=%d pending_qty=%d",
 		e.IntentID,
@@ -47,6 +49,7 @@ func IsBuildPendingFill(err error) bool {
 	if err == nil {
 		return false
 	}
+
 	var pending *BuildPendingFillError
 	return errors.As(err, &pending)
 }
@@ -74,4 +77,40 @@ func isBuildRetryableTerminalStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+type BuildOrderLifecycleCounts struct {
+	Total        int64 `json:"total"`
+	Filled       int64 `json:"filled"`
+	Pending      int64 `json:"pending"`
+	TerminalFail int64 `json:"terminal_fail"`
+	Unknown      int64 `json:"unknown"`
+}
+
+func deriveTradeStatusFromBuildCounts(c BuildOrderLifecycleCounts) string {
+	if c.Total <= 0 {
+		return TradeStatusFailed
+	}
+
+	if c.Filled == c.Total {
+		return TradeStatusActive
+	}
+
+	if c.Pending > 0 {
+		return TradeStatusPendingFill
+	}
+
+	if c.Filled > 0 && c.Filled < c.Total {
+		return TradeStatusPendingFill
+	}
+
+	if c.TerminalFail == c.Total {
+		return TradeStatusFailed
+	}
+
+	if c.Unknown > 0 {
+		return TradeStatusPendingFill
+	}
+
+	return TradeStatusFailed
 }
