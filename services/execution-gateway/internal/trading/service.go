@@ -394,7 +394,7 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 
 	// Execute build
 	if err := s.executeBuild(ctx, executor, trade, chunks); err != nil {
-		trade.Status = "FAILED"
+		trade.Status = buildFailureStatusFromError(err)
 		trade.LastUpdateTime = time.Now()
 		s.Store.UpdateTrade(trade)
 		return nil, err
@@ -507,8 +507,7 @@ func (s *Service) executeBuild(ctx context.Context, executor Executor, trade Sto
 				default:
 					// Broker accepted/open/pending/partial is not a fill.
 					// Stop here so we do not create duplicate live orders.
-					return fmt.Errorf(
-						"build order not fully filled: intent_id=%s broker_order_id=%s status=%s filled_qty=%d pending_qty=%d",
+					return NewBuildPendingFillError(
 						intent.IntentID,
 						res.BrokerOrderID,
 						res.Status,
@@ -534,7 +533,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 	if !ok {
 		return
 	}
-	if trade.Status == "CLOSED" || trade.Status == "FAILED" {
+	if trade.Status == "CLOSED" || trade.Status == "FAILED" || trade.Status == "PENDING_FILL" {
 		return
 	}
 
