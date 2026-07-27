@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -354,18 +355,55 @@ func parseSnapshotExpiryDate(expiry string) (time.Time, bool) {
 	clean = strings.ReplaceAll(clean, "-", "")
 	clean = strings.ReplaceAll(clean, "_", "")
 	clean = strings.ReplaceAll(clean, " ", "")
+	clean = strings.ReplaceAll(clean, "/", "")
 
-	layouts := []string{
-		"02JAN06",
-		"02JAN2006",
-		"20060102",
+	if len(clean) != 7 && len(clean) != 9 {
+		return time.Time{}, false
 	}
 
-	for _, layout := range layouts {
-		if t, err := time.Parse(layout, clean); err == nil {
-			return t, true
-		}
+	dayPart := clean[0:2]
+	monPart := clean[2:5]
+	yearPart := clean[5:]
+
+	monthMap := map[string]time.Month{
+		"JAN": time.January,
+		"FEB": time.February,
+		"MAR": time.March,
+		"APR": time.April,
+		"MAY": time.May,
+		"JUN": time.June,
+		"JUL": time.July,
+		"AUG": time.August,
+		"SEP": time.September,
+		"OCT": time.October,
+		"NOV": time.November,
+		"DEC": time.December,
 	}
 
-	return time.Time{}, false
+	month, ok := monthMap[monPart]
+	if !ok {
+		return time.Time{}, false
+	}
+
+	day, err := strconv.Atoi(dayPart)
+	if err != nil || day <= 0 || day > 31 {
+		return time.Time{}, false
+	}
+
+	year, err := strconv.Atoi(yearPart)
+	if err != nil {
+		return time.Time{}, false
+	}
+
+	if year < 100 {
+		year += 2000
+	}
+
+	t := time.Date(year, month, day, 0, 0, 0, 0, time.Local)
+
+	if t.Day() != day || t.Month() != month || t.Year() != year {
+		return time.Time{}, false
+	}
+
+	return t, true
 }
