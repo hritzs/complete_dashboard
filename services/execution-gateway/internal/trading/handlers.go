@@ -237,6 +237,65 @@ func (h *Handlers) ManualHedge(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type ManualSquareOffResponse struct {
+	Success   bool               `json:"success"`
+	TradeUID  string             `json:"trade_uid"`
+	Phase     string             `json:"phase"`
+	Broker    string             `json:"broker"`
+	AccountID string             `json:"account_id"`
+	Results   []*ExecutionResult `json:"results,omitempty"`
+	Error     string             `json:"error,omitempty"`
+	Message   string             `json:"message,omitempty"`
+}
+
+// ManualSquareOff handles the direct, non-position-aware square off of a trade.
+func (h *Handlers) ManualSquareOff(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_ = json.NewEncoder(w).Encode(ManualSquareOffResponse{
+			Success: false,
+			Error:   "method not allowed",
+		})
+		return
+	}
+
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 4 {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(ManualSquareOffResponse{
+			Success: false,
+			Error:   "invalid trade path, expected /api/v1/trade/{uid}/manual-squareoff",
+		})
+		return
+	}
+	tradeUID := parts[2]
+
+	results, err := h.Service.ManualSquareOff(r.Context(), tradeUID)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(ManualSquareOffResponse{
+			Success:  false,
+			TradeUID: tradeUID,
+			Phase:    "MANUAL_SQF",
+			Error:    err.Error(),
+		})
+		return
+	}
+
+	tr, _ := h.Store.LoadTrade(tradeUID)
+	_ = json.NewEncoder(w).Encode(ManualSquareOffResponse{
+		Success:   true,
+		TradeUID:  tradeUID,
+		Phase:     "MANUAL_SQF",
+		Broker:    tr.BrokerName,
+		AccountID: tr.AccountID,
+		Results:   results,
+		Message:   "manual square-off order completed",
+	})
+}
+
 func (h *Handlers) ManualRoll(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	if len(parts) < 4 {

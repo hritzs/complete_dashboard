@@ -281,6 +281,8 @@ func startHTTPServer(cfg *Config, handlers *trading.Handlers) {
 			handlers.ManualHedgeBroker(w, r)
 		case strings.HasSuffix(r.URL.Path, "/manual-hedge"):
 			handlers.ManualHedge(w, r)
+		case strings.HasSuffix(r.URL.Path, "/manual-squareoff"):
+			handlers.ManualSquareOff(w, r)
 		case strings.HasSuffix(r.URL.Path, "/manual-roll"):
 			handlers.ManualRoll(w, r)
 		case strings.HasSuffix(r.URL.Path, "/manual-verify"):
