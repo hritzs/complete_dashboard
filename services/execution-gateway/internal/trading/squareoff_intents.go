@@ -16,10 +16,10 @@ type sqfNetPosition struct {
 	AbsQtySeen int64
 }
 
-func (s *Service) createSQFIntentsFromFilledNetPosition(tr StoredTrade) (int, error) {
+func (s *Service) createSQFIntentsFromFilledNetPosition(tr StoredTrade) ([]OrderIntent, error) {
 	pg, ok := s.Store.(*PostgresBackedStore)
 	if !ok || pg == nil || pg.DB() == nil {
-		return 0, fmt.Errorf("postgres-backed store is required for square-off intent creation")
+		return nil, fmt.Errorf("postgres-backed store is required for square-off intent creation")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -40,7 +40,7 @@ func (s *Service) createSQFIntentsFromFilledNetPosition(tr StoredTrade) (int, er
 		ORDER BY created_at ASC, id ASC
 	`, tr.TradeUID)
 	if err != nil {
-		return 0, fmt.Errorf("query filled orders for square-off: %w", err)
+		return nil, fmt.Errorf("query filled orders for square-off: %w", err)
 	}
 	defer rows.Close()
 
@@ -62,7 +62,7 @@ func (s *Service) createSQFIntentsFromFilledNetPosition(tr StoredTrade) (int, er
 			&avgPrice,
 			&rawReq,
 		); err != nil {
-			return 0, fmt.Errorf("scan filled order for square-off: %w", err)
+			return nil, fmt.Errorf("scan filled order for square-off: %w", err)
 		}
 
 		if filledQty <= 0 {
@@ -109,6 +109,7 @@ func (s *Service) createSQFIntentsFromFilledNetPosition(tr StoredTrade) (int, er
 		pos.AbsQtySeen += absInt64(signedQty)
 	}
 
+	var created []OrderIntent
 	count := 0
 	now := time.Now()
 
@@ -167,12 +168,13 @@ func (s *Service) createSQFIntentsFromFilledNetPosition(tr StoredTrade) (int, er
 		}
 
 		s.Store.AppendIntent(tr.TradeUID, intent)
+		created = append(created, intent)
 		count++
 	}
 
-	if count == 0 {
-		return 0, fmt.Errorf("no filled net position found for square-off")
+	if len(created) == 0 {
+		return nil, fmt.Errorf("no filled net position found for square-off")
 	}
 
-	return count, nil
+	return created, nil
 }

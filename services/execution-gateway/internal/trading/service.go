@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -646,7 +647,7 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 		return fmt.Errorf("cannot square off %s while trade is PENDING_FILL", tradeUID)
 	}
 
-	created, err := s.createSQFIntentsFromFilledNetPosition(tr)
+	sqfIntents, err := s.createSQFIntentsFromFilledNetPosition(tr)
 	if err != nil {
 		return err
 	}
@@ -660,8 +661,54 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 		s.Store.DeleteRuntime(tradeUID)
 	}
 
-	if created <= 0 {
+	if len(sqfIntents) == 0 {
 		return fmt.Errorf("no SQF intents created for %s", tradeUID)
+	}
+
+	allowLiveSQF := os.Getenv("ENABLE_LIVE_SQF_EXECUTION") == "1"
+	isSimBroker := tr.BrokerName == "SIM" || tr.BrokerName == "sim"
+
+	if !allowLiveSQF && !isSimBroker {
+		return nil
+	}
+
+	if s.BrokerFactory == nil {
+		return fmt.Errorf("broker factory is nil; cannot execute SQF broker orders")
+	}
+
+	executor, err := s.BrokerFactory.GetExecutor(tr.UserID, tr.BrokerName, tr.AccountID)
+	if err != nil {
+		return err
+	}
+
+	allFilled := true
+	ctx := context.Background()
+
+	for _, intent := range sqfIntents {
+		res, err := executor.ExecuteOrderIntent(ctx, intent)
+		if err != nil {
+			return fmt.Errorf("sqf %s failed: %w", intent.LegType, err)
+		}
+
+		if updater, ok := s.Store.(interface {
+			MarkOrderExecution(intentID string, brokerOrderID string, status string, filledQty int64, pendingQty int64, fillPrice float64, rawResponse string)
+		}); ok {
+			updater.MarkOrderExecution(intent.IntentID, res.BrokerOrderID, res.Status, res.FilledQty, res.PendingQty, res.FillPrice, res.RawResponse)
+		} else if updater, ok := s.Store.(interface {
+			MarkOrderSubmitted(intentID string, brokerOrderID string, status string, rawResponse string)
+		}); ok {
+			updater.MarkOrderSubmitted(intent.IntentID, res.BrokerOrderID, res.Status, res.RawResponse)
+		}
+
+		if res.Status != "FILLED" && res.Status != "SUCCESS" {
+			allFilled = false
+		}
+	}
+
+	if allFilled {
+		tr.Status = "CLOSED"
+		tr.LastUpdateTime = time.Now()
+		s.Store.UpdateTrade(tr)
 	}
 
 	return nil
@@ -695,7 +742,8 @@ func (s *Service) ManualHedge(ctx context.Context, tradeUID string) error {
 	if !ok {
 		return fmt.Errorf("snapshot not found")
 	}
-	if math.Abs(snap.NetDelta) < 1 {
+	ceSide, peSide, shouldHedge := hedgeSidesFromNetDelta(snap.NetDelta)
+	if !shouldHedge {
 		return nil
 	}
 
@@ -720,15 +768,6 @@ func (s *Service) ManualHedge(ctx context.Context, tradeUID string) error {
 	}
 	if qty <= 0 {
 		return fmt.Errorf("invalid hedge quantity for symbol %s", tr.Symbol)
-	}
-
-	var ceSide, peSide string
-	if snap.NetDelta < 0 {
-		ceSide = "BUY"
-		peSide = "SELL"
-	} else {
-		ceSide = "SELL"
-		peSide = "BUY"
 	}
 
 	ceIntent := OrderIntent{
