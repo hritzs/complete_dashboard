@@ -36,17 +36,45 @@ func (s *Service) ManualSquareOff(ctx context.Context, tradeUID string) ([]*Exec
 		return nil, fmt.Errorf("could not get executor for broker %s: %w", trade.BrokerName, err)
 	}
 
-	// 3. Create closing intents. Since the original trade was a SELL straddle, we BUY to close.
-	// The quantities are taken directly from the StoredTrade struct.
+	// 3. Fetch live market data to get a reasonable price for the closing orders.
+	chain, err := s.Snapshot.GetOptionChain(ctx, trade.Symbol, trade.Expiry)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch option chain for square-off pricing: %w", err)
+	}
+
+	var ceRow, peRow *OptionChainRow
+	for i := range chain.Chain {
+		row := &chain.Chain[i]
+		if row.Strike == trade.Strike {
+			ceRow = row
+			peRow = row
+			break
+		}
+	}
+
+	if ceRow == nil || peRow == nil {
+		return nil, fmt.Errorf("could not find strike %.2f in live option chain for %s", trade.Strike, trade.Symbol)
+	}
+
+	// For a BUY order, we use the Ask price to increase fill probability.
+	// A small buffer is added to cross the spread if necessary.
+	ceClosePrice := ceRow.CEAsk + 0.05
+	peClosePrice := peRow.PEAsk + 0.05
+
+	log.Printf("[SQF] Determined closing prices: CE Ask=%.2f -> Limit=%.2f, PE Ask=%.2f -> Limit=%.2f",
+		ceRow.CEAsk, ceClosePrice, peRow.PEAsk, peClosePrice)
+
+	// 4. Create closing intents as LIMIT orders.
 	ceIntent := OrderIntent{
 		IntentID:        fmt.Sprintf("INT_SQF_%s_CE_%d", tradeUID, time.Now().UnixMilli()),
 		TradeUID:        tradeUID,
 		Token:           trade.CEToken,
 		Symbol:          trade.Symbol,
 		ExchangeSegment: trade.ExchangeSegment,
-		Side:            "BUY", // Closing a SELL
+		Side:            "BUY",
 		Quantity:        int64(trade.CEQty),
-		OrderType:       "MARKET", // Using MARKET for simplicity to ensure exit
+		OrderType:       "LIMIT",
+		LimitPrice:      &ceClosePrice,
 		ProductType:     trade.ProductType,
 		LegType:         "CE",
 		Phase:           "MANUAL_SQF",
@@ -60,9 +88,10 @@ func (s *Service) ManualSquareOff(ctx context.Context, tradeUID string) ([]*Exec
 		Token:           trade.PEToken,
 		Symbol:          trade.Symbol,
 		ExchangeSegment: trade.ExchangeSegment,
-		Side:            "BUY", // Closing a SELL
+		Side:            "BUY",
 		Quantity:        int64(trade.PEQty),
-		OrderType:       "MARKET",
+		OrderType:       "LIMIT",
+		LimitPrice:      &peClosePrice,
 		ProductType:     trade.ProductType,
 		LegType:         "PE",
 		Phase:           "MANUAL_SQF",
@@ -74,7 +103,7 @@ func (s *Service) ManualSquareOff(ctx context.Context, tradeUID string) ([]*Exec
 	results := make(chan *ExecutionResult, len(intents))
 	var wg sync.WaitGroup
 
-	// 4. Execute both intents concurrently.
+	// 5. Execute both intents concurrently.
 	for _, intent := range intents {
 		wg.Add(1)
 		go func(i OrderIntent) {

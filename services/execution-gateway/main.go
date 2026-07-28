@@ -142,13 +142,13 @@ func main() {
 		log.Printf("[SQL STORE] POSTGRES_DSN empty; using memory store")
 	}
 
-	service := trading.NewService(store, appConfig.XTSClientID)
-	service.Snapshot = &trading.SnapshotClient{BaseURL: appConfig.SnapshotServiceURL}
-	service.LotSize = &trading.LotSizeClient{BaseURL: appConfig.ContractMasterURL}
+	snapshotProvider := &trading.SnapshotClient{BaseURL: appConfig.SnapshotServiceURL}
+	lotSizeProvider := &trading.LotSizeClient{BaseURL: appConfig.ContractMasterURL}
+	factory := trading.NewDefaultBrokerFactory()
+
+	service := trading.NewService(store, appConfig.XTSClientID, factory, snapshotProvider, lotSizeProvider)
 
 	xtsClient := xts.NewClient()
-
-	factory := trading.NewDefaultBrokerFactory()
 
 	factory.Register(
 		"XTS",

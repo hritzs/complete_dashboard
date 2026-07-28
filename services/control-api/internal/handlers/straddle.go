@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,37 +11,21 @@ import (
 	"net/url"
 	"strings"
 	"sync"
-	"time"
 
 	"trading-platform/services/control-api/internal/session"
 )
 
-type optionChainResponse struct {
-	Success bool            `json:"success"`
-	Data    optionChainData `json:"data"`
-	Error   string          `json:"error"`
-}
-
-type optionChainData struct {
-    Symbol            string           `json:"symbol"`
-    SyntheticFuture   float64          `json:"synthetic_future"`
-    FutureLtp         float64          `json:"future_ltp"`
-    ATM               float64          `json:"atm"`
-    Expiry            string           `json:"expiry"`
-    AvailableExpiries []string         `json:"available_expiries,omitempty"`
-    LotSize           int              `json:"lot_size"`
-    Chain             []optionChainRow `json:"chain"`
-}
-
 type optionChainRow struct {
-    Strike  float64 `json:"strike"`
-    CEToken int64   `json:"ce_token"`
-    PEToken int64   `json:"pe_token"`
-    CELtp   float64 `json:"ce_ltp"`
-    PELtp   float64 `json:"pe_ltp"`
-    CEDelta float64 `json:"ce_delta"`
-    PEDelta float64 `json:"pe_delta"`
-    IsATM   bool    `json:"is_atm"`
+	Strike  float64 `json:"strike"`
+	CEToken int64   `json:"ce_token"`
+	PEToken int64   `json:"pe_token"`
+	CELtp   float64 `json:"ce_ltp"`
+	PELtp   float64 `json:"pe_ltp"`
+	CEDelta float64 `json:"ce_delta"`
+	PEDelta float64 `json:"pe_delta"`
+	CEAsk   float64 `json:"ce_ask"`
+	PEAsk   float64 `json:"pe_ask"`
+	IsATM   bool    `json:"is_atm"`
 }
 
 type sellStraddleRequest struct {
@@ -170,183 +155,51 @@ func (h *Handlers) SellStraddleHandler(w http.ResponseWriter, r *http.Request) {
 		"delta_neutral", req.DeltaNeutral,
 	)
 
-	chain, err := h.fetchATMData(req.Symbol, req.TargetExpiry)
+	// Forward the request to the execution-gateway, which now handles all deployment logic.
+	// This ensures consistent behavior for expiry selection and order placement.
+	execGWURL := fmt.Sprintf("%s/api/trade/straddle", h.Config.ExecutionGatewayBaseURL)
+
+	// The execution-gateway expects a slightly different request format.
+	// We map our UI request to the gateway's DeployStraddleRequest.
+	gatewayReq := map[string]interface{}{
+		"user_id":             req.UserID,
+		"broker_name":         req.BrokerName,
+		"account_id":          accountID,
+		"exchange_segment":    exchangeSegment,
+		"symbol":              req.Symbol,
+		"lots":                req.Lots,
+		"delta_neutral":       req.DeltaNeutral,
+		"product_type":        req.ProductType,
+		"target_expiry":       req.TargetExpiry,
+		"ce_strike_price":     req.CEStrikePrice,
+		"pe_strike_price":     req.PEStrikePrice,
+		"ce_token":            req.CEToken,
+		"pe_token":            req.PEToken,
+		"lot_size":            req.LotSize,
+		"order_lots_per_call": 1, // Default for UI-driven trades
+	}
+
+	reqBody, err := json.Marshal(gatewayReq)
 	if err != nil {
-		w.WriteHeader(http.StatusBadGateway)
-		_ = json.NewEncoder(w).Encode(sellStraddleResponse{
-			Success: false,
-			Status:  "error",
-			Error:   fmt.Sprintf("failed to fetch option chain: %v", err),
-		})
+		http.Error(w, `{"message":"failed to create request for execution-gateway"}`, http.StatusInternalServerError)
 		return
 	}
 
-	slog.Info("Chain snapshot from snapshot-service",
-		"symbol", chain.Symbol,
-		"expiry", chain.Expiry,
-		"synthetic_future", chain.SyntheticFuture,
-		"future_ltp", chain.FutureLtp,
-		"atm", chain.ATM,
-	)
-
-	var ceRow, peRow *optionChainRow
-	var selectedStrike float64
-
-	useCustom := req.CEStrikePrice > 0 || req.PEStrikePrice > 0
-	if useCustom {
-		if req.CEStrikePrice <= 0 || req.PEStrikePrice <= 0 {
-			http.Error(w, `{"message":"both ceStrikePrice and peStrikePrice are required for custom sell"}`, http.StatusBadRequest)
-			return
-		}
-
-		ceRow, err = findRowByStrike(chain, req.CEStrikePrice)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"message":"CE custom strike lookup failed: %v"}`, err), http.StatusBadRequest)
-			return
-		}
-		peRow, err = findRowByStrike(chain, req.PEStrikePrice)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"message":"PE custom strike lookup failed: %v"}`, err), http.StatusBadRequest)
-			return
-		}
-
-		if req.CEStrikePrice == req.PEStrikePrice {
-			selectedStrike = float64(req.CEStrikePrice)
-		} else {
-			selectedStrike = (float64(req.CEStrikePrice) + float64(req.PEStrikePrice)) / 2
-		}
-	} else {
-		atmRow, err := findATMRow(chain)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"message":"ATM row not found: %v"}`, err), http.StatusBadRequest)
-			return
-		}
-		ceRow = atmRow
-		peRow = atmRow
-		selectedStrike = atmRow.Strike
-	}
-
-	ceToken := req.CEToken
-	peToken := req.PEToken
-	if ceToken == 0 && ceRow != nil {
-		ceToken = ceRow.CEToken
-	}
-	if peToken == 0 && peRow != nil {
-		peToken = peRow.PEToken
-	}
-	if ceToken == 0 || peToken == 0 {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(sellStraddleResponse{
-			Success: false,
-			Status:  "error",
-			Error:   "CE/PE tokens not available",
-		})
-		return
-	}
-
-	lotSize := req.LotSize
-	if lotSize == 0 && chain.LotSize > 0 {
-		lotSize = chain.LotSize
-	}
-	if lotSize == 0 {
-		if ls, err := h.getLotSize(req.Symbol, chain.Expiry); err == nil && ls > 0 {
-			lotSize = ls
-		}
-	}
-	if lotSize == 0 {
-		if details, ok := symbolDetails[req.Symbol]; ok && details.LotSize > 0 {
-			lotSize = details.LotSize
-		} else {
-			lotSize = 1
-		}
-	}
-
-	ceLots := req.Lots
-	peLots := req.Lots
-
-	ceDelta := 0.0
-	peDelta := 0.0
-
-	if ceRow != nil {
-		ceDelta = ceRow.CEDelta
-	}
-	if peRow != nil {
-		peDelta = peRow.PEDelta
-	}
-
-	if req.DeltaNeutral && ceDelta != 0 && peDelta != 0 {
-		ratio := math.Abs(ceDelta / peDelta)
-		peLots = int(math.Round(float64(ceLots) * ratio))
-		if peLots < 1 {
-			peLots = 1
-		}
-	}
-
-	ceQty := ceLots * lotSize
-	peQty := peLots * lotSize
-	netDelta := float64(ceQty)*ceDelta + float64(peQty)*peDelta
-
-	ceBid, err := h.getBestBidPrice(sess.UpstreamToken, sess.GCID, int(ceToken))
+	proxyReq, err := http.NewRequest(http.MethodPost, execGWURL, bytes.NewBuffer(reqBody))
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"message":"Failed to get CE bid: %v"}`, err), http.StatusBadGateway)
+		http.Error(w, `{"message":"failed to create proxy request"}`, http.StatusInternalServerError)
 		return
 	}
-	peBid, err := h.getBestBidPrice(sess.UpstreamToken, sess.GCID, int(peToken))
+	proxyReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := h.Client.Do(proxyReq)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"message":"Failed to get PE bid: %v"}`, err), http.StatusBadGateway)
+		handleProxyError(w, err, execGWURL)
 		return
 	}
+	defer resp.Body.Close()
 
-	var wg sync.WaitGroup
-	resultsCh := make(chan orderResult, 2)
-
-	if ceQty > 0 {
-		wg.Add(1)
-		go h.placeOrder(&wg, resultsCh, sess, exchangeSegment, "CE", ceQty, ceToken, "SELL", ceBid, req.ProductType)
-	}
-	if peQty > 0 {
-		wg.Add(1)
-		go h.placeOrder(&wg, resultsCh, sess, exchangeSegment, "PE", peQty, peToken, "SELL", peBid, req.ProductType)
-	}
-
-	wg.Wait()
-	close(resultsCh)
-
-	var finalResults []orderResult
-	okAll := true
-	for res := range resultsCh {
-		if res.Error != "" {
-			okAll = false
-		}
-		finalResults = append(finalResults, res)
-	}
-
-	status := "submitted"
-	msg := "sell straddle orders submitted"
-	if !okAll {
-		status = "partial"
-		msg = "one or more legs failed"
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(sellStraddleResponse{
-		Success:      okAll,
-		Status:       status,
-		Message:      msg,
-		Symbol:       req.Symbol,
-		Expiry:       chain.Expiry,
-		Strike:       selectedStrike,
-		CEToken:      ceToken,
-		PEToken:      peToken,
-		CEQuantity:   ceQty,
-		PEQuantity:   peQty,
-		CEEntryPrice: ceBid,
-		PEEntryPrice: peBid,
-		NetDelta:     netDelta,
-		Results:      finalResults,
-		CreatedAt:    time.Now().Format(time.RFC3339),
-	})
+	copyResponse(w, resp)
 }
 
 func (h *Handlers) fetchATMData(symbol, targetExpiry string) (optionChainData, error) {

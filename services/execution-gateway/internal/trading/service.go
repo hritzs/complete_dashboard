@@ -108,18 +108,19 @@ func (s *MemoryStore) DeleteRuntime(tradeUID string) {
 type Service struct {
 	Store           Store
 	DefaultClientID string
-	BrokerFactory   BrokerFactory
-	Snapshot        SnapshotProvider
+	BrokerFactory   BrokerFactory    // Corrected: This should be an interface type
+	Snapshot        SnapshotProvider // Corrected: This should be an interface type
 	LotSize         LotSizeProvider
 }
 
-func NewService(store Store, clientID string) *Service {
+// NewService now accepts interfaces for better testability and consistency.
+func NewService(store Store, clientID string, bf BrokerFactory, sp SnapshotProvider, lsp LotSizeProvider) *Service {
 	return &Service{
 		Store:           store,
 		DefaultClientID: clientID,
-		BrokerFactory:   NewDefaultBrokerFactory(),
-		Snapshot:        NewSnapshotClient(),
-		LotSize:         NewLotSizeClient(),
+		BrokerFactory:   bf,
+		Snapshot:        sp,
+		LotSize:         lsp,
 	}
 }
 
