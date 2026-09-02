@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: trading-engine
+  labels:
+    app: trading-engine
+spec:
+  # Allows C++ to directly bind to host network interfaces for zero-latency UDP Multicast
+  hostNetwork: true
+  containers:
+    - name: execution-gateway
+      image: trading-platform-go:latest
+      imagePullPolicy: Never # Adjust when pushing to a remote registry
+      command: ["execution-gateway"]
+      volumeMounts:
+        - name: ipc-volume
+          mountPath: /tmp
+
+    - name: trade-worker
+      image: trading-platform-cpp:latest
+      imagePullPolicy: Never # Adjust when pushing to a remote registry
+      command: ["trade-worker"]
+      securityContext:
+        privileged: true # Required to bypass NIC restrictions for packet capture
+      volumeMounts:
+        - name: ipc-volume
+          mountPath: /tmp
+        - name: shm-volume
+          mountPath: /dev/shm
+          
+  volumes:
+    # 1. Share IPC socket between C++ and Go
+    - name: ipc-volume
+      emptyDir: {}
+      
+    # 2. Lock-free Shared Memory Hub (tmpfs)
+    - name: shm-volume
+      emptyDir:
+        medium: Memory
+        sizeLimit: 1Gi

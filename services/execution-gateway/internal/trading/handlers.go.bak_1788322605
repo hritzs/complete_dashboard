@@ -1,0 +1,735 @@
+package trading
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+)
+
+type Handlers struct {
+	Service   *Service
+	Store     Store
+	Scheduler *BuildScheduler
+}
+
+func NewHandlers(service *Service, store Store) *Handlers {
+	return &Handlers{
+		Service:   service,
+		Store:     store,
+		Scheduler: NewBuildScheduler(service),
+	}
+}
+
+func (h *Handlers) Health(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "ok",
+		"mode":   "live",
+		"time":   time.Now().Format(time.RFC3339),
+	})
+}
+
+func (h *Handlers) DeployStraddle(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req DeployStraddleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(DeployStraddleResponse{
+			Success: false,
+			Error:   "invalid request body: " + err.Error(),
+		})
+		return
+	}
+
+	resp, err := h.Service.DeployStraddle(context.Background(), req)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(DeployStraddleResponse{
+			Success: false,
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (h *Handlers) ConfigBuild(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "method not allowed",
+		})
+		return
+	}
+
+	var req ConfigBuildRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "invalid request body: " + err.Error(),
+		})
+		return
+	}
+
+	if h.Scheduler == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "build scheduler is not initialized",
+		})
+		return
+	}
+
+	entryTime := strings.TrimSpace(req.EntryTime)
+	if entryTime == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "entry_time is required for config build",
+		})
+		return
+	}
+
+	runAt, err := ParseTodayIST(entryTime, time.Now())
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	now := time.Now().In(runAt.Location())
+	if !runAt.After(now) {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error": fmt.Sprintf(
+				"entry_time %s has passed; current local time is %s",
+				entryTime,
+				now.Format("15:04:05"),
+			),
+		})
+		return
+	}
+
+	dReq := DeployStraddleRequest{
+		UserID:           req.UserID,
+		BrokerName:       req.BrokerName,
+		AccountID:        req.AccountID,
+		ExchangeSegment:  req.ExchangeSegment,
+		Symbol:           req.Symbol,
+		Lots:             req.Size,
+		ProductType:      req.ProductType,
+		DeltaNeutral:     true,
+		TargetExpiry:     req.TargetExpiry,
+		OrderLotsPerCall: req.OrderLotsPerCall,
+	}
+
+	if dReq.Lots == 0 {
+		dReq.Lots = req.Lots
+	}
+
+	if dReq.Lots <= 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "lots must be greater than zero",
+		})
+		return
+	}
+
+	job, err := h.Scheduler.Schedule(BuildSourceConfig, runAt, dReq)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":      true,
+		"status":       "SCHEDULED",
+		"job_id":       job.ID,
+		"source":       job.Source,
+		"symbol":       dReq.Symbol,
+		"lots":         dReq.Lots,
+		"entry_time":   job.RunAt.Format("15:04:05"),
+		"scheduled_at": job.RunAt.Format(time.RFC3339),
+		"message":      "Config build scheduled; no broker order has been sent yet",
+	})
+}
+func (h *Handlers) CustomSell(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req CustomStraddleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "invalid request body: " + err.Error(),
+		})
+		return
+	}
+
+	resp, err := h.Service.DeployStraddle(context.Background(), DeployStraddleRequest{
+		UserID:           req.UserID,
+		BrokerName:       req.BrokerName,
+		AccountID:        req.AccountID,
+		ExchangeSegment:  req.ExchangeSegment,
+		Symbol:           req.Symbol,
+		Lots:             req.Lots,
+		CEStrikePrice:    req.CEStrikePrice,
+		PEStrikePrice:    req.PEStrikePrice,
+		DeltaNeutral:     req.DeltaNeutral,
+		ProductType:      req.ProductType,
+		OrderLotsPerCall: req.OrderLotsPerCall,
+	})
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (h *Handlers) SquareOff(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 4 {
+		http.Error(w, "invalid trade square-off path", http.StatusBadRequest)
+		return
+	}
+	tradeUID := parts[2]
+
+	if err := h.Service.SquareOff(tradeUID, "manual"); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	tr, _ := h.Store.LoadTrade(tradeUID)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":   true,
+		"trade_uid": tradeUID,
+		"status":    tr.Status,
+	})
+}
+
+func (h *Handlers) PartialSquareOff(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 4 {
+		http.Error(w, "invalid trade path", http.StatusBadRequest)
+		return
+	}
+	tradeUID := parts[2]
+
+	var req PartialSquareOffRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req.Percentage = 50
+	}
+
+	if err := h.Service.PartialSquareOff(tradeUID, req.Percentage); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": fmt.Sprintf("Partial square-off for %s completed", tradeUID),
+	})
+}
+
+func (h *Handlers) ManualHedge(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 4 {
+		http.Error(w, "invalid trade path", http.StatusBadRequest)
+		return
+	}
+	tradeUID := parts[2]
+
+	if err := h.Service.ManualHedge(context.Background(), tradeUID); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": fmt.Sprintf("Manual hedge for %s completed", tradeUID),
+	})
+}
+
+func (h *Handlers) ManualRoll(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 4 {
+		http.Error(w, "invalid trade path", http.StatusBadRequest)
+		return
+	}
+	tradeUID := parts[2]
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":   false,
+		"trade_uid": tradeUID,
+		"error":     "manual roll not implemented yet in Go runtime",
+	})
+}
+
+func (h *Handlers) ManualVerify(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 4 {
+		http.Error(w, "invalid trade path", http.StatusBadRequest)
+		return
+	}
+	tradeUID := parts[2]
+
+	snap, ok := h.Store.LoadSnapshot(tradeUID)
+	if !ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "snapshot not found",
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"snapshot": snap,
+	})
+}
+
+func (h *Handlers) CancelAction(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 4 {
+		http.Error(w, "invalid trade path", http.StatusBadRequest)
+		return
+	}
+	tradeUID := parts[2]
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":   false,
+		"trade_uid": tradeUID,
+		"error":     "cancel action not implemented yet in Go runtime",
+	})
+}
+
+func (h *Handlers) GetStraddles(w http.ResponseWriter, r *http.Request) {
+	trades := h.Store.AllTrades()
+	// Enrich trades with latest snapshot data for PointsOut/PointsAllowed
+	for i := range trades {
+		if snap, ok := h.Store.LoadSnapshot(trades[i].TradeUID); ok {
+			trades[i].PointsOut = snap.PointsOut
+			trades[i].PointsAllowed = snap.PointsAllowed
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":   true,
+		"count":     len(trades),
+		"straddles": trades,
+	})
+}
+
+func (h *Handlers) GetActiveStraddles(w http.ResponseWriter, r *http.Request) {
+	all := h.Store.AllTrades()
+	active := make([]StoredTrade, 0)
+
+	for _, tr := range all {
+		if tr.Status == "ACTIVE" || tr.Status == "BUILDING" || tr.Status == "PARTIAL" {
+			// Enrich with snapshot data
+			if snap, ok := h.Store.LoadSnapshot(tr.TradeUID); ok {
+				tr.PointsOut = snap.PointsOut
+				tr.PointsAllowed = snap.PointsAllowed
+			}
+			active = append(active, tr)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":   true,
+		"count":     len(active),
+		"straddles": active,
+	})
+}
+
+func (h *Handlers) GetSnapshot(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 3 {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	tradeUID := parts[2]
+
+	snap, ok := h.Store.LoadSnapshot(tradeUID)
+	if !ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "snapshot not found",
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"data":    snap,
+	})
+}
+
+func (h *Handlers) GetPnL(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 3 {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	tradeUID := parts[2]
+
+	snap, ok := h.Store.LoadSnapshot(tradeUID)
+	if !ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "snapshot not found",
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"data": map[string]interface{}{
+			"total_pnl":      snap.TotalPNL,
+			"realized_pnl":   snap.RealizedPNL,
+			"unrealized_pnl": snap.UnrealizedPNL,
+			"net_delta":      snap.NetDelta,
+			"net_gamma":      snap.NetGamma,
+			"net_theta":      snap.NetTheta,
+			"net_vega":       snap.NetVega,
+		},
+	})
+}
+
+func (h *Handlers) GetOrders(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 3 {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	tradeUID := parts[2]
+
+	intents := h.Store.LoadIntents(tradeUID)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"count":   len(intents),
+		"orders":  intents,
+	})
+}
+
+func (h *Handlers) TradeStatus(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 3 {
+		http.Error(w, "invalid trade path", http.StatusBadRequest)
+		return
+	}
+	tradeUID := parts[2]
+
+	tr, ok := h.Store.LoadTrade(tradeUID)
+	if !ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "trade not found",
+		})
+		return
+	}
+
+	intents := h.Store.LoadIntents(tradeUID)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"trade":   tr,
+		"intents": intents,
+	})
+}
+
+// ModifyTradeRequest holds fields that can be updated for an active trade
+type ModifyTradeRequest struct {
+	SLPointsPerLot *float64 `json:"sl_points_per_lot,omitempty"`
+
+	// Minute-end normalized risk controls.
+	SpotStopLossBps             *float64 `json:"spot_stop_loss_bps,omitempty"`
+	TakeProfitPointsPerStraddle *float64 `json:"take_profit_points_per_straddle,omitempty"`
+	AutoRiskExecutionEnabled    *bool    `json:"auto_risk_execution_enabled,omitempty"`
+
+	StraddleDiv                  *float64 `json:"straddle_div,omitempty"`
+	HedgeDiv                     *float64 `json:"hedge_div,omitempty"`
+	HedgeThresholdDelta          *float64 `json:"hedge_threshold_delta,omitempty"`
+	SquareOffTime                *string  `json:"square_off_time,omitempty"` // "15:37:00"
+	ForceOneLotHedgeTest         *bool    `json:"force_one_lot_hedge_test,omitempty"`
+	HedgePointsFloor             *float64 `json:"hedge_points_floor,omitempty"`
+	ForceHedgeRegardlessOfPoints *bool    `json:"force_hedge_regardless_of_points,omitempty"`
+}
+
+func (h *Handlers) ModifyTrade(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) != 4 || parts[0] != "api" || parts[1] != "trade" || parts[3] != "modify" {
+		http.Error(w, "invalid modify trade path", http.StatusBadRequest)
+		return
+	}
+	tradeUID := parts[2]
+
+	var req ModifyTradeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	tr, ok := h.Store.LoadTrade(tradeUID)
+	if !ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "trade not found",
+		})
+		return
+	}
+
+	// Only allow modification of active trades
+	if tr.Status != "ACTIVE" && tr.Status != "BUILDING" && tr.Status != "PARTIAL" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "cannot modify closed trade",
+		})
+		return
+	}
+
+	// Update config fields
+	if req.SLPointsPerLot != nil {
+		tr.Config.SLPointsPerLot = *req.SLPointsPerLot
+	}
+
+	if req.SpotStopLossBps != nil {
+		if *req.SpotStopLossBps < 0 {
+			http.Error(w, "spot_stop_loss_bps must be >= 0", http.StatusBadRequest)
+			return
+		}
+		tr.Config.SpotStopLossBps = *req.SpotStopLossBps
+	}
+
+	if req.TakeProfitPointsPerStraddle != nil {
+		if *req.TakeProfitPointsPerStraddle < 0 {
+			http.Error(w, "take_profit_points_per_straddle must be >= 0", http.StatusBadRequest)
+			return
+		}
+		tr.Config.TakeProfitPointsPerStraddle =
+			*req.TakeProfitPointsPerStraddle
+	}
+
+	if req.AutoRiskExecutionEnabled != nil {
+		tr.Config.AutoRiskExecutionEnabled = *req.AutoRiskExecutionEnabled
+	}
+
+	if req.StraddleDiv != nil {
+		tr.Config.StraddleDiv = *req.StraddleDiv
+	}
+	if req.HedgeDiv != nil {
+		tr.Config.HedgeDiv = *req.HedgeDiv
+	}
+	if req.HedgeThresholdDelta != nil {
+		tr.Config.HedgeThresholdDelta = *req.HedgeThresholdDelta
+	}
+
+	if req.ForceOneLotHedgeTest != nil {
+		tr.Config.ForceOneLotHedgeTest = *req.ForceOneLotHedgeTest
+		tr.Config.HedgeTestExecuted = false
+	}
+
+	if req.HedgePointsFloor != nil {
+		tr.Config.HedgePointsFloor = *req.HedgePointsFloor
+	}
+	if req.SquareOffTime != nil {
+		// Parse time string "15:37:00" into time.Time
+		t, err := time.Parse("15:04:05", *req.SquareOffTime)
+		if err == nil {
+			now := time.Now()
+			tr.Config.SquareOffTime = time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), t.Second(), 0, now.Location())
+		}
+	}
+
+	if req.ForceHedgeRegardlessOfPoints != nil {
+		tr.Config.ForceHedgeRegardlessOfPoints = *req.ForceHedgeRegardlessOfPoints
+		tr.Config.HedgeTestExecuted = false
+	}
+
+	tr.LastUpdateTime = time.Now()
+	h.Store.UpdateTrade(tr)
+
+	// Reload from DB and refresh runtime to ensure in-memory cache
+	// matches the persisted state. This prevents stale configs after
+	// modify and avoids needing a restart.
+	if refreshed, ok := h.Store.LoadTrade(tradeUID); ok {
+		if rt, ok := h.Store.LoadRuntime(tradeUID); ok {
+			rt.Trade = refreshed
+			h.Store.SaveRuntime(rt)
+		}
+		// Return the fresh DB version in the response
+		tr = refreshed
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "trade updated",
+		"trade":   tr,
+	})
+}
+
+func (h *Handlers) ResetTradingData(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "method not allowed",
+		})
+		return
+	}
+
+	if strings.ToLower(strings.TrimSpace(os.Getenv("ENABLE_DB_RESET"))) != "true" {
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "database reset is disabled; set ENABLE_DB_RESET=true temporarily",
+		})
+		return
+	}
+
+	var req struct {
+		Confirmation string `json:"confirmation"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "invalid request body",
+		})
+		return
+	}
+
+	if strings.TrimSpace(req.Confirmation) != "DELETE ALL TRADES" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "confirmation must be exactly DELETE ALL TRADES",
+		})
+		return
+	}
+
+	resetter, ok := h.Store.(interface {
+		ResetTradingData() (map[string]int64, error)
+	})
+	if !ok {
+		w.WriteHeader(http.StatusNotImplemented)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "configured store does not support reset",
+		})
+		return
+	}
+
+	deleted, err := resetter.ResetTradingData()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "trading data cleared",
+		"deleted": deleted,
+	})
+}
+
+func (h *Handlers) BrokerSync(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	// Trigger state/position reconciliation
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Broker position synchronization triggered successfully.",
+	})
+}

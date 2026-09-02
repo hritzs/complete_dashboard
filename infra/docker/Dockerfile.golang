@@ -1,0 +1,18 @@
+# Stage 1: Build
+FROM golang:bookworm AS builder
+
+RUN apt-get update && apt-get install -y libzmq3-dev pkg-config
+
+WORKDIR /app
+COPY . .
+
+# Build the Go Execution Gateway
+RUN cd services/execution-gateway && go build -o /app/bin/execution-gateway main.go
+
+# Stage 2: Runtime
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y libzmq5 ca-certificates && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/bin/execution-gateway /usr/local/bin/
+
+CMD ["execution-gateway"]

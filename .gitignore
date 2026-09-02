@@ -1,0 +1,42 @@
+.env
+
+# Build artifacts
+build/
+build_worker/
+bin/
+
+# Logs
+logs/
+*.log
+*.out
+
+# Node
+ui/node_modules/
+ui/dist/
+
+# Go
+*.test
+
+# Local envs
+.env
+.env.local
+
+# Backup files
+*.bak
+*.bak.*
+*.backup
+
+# Git recovery files
+.git.broken.worktree.backup
+.git.pointer.bak.*
+
+# OS/editor
+.vscode/
+.DS_Store
+
+# Temporary dumps
+selected_dump_part_*
+trading-first-dump.txt
+control-api-complete-dump.txt
+copilot_decoder_dump.txt
+

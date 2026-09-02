@@ -1,0 +1,48 @@
+ROOT: /home/ubuntu/Desktop/api_gs/trading-platform/services/execution-gateway
+GENERATED: 2026-06-17 17:39:10 IST
+
+===== FILE: services/control-api/internal/execution/interfaces.go =====
+<EMPTY FILE>
+
+===== FILE: services/control-api/internal/execution/models.go =====
+<EMPTY FILE>
+
+===== FILE: services/control-api/internal/execution/registry.go =====
+<EMPTY FILE>
+
+===== FILE: services/control-api/internal/execution/service.go =====
+<EMPTY FILE>
+
+===== FILE: services/control-api/internal/handlers/straddle.go =====
+<EMPTY FILE>
+
+===== FILE: services/control-api/internal/config/config.go =====
+<EMPTY FILE>
+
+===== FILE: services/execution-gateway/internal/brokers/xts/client.go =====
+<EMPTY FILE>
+
+===== FILE: services/execution-gateway/internal/brokers/xts/auth.go =====
+<EMPTY FILE>
+
+===== FILE: services/execution-gateway/internal/brokers/xts/orders.go =====
+<EMPTY FILE>
+
+===== FILE: services/execution-gateway/internal/brokers/xts/quotes.go =====
+<EMPTY FILE>
+
+===== FILE: services/execution-gateway/internal/brokers/greek/client.go =====
+<EMPTY FILE>
+
+===== FILE: services/execution-gateway/internal/brokers/greek/auth.go =====
+<EMPTY FILE>
+
+===== FILE: services/execution-gateway/internal/brokers/greek/orders.go =====
+<EMPTY FILE>
+
+===== FILE: services/execution-gateway/internal/brokers/greek/quotes.go =====
+<EMPTY FILE>
+
+===== FILE: services/execution-gateway/internal/router/router.go =====
+<EMPTY FILE>
+

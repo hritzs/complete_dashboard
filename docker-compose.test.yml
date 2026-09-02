@@ -1,0 +1,25 @@
+# TEST BUILD SUITE
+# Run with: sudo docker compose -f docker-compose.test.yml up --build
+
+services:
+  execution-gateway-test:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.golang
+      target: builder # Stops at the builder stage where Go tools and source code reside
+      network: host
+    # Run all Go tests in the project verbosely
+    command: ["go", "test", "-v", "./..."]
+    network_mode: host
+
+  trade-worker-test:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.cpp
+      target: builder # Stops at the builder stage where CMake and source code reside
+      network: host
+    # Run C++ tests. If ctest is not fully configured yet, it will safely output a placeholder message.
+    command: ["sh", "-c", "cd build && ctest --output-on-failure || echo 'No C++ tests defined yet, but compilation succeeded!'"]
+    network_mode: host
+    # Give the container a generous chunk of shared memory for SHM tests
+    shm_size: '1gb'

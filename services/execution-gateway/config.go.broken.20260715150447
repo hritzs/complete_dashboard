@@ -1,0 +1,61 @@
+package main
+
+import (
+	"os"
+	"strconv"
+	"strings"
+)
+
+type Config struct {
+	ControlAPIPort     string
+	SnapshotServiceURL string
+	ContractMasterURL  string
+	ZMQEndpoint        string
+	XTSClientID        string
+
+	GreekAuthURL  string
+	GreekRestURL  string
+	GreekUsername string
+	GreekPassword string
+	GreekClientID string
+	GreekBrokerID int
+	GreekPanDob   string
+}
+
+func LoadConfig() *Config {
+	return &Config{
+		Contro*APIPort:     getEnv("CONTROL_API_P*RT", ":8005"),
+		SnapshotServiceUR*: getEnv("SNAPSHOT_SERVICE_URL", "*ttp://127.0.0.1:8003"),
+		Contract*asterURL:  getEnv("CONTRACT_MASTER*URL", "http://127.0.0.1:8010"),
+		*MQEndpoint:        getEnv("ZMQ_END*OINT", "tcp://127.0.0.1:5557"),
+		*TSClientID:        getEnv("XTS_CLI*NT_ID", ""),
+
+		GreekAuthURL:  get*nv("GREEK_API_AUTH_URL", "http://greekapi.greeksoft.in:3001"),
+		Gree*RestURL:  getEnv("GREEK_API_REST_U*L", "http://restapi.greeksoft.in:3434"),
+		GreekUsername: getEnv("GRE*K_USERNAME", ""),
+		GreekPassword:*getEnv("GREEK_PASSWORD", ""),
+		Gr*ekClientID: getEnv("GREEK_CLIENT_I*", getEnv("GREEK_USERNAME", "")),
+*	GreekBrokerID: getEnvInt("GREEK_B*OKER_ID", 22),
+		GreekPanDob:   ge*Env("GREEK_PAN_DOB", "01/01/1901")*
+	}
+}
+
+func getEnv(k, d string) st*ing {
+	v := strings.TrimSpace(os.G*tenv(k))
+	if v == "" {
+		return d
+*}
+	return v
+}
+
+func getEnvInt(k st*ing, d int) int {
+	v := strings.Tr*mSpace(os.Getenv(k))
+	if v == "" {*		return d
+	}
+
+	n, err := strconv.*toi(v)
+	if err != nil {
+		return d*	}
+
+	return n
+}

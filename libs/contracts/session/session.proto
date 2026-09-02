@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package session;
+
+option go_package = "trading-platform/libs/contracts/session";
+
+// SessionService provides access to live, authenticated broker sessions.
+service SessionService {
+  // GetSession retrieves a session by its configured name.
+  rpc GetSession(GetSessionRequest) returns (GetSessionResponse) {}
+}
+
+message GetSessionRequest {
+  string name = 1; // e.g., "trading" or "market_data"
+}
+
+message GetSessionResponse {
+  string session_token = 1;
+  string user_id = 2;
+  string gcid = 3;
+  string session_id = 4; // The WebSocket session ID from getFlagValues
+  string iris_url = 5;   // The full URL for the interactive (Iris) WebSocket
+  string apollo_url = 6; // The full URL for the market data (Apollo) WebSocket
+  string error = 7;      // Populated if the session is not available or an error occurred.
+}
