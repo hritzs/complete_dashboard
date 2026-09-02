@@ -267,6 +267,19 @@ func (s *PostgresBackedStore) insertOrderIntent(tradeUID string, intent OrderInt
 		return
 	}
 
+	exchangeSegment := strings.TrimSpace(intent.ExchangeSegment)
+	brokerName := strings.TrimSpace(intent.BrokerName)
+	if exchangeSegment == "" || brokerName == "" {
+		log.Printf(
+			"[SQL STORE] refusing order insert: missing exchange_segment or broker_name trade_uid=%s intent_id=%s exchange_segment=%q broker_name=%q",
+			tradeUID,
+			intent.IntentID,
+			exchangeSegment,
+			brokerName,
+		)
+		return
+	}
+
 	var tradeID int64
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT id
@@ -289,7 +302,7 @@ func (s *PostgresBackedStore) insertOrderIntent(tradeUID string, intent OrderInt
 		AND exchange = $2
 	`,
 		intent.Token,
-		"NSEFO",
+		exchangeSegment,
 	).Scan(&contractID)
 
 	if err != nil {
@@ -298,7 +311,7 @@ func (s *PostgresBackedStore) insertOrderIntent(tradeUID string, intent OrderInt
 			tradeUID,
 			intent.IntentID,
 			intent.Token,
-			"NSEFO",
+			exchangeSegment,
 			err,
 		)
 		return
@@ -310,7 +323,7 @@ func (s *PostgresBackedStore) insertOrderIntent(tradeUID string, intent OrderInt
 			tradeUID,
 			intent.IntentID,
 			intent.Token,
-			"NSEFO",
+			exchangeSegment,
 		)
 		return
 	}
@@ -362,7 +375,7 @@ func (s *PostgresBackedStore) insertOrderIntent(tradeUID string, intent OrderInt
 		intent.IntentID,
 		orderUID,
 		tradeUID,
-		"NSEFO",
+		brokerName,
 		intent.AccountID,
 		intent.Side,
 		intent.Quantity,
