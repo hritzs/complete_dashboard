@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-        "log"
+	"log"
 	"strings"
 	"time"
 )
@@ -20,7 +20,7 @@ func (s *PostgresBackedStore) PersistVerifiedFills(
 ) (FillPersistenceReport, error) {
 	report := FillPersistenceReport{}
 
-        log.Printf("📦 PersistVerifiedFills called: broker=%s account=%s fills=%d", brokerName, accountID, len(fills))
+	log.Printf("📦 PersistVerifiedFills called: broker=%s account=%s fills=%d", brokerName, accountID, len(fills))
 	if s == nil || s.db == nil {
 		return report, fmt.Errorf("postgres store is unavailable")
 	}
@@ -51,7 +51,7 @@ func (s *PostgresBackedStore) PersistVerifiedFills(
 		)
 		if err != nil {
 			if strings.Contains(err.Error(), "no local order") {
-                log.Printf("📦 persistVerifiedFill result: broker_order_id=%s inserted=%t err=%v", fill.BrokerOrderID, inserted, err)
+				log.Printf("📦 persistVerifiedFill result: broker_order_id=%s inserted=%t err=%v", fill.BrokerOrderID, inserted, err)
 				report.Unmatched = append(report.Unmatched, fill.BrokerOrderID)
 				continue
 			}
@@ -94,30 +94,38 @@ func (s *PostgresBackedStore) persistVerifiedFill(
 	}()
 
 	var (
-		orderID    int64
-		tradeID    int64
-		contractID int64
-		orderSide  string
+		orderID       int64
+		tradeID       int64
+		contractID    int64
+		orderSide     string
+		orderQuantity int64
 	)
 
+	// Scoped to broker_name + account_id: broker_order_id alone has no
+	// uniqueness guarantee at the schema level, so an unscoped lookup could
+	// nondeterministically match another account's order on collision.
 	err = tx.QueryRowContext(ctx, `
 		SELECT
 			id,
 			trade_id,
 			contract_id,
-			side
+			side,
+			quantity
 		FROM orders
 		WHERE broker_order_id = $1
-		  
-		  
+		  AND broker_name = $2
+		  AND account_id = $3
 		FOR UPDATE
 	`,
 		fill.BrokerOrderID,
+		brokerName,
+		accountID,
 	).Scan(
 		&orderID,
 		&tradeID,
 		&contractID,
 		&orderSide,
+		&orderQuantity,
 	)
 	if err == sql.ErrNoRows {
 		return false, fmt.Errorf("no local order for broker order %s", fill.BrokerOrderID)
@@ -149,14 +157,16 @@ func (s *PostgresBackedStore) persistVerifiedFill(
 		return false, fmt.Errorf("marshal broker fill: %w", err)
 	}
 
-	// Greeksoft currently reports aggregate order-book fills. This stable ID
-	// makes repeated reconciliation idempotent for an unchanged aggregate.
+	// Greeksoft reports aggregate/cumulative order-book fills per broker
+	// order, not incremental deltas. The fill_id is keyed on broker+order
+	// only (Model A: one row holding the latest cumulative snapshot) so a
+	// later, larger cumulative report updates the existing row instead of
+	// inserting a second row that would double-count in
+	// recomputeTradeLegFromPersistedFills.
 	fillID := fmt.Sprintf(
-		"%s:%s:%d:%.4f",
+		"%s:%s",
 		brokerName,
 		fill.BrokerOrderID,
-		fill.FilledQty,
-		fill.AveragePrice,
 	)
 
 	// Greeksoft BrokerTime is intentionally zero until its format is validated.
@@ -174,7 +184,13 @@ func (s *PostgresBackedStore) persistVerifiedFill(
 			raw_broker_fill
 		)
 		VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)
-		ON CONFLICT (fill_id, order_id) DO NOTHING
+		ON CONFLICT (fill_id, order_id) DO UPDATE SET
+			fill_quantity = EXCLUDED.fill_quantity,
+			fill_price = EXCLUDED.fill_price,
+			fill_timestamp = EXCLUDED.fill_timestamp,
+			raw_broker_fill = EXCLUDED.raw_broker_fill
+		WHERE fills.fill_quantity IS DISTINCT FROM EXCLUDED.fill_quantity
+		   OR fills.fill_price IS DISTINCT FROM EXCLUDED.fill_price
 	`,
 		orderID,
 		tradeID,
@@ -194,20 +210,42 @@ func (s *PostgresBackedStore) persistVerifiedFill(
 	}
 
 	if rowsAffected == 0 {
+		// The cumulative snapshot is unchanged since the last reconciliation
+		// pass; nothing new to propagate to orders/trade_legs.
 		if err := tx.Commit(); err != nil {
 			return false, fmt.Errorf("commit existing fill transaction: %w", err)
 		}
 		return false, nil
 	}
 
+	newFilledQty := fill.FilledQty
+	newPendingQty := orderQuantity - newFilledQty
+	if newPendingQty < 0 {
+		newPendingQty = 0
+	}
+	newStatus := "PARTIALLY_FILLED"
+	if newFilledQty >= orderQuantity {
+		newStatus = "FILLED"
+	}
+
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE orders
 		SET
-			status = 'FILLED',
+			status = $2,
+			filled_qty = $3,
+			pending_qty = $4,
+			avg_fill_price = $5,
+			average_price = $5,
 			updated_at = NOW()
 		WHERE id = $1
-	`, orderID); err != nil {
-		return false, fmt.Errorf("mark local order %d filled: %w", orderID, err)
+	`,
+		orderID,
+		newStatus,
+		newFilledQty,
+		newPendingQty,
+		fill.AveragePrice,
+	); err != nil {
+		return false, fmt.Errorf("update local order %d fill state: %w", orderID, err)
 	}
 
 	if err := ensureTradeLeg(
