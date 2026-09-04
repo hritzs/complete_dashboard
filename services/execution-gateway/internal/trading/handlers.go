@@ -385,7 +385,7 @@ func (h *Handlers) GetActiveStraddles(w http.ResponseWriter, r *http.Request) {
 	active := make([]StoredTrade, 0)
 
 	for _, tr := range all {
-		if tr.Status == "ACTIVE" || tr.Status == "BUILDING" || tr.Status == "PARTIAL" {
+		if tr.Status == "ACTIVE" || tr.Status == "BUILDING" || tr.Status == "PARTIAL" || tr.Status == "RECONCILIATION_REQUIRED" {
 			// Enrich with snapshot data
 			if snap, ok := h.Store.LoadSnapshot(tr.TradeUID); ok {
 				tr.PointsOut = snap.PointsOut
@@ -563,7 +563,7 @@ func (h *Handlers) ModifyTrade(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Only allow modification of active trades
-	if tr.Status != "ACTIVE" && tr.Status != "BUILDING" && tr.Status != "PARTIAL" {
+	if tr.Status != "ACTIVE" && tr.Status != "BUILDING" && tr.Status != "PARTIAL" && tr.Status != "RECONCILIATION_REQUIRED" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{

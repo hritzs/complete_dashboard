@@ -767,6 +767,7 @@
               status === "PENDING_FILL" ||
               status === "BUILDING" ||
               status === "PARTIAL" ||
+              status === "RECONCILIATION_REQUIRED" ||
               status === "PARTIAL-SQF" ||
               status === "HEDGING" ||
               status === "SQUARING-OFF";
