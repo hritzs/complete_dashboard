@@ -448,10 +448,24 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 		buildOutcome.FullyVerified(),
 	)
 
-	trade.Status = "ACTIVE"
+	switch {
+	case buildOutcome.FullyVerified():
+		trade.Status = "ACTIVE"
+
+	case buildOutcome.SubmittedCount > 0:
+		trade.Status = "RECONCILIATION_REQUIRED"
+
+	default:
+		trade.Status = "FAILED"
+	}
+
 	trade.LastUpdateTime = time.Now()
 	s.Store.UpdateTrade(trade)
-	s.startRuntime(trade)
+
+	if trade.Status == "ACTIVE" {
+
+		s.startRuntime(trade)
+	}
 
 	return &DeployStraddleResponse{
 		Success:    true,
