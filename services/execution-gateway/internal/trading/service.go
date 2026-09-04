@@ -516,7 +516,7 @@ func (s *Service) executeBuild(
 
 	for chunkIdx, chunk := range chunks {
 		ordersToProcess := append([]ExecOrder(nil), chunk...)
-		maxChunkRetries := 3
+		maxChunkRetries := 1
 
 		for retryIter := 0; retryIter < maxChunkRetries && len(ordersToProcess) > 0; retryIter++ {
 			if retryIter > 0 {
