@@ -588,6 +588,43 @@ func (s *Service) executeBuild(ctx context.Context, executor Executor, trade Sto
 		len(submittedBrokerOrderIDs),
 	)
 
+	if provider, ok := executor.(VerifiedFillsProvider); ok &&
+		len(submittedBrokerOrderIDs) > 0 {
+
+		summary, err := s.verifyAndPersistTradeFills(
+			ctx,
+			provider,
+			trade.BrokerName,
+			trade.AccountID,
+			submittedBrokerOrderIDs,
+			trade.CEToken,
+			trade.PEToken,
+			int64(trade.CEQty),
+			int64(trade.PEQty),
+			6,
+			800*time.Millisecond,
+		)
+
+		if err != nil {
+			log.Printf(
+				"⚠ BUILD verification logging trade=%s err=%v",
+				trade.TradeUID,
+				err,
+			)
+		} else {
+			log.Printf(
+				"✅ BUILD verification summary trade=%s verified_ce=%d/%d verified_pe=%d/%d unfilled_ce=%d unfilled_pe=%d",
+				trade.TradeUID,
+				summary.VerifiedCE,
+				summary.RequestedCE,
+				summary.VerifiedPE,
+				summary.RequestedPE,
+				summary.UnfilledCE,
+				summary.UnfilledPE,
+			)
+		}
+	}
+
 	return nil
 }
 
