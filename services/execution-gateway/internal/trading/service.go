@@ -468,6 +468,11 @@ func (s *Service) executeBuild(ctx context.Context, executor Executor, trade Sto
 		sellBuffer = 2.0
 	}
 
+	// Collect successfully acknowledged broker order IDs for the
+	// trade-level verified-fill reconciliation introduced in Stage 4.
+	// This patch does not yet change existing execution behavior.
+	submittedBrokerOrderIDs := make(map[string]struct{})
+
 	for chunkIdx, chunk := range chunks {
 		ordersToProcess := append([]ExecOrder(nil), chunk...)
 		maxChunkRetries := 3
@@ -517,6 +522,10 @@ func (s *Service) executeBuild(ctx context.Context, executor Executor, trade Sto
 					log.Printf("❌ BUILD chunk=%d retry=%d leg=%s err=%v", chunkIdx+1, retryIter+1, order.OptionType, err)
 					nextRetry = append(nextRetry, order)
 					continue
+				}
+
+				if res != nil && res.BrokerOrderID != "" {
+					submittedBrokerOrderIDs[res.BrokerOrderID] = struct{}{}
 				}
 
 				// Extract true fill price for trade entry values
@@ -572,6 +581,12 @@ func (s *Service) executeBuild(ctx context.Context, executor Executor, trade Sto
 			return fmt.Errorf("build chunk %d failed after retries", chunkIdx+1)
 		}
 	}
+
+	log.Printf(
+		"BUILD submission collection trade=%s broker_order_ids=%d stage4_verified_activation=false",
+		trade.TradeUID,
+		len(submittedBrokerOrderIDs),
+	)
 
 	return nil
 }
