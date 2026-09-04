@@ -549,64 +549,54 @@ func (s *Service) executeBuild(
 				lp := order.LimitPrice
 				intent.LimitPrice = &lp
 
-				s.Store.AppendIntent(trade.TradeUID, intent)
+				brokerOrderID, status, submitErr := s.submitOrderIntent(
+					ctx,
+					executor,
+					trade.TradeUID,
+					intent,
+				)
+				if submitErr != nil {
+					outcome.SubmissionErrors++
 
-				res, err := executor.ExecuteOrderIntent(ctx, intent)
-				if err != nil {
-					log.Printf("❌ BUILD chunk=%d retry=%d leg=%s err=%v", chunkIdx+1, retryIter+1, order.OptionType, err)
+					if outcome.FirstError == nil {
+						outcome.FirstError = submitErr
+					}
+
+					log.Printf(
+						"BUILD submission unresolved trade=%s chunk=%d retry=%d leg=%s token=%d qty=%d err=%v",
+						trade.TradeUID,
+						chunkIdx+1,
+						retryIter+1,
+						order.OptionType,
+						order.Token,
+						order.Quantity,
+						submitErr,
+					)
+
 					nextRetry = append(nextRetry, order)
 					continue
 				}
 
-				if res != nil && res.BrokerOrderID != "" {
-					if _, exists := submittedBrokerOrderIDs[res.BrokerOrderID]; !exists {
-						outcome.SubmittedCount++
-					}
-					submittedBrokerOrderIDs[res.BrokerOrderID] = struct{}{}
+				if _, exists := submittedBrokerOrderIDs[brokerOrderID]; !exists {
+					outcome.SubmittedCount++
 				}
 
-				// Extract true fill price for trade entry values
-				executionPrice := res.FillPrice
-				if executionPrice <= 0 && intent.LimitPrice != nil {
-					executionPrice = *intent.LimitPrice
-				}
-				if executionPrice <= 0 {
-					executionPrice = intent.ExpectedPrice
-				}
+				submittedBrokerOrderIDs[brokerOrderID] = struct{}{}
 
-				if intent.LegType == "CE" {
-					trade.CELtp = executionPrice
-				} else if intent.LegType == "PE" {
-					trade.PELtp = executionPrice
-				}
+				log.Printf(
+					"BUILD submitted trade=%s chunk=%d retry=%d leg=%s broker_order_id=%s status=%s fill_assumed=false",
+					trade.TradeUID,
+					chunkIdx+1,
+					retryIter+1,
+					order.OptionType,
+					brokerOrderID,
+					status,
+				)
 
-				// Update the Postgres DB record via dynamic interface
-				if updater, ok := s.Store.(interface {
-					UpdateTradeEntryPrices(tradeUID string, cePrice float64, pePrice float64)
-				}); ok {
-					updater.UpdateTradeEntryPrices(trade.TradeUID, trade.CELtp, trade.PELtp)
-				}
-
-				if updater, ok := s.Store.(interface {
-					MarkOrderSubmitted(intentID string, brokerOrderID string, status string, rawResponse string)
-				}); ok {
-					updater.MarkOrderSubmitted(intent.IntentID, res.BrokerOrderID, res.Status, res.RawResponse)
-				}
-
-				// Record the execution fill so avg_entry_price is populated
-				if execer, ok := s.Store.(*PostgresBackedStore); ok {
-					execer.MarkOrderExecution(
-						intent.IntentID,
-						res.BrokerOrderID,
-						res.Status,
-						int64(order.Quantity),
-						0,
-						executionPrice,
-						res.RawResponse,
-					)
-				}
-
-				if res.Status != "FILLED" && res.Status != "SUCCESS" && res.Status != "ACKED" && res.Status != "SUBMITTED" {
+				if status != "FILLED" &&
+					status != "SUCCESS" &&
+					status != "ACKED" &&
+					status != "SUBMITTED" {
 					nextRetry = append(nextRetry, order)
 				}
 			}
