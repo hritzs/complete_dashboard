@@ -426,13 +426,27 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 		return nil, err
 	}
 
-	// Execute build
-	if err := s.executeBuild(ctx, executor, trade, chunks); err != nil {
+	// Execute build. Stage 4A currently exposes the typed outcome for
+	// later activation gating while preserving existing behavior.
+	buildOutcome, err := s.executeBuild(ctx, executor, trade, chunks)
+	if err != nil {
 		trade.Status = "FAILED"
 		trade.LastUpdateTime = time.Now()
 		s.Store.UpdateTrade(trade)
 		return nil, err
 	}
+
+	log.Printf(
+		"BUILD outcome trade=%s submitted=%d submission_errors=%d verified_ce=%d/%d verified_pe=%d/%d fully_verified=%t",
+		trade.TradeUID,
+		buildOutcome.SubmittedCount,
+		buildOutcome.SubmissionErrors,
+		buildOutcome.Summary.VerifiedCE,
+		buildOutcome.Summary.RequestedCE,
+		buildOutcome.Summary.VerifiedPE,
+		buildOutcome.Summary.RequestedPE,
+		buildOutcome.FullyVerified(),
+	)
 
 	trade.Status = "ACTIVE"
 	trade.LastUpdateTime = time.Now()
@@ -461,7 +475,20 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 	}, nil
 }
 
-func (s *Service) executeBuild(ctx context.Context, executor Executor, trade StoredTrade, chunks [][]ExecOrder) error {
+func (s *Service) executeBuild(
+	ctx context.Context,
+	executor Executor,
+	trade StoredTrade,
+	chunks [][]ExecOrder,
+) (BuildExecutionOutcome, error) {
+	outcome := BuildExecutionOutcome{
+		Summary: VerifiedExecutionSummary{
+			RequestedCE: int64(trade.CEQty),
+			RequestedPE: int64(trade.PEQty),
+			UnfilledCE:  int64(trade.CEQty),
+			UnfilledPE:  int64(trade.PEQty),
+		},
+	}
 	sellBuffer := trade.Config.SellBuffer
 	log.Printf("🚀 executeBuild starting for %s with %d chunks", trade.TradeUID, len(chunks))
 	if sellBuffer <= 0 {
@@ -488,7 +515,14 @@ func (s *Service) executeBuild(ctx context.Context, executor Executor, trade Sto
 				order := ordersToProcess[i]
 
 				if order.Quantity <= 0 {
-					return fmt.Errorf("invalid build quantity for token %d: %d", order.Token, order.Quantity)
+					err := fmt.Errorf(
+						"invalid build quantity for token %d: %d",
+						order.Token,
+						order.Quantity,
+					)
+					outcome.SubmissionErrors++
+					outcome.FirstError = err
+					return outcome, err
 				}
 
 				bufferMultiplier := float64(retryIter + 1)
@@ -525,6 +559,9 @@ func (s *Service) executeBuild(ctx context.Context, executor Executor, trade Sto
 				}
 
 				if res != nil && res.BrokerOrderID != "" {
+					if _, exists := submittedBrokerOrderIDs[res.BrokerOrderID]; !exists {
+						outcome.SubmittedCount++
+					}
 					submittedBrokerOrderIDs[res.BrokerOrderID] = struct{}{}
 				}
 
@@ -578,7 +615,15 @@ func (s *Service) executeBuild(ctx context.Context, executor Executor, trade Sto
 		}
 
 		if len(ordersToProcess) > 0 {
-			return fmt.Errorf("build chunk %d failed after retries", chunkIdx+1)
+			err := fmt.Errorf(
+				"build chunk %d failed after retries",
+				chunkIdx+1,
+			)
+			outcome.SubmissionErrors += len(ordersToProcess)
+			if outcome.FirstError == nil {
+				outcome.FirstError = err
+			}
+			return outcome, err
 		}
 	}
 
@@ -605,7 +650,12 @@ func (s *Service) executeBuild(ctx context.Context, executor Executor, trade Sto
 			800*time.Millisecond,
 		)
 
+		outcome.Summary = summary
+
 		if err != nil {
+			if outcome.FirstError == nil {
+				outcome.FirstError = err
+			}
 			log.Printf(
 				"⚠ BUILD verification logging trade=%s err=%v",
 				trade.TradeUID,
@@ -625,7 +675,7 @@ func (s *Service) executeBuild(ctx context.Context, executor Executor, trade Sto
 		}
 	}
 
-	return nil
+	return outcome, nil
 }
 
 func (s *Service) runMonitorCycle(tradeUID string) {
