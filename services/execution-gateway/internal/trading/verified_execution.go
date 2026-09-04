@@ -16,6 +16,36 @@ type VerifiedOrderAttempt struct {
 	Status        string
 }
 
+// BuildExecutionOutcome represents the complete local view of one BUILD
+// attempt. SubmittedCount is the number of non-empty broker order IDs
+// obtained. SubmissionErrors records unresolved submission outcomes.
+//
+// Summary contains only broker-order-book-verified quantities and prices.
+// It must never contain quantities inferred from the requested order size
+// or prices inferred from limit or expected prices.
+type BuildExecutionOutcome struct {
+	Summary          VerifiedExecutionSummary
+	SubmittedCount   int
+	SubmissionErrors int
+	FirstError       error
+}
+
+func (o BuildExecutionOutcome) HasSubmittedOrders() bool {
+	return o.SubmittedCount > 0
+}
+
+func (o BuildExecutionOutcome) HasVerifiedExposure() bool {
+	return o.Summary.VerifiedCE > 0 ||
+		o.Summary.VerifiedPE > 0
+}
+
+func (o BuildExecutionOutcome) FullyVerified() bool {
+	return o.FirstError == nil &&
+		o.SubmissionErrors == 0 &&
+		o.Summary.VerificationError == nil &&
+		o.Summary.Complete()
+}
+
 type VerifiedExecutionSummary struct {
 	Attempts          []VerifiedOrderAttempt
 	Fills             []BrokerFill
