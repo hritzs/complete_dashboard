@@ -452,7 +452,12 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 	case buildOutcome.FullyVerified():
 		trade.Status = "ACTIVE"
 
-	case buildOutcome.SubmittedCount > 0:
+	case buildOutcome.HasVerifiedExposure():
+		trade.Status = "PARTIAL"
+
+	case buildOutcome.HasSubmittedOrders() ||
+		buildOutcome.SubmissionErrors > 0 ||
+		buildOutcome.FirstError != nil:
 		trade.Status = "RECONCILIATION_REQUIRED"
 
 	default:
