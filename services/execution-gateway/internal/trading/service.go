@@ -625,14 +625,21 @@ func (s *Service) executeBuild(
 
 		if len(ordersToProcess) > 0 {
 			err := fmt.Errorf(
-				"build chunk %d failed after retries",
+				"build chunk %d has %d unresolved submission outcome(s)",
 				chunkIdx+1,
+				len(ordersToProcess),
 			)
-			outcome.SubmissionErrors += len(ordersToProcess)
+
 			if outcome.FirstError == nil {
 				outcome.FirstError = err
 			}
-			return outcome, err
+
+			log.Printf(
+				"BUILD chunk unresolved trade=%s chunk=%d unresolved=%d automatic_retry=false",
+				trade.TradeUID,
+				chunkIdx+1,
+				len(ordersToProcess),
+			)
 		}
 	}
 
