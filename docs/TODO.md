@@ -471,3 +471,70 @@ original bug is confirmed fixed, not just theoretically addressed.
       confirmed `/api/health`, `/api/trades`, `/api/positions`,
       `/api/straddles/active` all return clean empty-state JSON with no
       errors against the empty tables.
+
+## Phase 8: Iris order-confirmation latency dashboard (Sep 16 2026)
+Design doc: see the plan approved for this phase (Plan Mode, same session
+as Phase 7). Scope was deliberately narrowed after a Plan-agent review
+found the original NATS-based draft would be silently empty (no NATS
+server runs in this environment, and nothing consumes `orders.update`
+today) and would have skewed p95/p99 by sampling every Iris push per
+order instead of just the first.
+
+- [x] `libs/db/migrations/0006_latency_samples.sql` - new `latency_samples`
+      table (`stage`-discriminated so future latency sources, e.g.
+      feed-decoder tick-to-publish, can reuse it without a schema change).
+      Applied to the live DB; `schema.sql` updated to match.
+- [x] `services/reconciler/internal/persistence/latency.go` -
+      `RecordConfirmationLatencyIfFirst`, gated on `COUNT(*) FROM
+      order_events WHERE order_id = $1) = 1` so only the first Iris push
+      per order is sampled (not every status transition, which would have
+      recorded several ever-growing numbers per order). Runs outside
+      `ApplyOrderUpdate`'s own transaction -- best-effort observability,
+      never affects order-of-record persistence. Wired into
+      `cmd/main.go`'s `applyAndPublish`, which is only reachable from the
+      live Iris push loop, not the REST-recovery path.
+- [x] Integration test extended (`store_integration_test.go`): asserts
+      exactly one `latency_samples` row after the first push, and
+      **still** exactly one after a second push for the same order --
+      this is what actually proves the anti-skew gate holds. Passed
+      against live local Postgres.
+- [x] `services/latency-dashboard` (new service, REST-only, no NATS/
+      websocket): `GET /api/latency/recent`, `GET /api/latency/stats`
+      (count/avg/p50/p95/p99/max via Postgres `percentile_cont`, not a Go
+      stats library -- the right-sized tool at this platform's order
+      volume). Unit tests (`httptest` + fake store) and integration tests
+      (percentile correctness, time-window filtering, against live
+      Postgres) all pass. Manually smoke-tested end-to-end: inserted a
+      synthetic sample, confirmed both endpoints reflected it, cleaned up.
+- [x] `start_platform.sh` - wired in on port 8023 (port-kill list, pkill
+      pattern, `start_if_needed` block, health check).
+- [x] `ui/src/LatencyDashboard.jsx` (new component) + a "Latency" tab in
+      `App.jsx` - stat cards + a live-updating recent-orders list, REST
+      polling every 5s (same pattern the existing portfolio tab already
+      uses, reusing existing `.metric-card`/`.log-line` CSS classes
+      rather than adding new ones). `npx vite build` passes; dev server
+      verified to serve the page without error. **Not verified via an
+      actual browser click-through** (no real order flowed through it
+      during this session to populate the tab) -- worth a manual check
+      the next time a live order is placed.
+- [ ] Deferred (explicitly out of scope for this pass, see the approved
+      plan): `start_platform.sh` auto-applying migrations 0004-0006 (only
+      0003 is auto-applied today); feed-decoder (C++) tick-to-publish
+      latency instrumentation (no existing groundwork; a legitimate
+      fast-follow using the same `latency_samples` table with a new
+      `stage` value); cleanup of stale `ui/src/*.bak*` files.
+
+## Phase 9: Python-reference migration plan (BLOCKED, awaiting files)
+The user wants the Python reference system's straddle trading logic
+(SL/MTM/straddle-price exits, hedge/roll monitors, chunked fast-exit
+rules) ported to C++/Go/GreekSoft for better latency and TBT support.
+The pasted `refernce_py_code/` folder only contains orchestration code
+(`api/routes.py`, `api/websocket.py`, `background/tasks.py` - confirmed
+via full read by a research agent). The modules with the actual
+exit-rule algorithms are referenced by `routes.py`'s imports but were
+not included: `trading/builder.py`, `trading/trade_manager.py`,
+`trading/fast_exit_monitor.py`, `trading/square_off.py`,
+`trading/event_bus.py`, `trading/special_oms_db.py`. User chose to add
+those files before a migration plan is drafted, rather than have one
+written from guesses about the missing algorithms (2026-09-16).
+**Do not delete/touch `refernce_py_code/`** until this is resolved.
