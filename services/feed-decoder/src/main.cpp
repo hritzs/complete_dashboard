@@ -388,6 +388,22 @@ int main() {
                         actualAtm = chain.strikes[chain.strikes.size() / 2].strike;
                     }
 
+                    // primary_feed_age_ms reports how long since the last real
+                    // tick arrived on either the direct UDP multicast feed or
+                    // the XTS ZMQ fallback (tcp://127.0.0.1:5555) -- NOT
+                    // reset by this publisher's own timer, and NOT updated by
+                    // the GreekSoft Apollo backup feed (tcp://127.0.0.1:5560)
+                    // itself, so it's a genuine liveness signal a separate
+                    // process (services/greeksoft-feed-bridge) can use to
+                    // decide when to activate backup forwarding, rather than
+                    // watching an otherwise-silent port directly. See
+                    // docs/greeksoft-integration-architecture.md section 3.
+                    int64_t last_primary_ms = decoder::g_last_primary_tick_epoch_ms.load(std::memory_order_relaxed);
+                    int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::system_clock::now().time_since_epoch()
+                    ).count();
+                    int64_t primary_feed_age_ms = (last_primary_ms == 0) ? -1 : (now_ms - last_primary_ms);
+
                     std::string json =
                         "{\"type\":\"option_chain\","
                         "\"symbol\":\"" + sym + "\","
@@ -395,6 +411,7 @@ int main() {
                         "\"future_ltp\":" + safe_num(chain.fut_ltp > 0.0 ? chain.fut_ltp : 0.0) + ","
                         "\"atm\":" + safe_num(actualAtm) + ","
                         "\"expiry\":\"" + exp + "\","
+                        "\"primary_feed_age_ms\":" + std::to_string(primary_feed_age_ms) + ","
                         "\"available_expiries\":" + avail_exp_json + ","
                         "\"chain\":[";
 
