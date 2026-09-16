@@ -140,10 +140,10 @@ func (c *Client) jloginNew(
 ) (*jloginResponse, error) {
 	url := fmt.Sprintf("%s/jloginNew", c.RestAPIBaseURL)
 	slog.Info(
-    "jlogin debug",
-    "password", password,
-    "hash", hashPasswordMD5(password),
-)
+		"jlogin debug",
+		"password", password,
+		"hash", hashPasswordMD5(password),
+	)
 	hashedPassword := hashPasswordMD5(password)
 
 	reqBody := greekEnvelope{

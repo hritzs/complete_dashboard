@@ -1,4 +1,11 @@
 -- 0001_initial_schema.up.sql
+--
+-- STALE / UNUSED: this defines a trades/orders/fills schema (BIGSERIAL ids,
+-- UUID trade identifiers, a globally-unique fills.fill_id) that is
+-- incompatible with and superseded by the schema actually running in
+-- production, documented in libs/db/schema/schema.sql +
+-- libs/db/migrations/. Nothing applies this migration. Left in place for
+-- history rather than deleted; do not run it against the live database.
 
 -- Enable UUID generation
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";

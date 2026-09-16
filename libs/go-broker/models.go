@@ -36,6 +36,7 @@ type OrderIntent struct {
 	LimitPrice      float64 `json:"limit_price"`
 	StopPrice       float64 `json:"stop_price"`
 	DisclosedQty    int     `json:"disclosed_quantity"` // Required by XTS
+	LotSize         int     `json:"lot_size,omitempty"` // Contract lot size, in units; used by Greeksoft to derive its `lot` count field from Quantity. Optional -- brokers that don't need it (e.g. XTS) ignore it.
 }
 
 // OrderResponse represents a standardized response from placing or modifying an order.
