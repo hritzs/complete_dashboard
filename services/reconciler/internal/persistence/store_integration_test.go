@@ -75,6 +75,7 @@ func TestApplyOrderUpdate_Integration(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM latency_samples WHERE order_id = $1`, orderID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM fills WHERE trade_id = $1`, tradeID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM order_events WHERE order_id = $1`, orderID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM trade_legs WHERE trade_id = $1`, tradeID)
@@ -121,6 +122,18 @@ func TestApplyOrderUpdate_Integration(t *testing.T) {
 		t.Fatalf("order_events count = %d, want 1", eventCount)
 	}
 
+	if err := store.RecordConfirmationLatencyIfFirst(ctx, result.OrderID, result.TradeUID, brokerOrderID, 42*time.Millisecond); err != nil {
+		t.Fatalf("RecordConfirmationLatencyIfFirst (first push) failed: %v", err)
+	}
+	var latencyCount int
+	var latencyUS int64
+	if err := db.QueryRowContext(ctx, `SELECT count(*), COALESCE(SUM(latency_us),0) FROM latency_samples WHERE order_id = $1`, orderID).Scan(&latencyCount, &latencyUS); err != nil {
+		t.Fatalf("query latency_samples: %v", err)
+	}
+	if latencyCount != 1 || latencyUS != 42000 {
+		t.Fatalf("latency_samples after first push: count=%d latency_us=%d, want 1/42000", latencyCount, latencyUS)
+	}
+
 	// Step 2: a "Traded" update with a full fill.
 	fillUpdate := normalize.Parse(&normalize.GreeksoftOrderResponse{
 		GOrderID:       brokerOrderID,
@@ -158,6 +171,19 @@ func TestApplyOrderUpdate_Integration(t *testing.T) {
 	}
 	if legQty != 50 || legStatus != "OPEN" {
 		t.Fatalf("trade_legs: current_quantity=%d status=%q, want 50/OPEN (net BUY 50, no offsetting SELL)", legQty, legStatus)
+	}
+
+	// The anti-skew gate: a second push for the same order (this fill)
+	// must NOT add a second latency_samples row, even though
+	// ApplyOrderUpdate returns a (larger) ConfirmationLatency for it too.
+	if err := store.RecordConfirmationLatencyIfFirst(ctx, result.OrderID, result.TradeUID, brokerOrderID, 9*time.Second); err != nil {
+		t.Fatalf("RecordConfirmationLatencyIfFirst (second push) failed: %v", err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*), COALESCE(SUM(latency_us),0) FROM latency_samples WHERE order_id = $1`, orderID).Scan(&latencyCount, &latencyUS); err != nil {
+		t.Fatalf("re-query latency_samples: %v", err)
+	}
+	if latencyCount != 1 || latencyUS != 42000 {
+		t.Fatalf("latency_samples after second push: count=%d latency_us=%d, want still 1/42000 (gate must ignore non-first pushes)", latencyCount, latencyUS)
 	}
 
 	// Step 3: redeliver the exact same "Traded" frame again (simulating a

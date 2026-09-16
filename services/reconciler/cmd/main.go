@@ -134,6 +134,9 @@ func main() {
 		// ack.
 		log.Printf("[RECONCILER] latency broker_order_id=%s status=%s confirm_latency=%s",
 			update.BrokerOrderID, update.Status, result.ConfirmationLatency)
+		if err := store.RecordConfirmationLatencyIfFirst(ctx, result.OrderID, result.TradeUID, update.BrokerOrderID, result.ConfirmationLatency); err != nil {
+			log.Printf("[RECONCILER] record latency sample failed: %v", err)
+		}
 
 		if publisher == nil {
 			return

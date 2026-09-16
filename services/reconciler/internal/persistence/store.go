@@ -45,6 +45,7 @@ func NewStore(db *sql.DB) *Store {
 // the publisher guess at or re-derive them.
 type ApplyResult struct {
 	TradeUID string
+	OrderID  int64
 	Fill     *PersistedFill // nil if this update didn't represent a new fill
 	// ConfirmationLatency is the time between when execution-gateway
 	// created the local order row (order submission) and this Iris push
@@ -104,6 +105,7 @@ func (s *Store) ApplyOrderUpdate(ctx context.Context, update normalize.OrderUpda
 
 	result := ApplyResult{
 		TradeUID:            tradeUID.String,
+		OrderID:             orderID,
 		ConfirmationLatency: time.Since(orderCreatedAt),
 	}
 
