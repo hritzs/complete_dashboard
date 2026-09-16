@@ -102,3 +102,12 @@ func (c *Client) getRaw(
 ) (*http.Response, []byte, error) {
 	return c.doJSON(ctx, http.MethodGet, url, sessionToken, nil, nil)
 }
+
+func (c *Client) getJSON(
+	ctx context.Context,
+	url string,
+	sessionToken string,
+	resBody interface{},
+) (*http.Response, []byte, error) {
+	return c.doJSON(ctx, http.MethodGet, url, sessionToken, nil, resBody)
+}

@@ -17,10 +17,6 @@ func hashPasswordMD5(password string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func hashPasswordMD5Upper(password string) string {
-	return hashPasswordMD5(strings.ToUpper(password))
-}
-
 func (c *Client) PerformFullLogin(ctx context.Context, accCfg *broker.AccountConfig) (*broker.SessionDetails, error) {
 	if accCfg == nil {
 		return nil, fmt.Errorf("account config is nil")
@@ -77,6 +73,9 @@ func (c *Client) PerformFullLogin(ctx context.Context, accCfg *broker.AccountCon
 		}
 		if flagValues.Response.Data.ApolloPort != 0 {
 			brokerSpecific["apollo_port"] = flagValues.Response.Data.ApolloPort
+		}
+		if flagValues.Response.Data.HeartbeatIntervalSec > 0 {
+			brokerSpecific["heartbeat_interval_sec"] = flagValues.Response.Data.HeartbeatIntervalSec
 		}
 	}
 
@@ -139,11 +138,6 @@ func (c *Client) jloginNew(
 	panDob string,
 ) (*jloginResponse, error) {
 	url := fmt.Sprintf("%s/jloginNew", c.RestAPIBaseURL)
-	slog.Info(
-		"jlogin debug",
-		"password", password,
-		"hash", hashPasswordMD5(password),
-	)
 	hashedPassword := hashPasswordMD5(password)
 
 	reqBody := greekEnvelope{

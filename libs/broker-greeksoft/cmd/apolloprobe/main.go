@@ -40,13 +40,21 @@ func main() {
 
 	accountID := resolveGreekAccountID()
 
+	// Default token is NIFTY 25MAY23 FUTIDX from GreekSoft's own docs
+	// example -- override with a live token via GREEK_PROBE_TOKENS
+	// (comma-separated) once one is known for the current expiry.
+	tokens := strings.Split(strings.TrimSpace(os.Getenv("GREEK_PROBE_TOKENS")), ",")
+	if len(tokens) == 1 && tokens[0] == "" {
+		tokens = []string{"101002885"} // RELIANCE, per the docs' marketPicture example
+	}
+
 	client := greeksoft.NewClient(authURL, restURL)
 
 	loginCtx, loginCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer loginCancel()
 
 	session, err := client.PerformFullLogin(loginCtx, &broker.AccountConfig{
-		Name:       "greeksoft-wsprobe-" + strings.ToLower(accountID),
+		Name:       "greeksoft-apolloprobe-" + strings.ToLower(accountID),
 		BrokerType: "greeksoft",
 		APIKey:     accountID,
 		APISecret:  password,
@@ -57,29 +65,32 @@ func main() {
 		log.Fatalf("GreekSoft login failed: %v", err)
 	}
 
-	log.Printf("[WSPROBE] login successful account=%s user_id=%s", accountID, session.UserID)
+	log.Printf("[APOLLOPROBE] login successful account=%s user_id=%s", accountID, session.UserID)
 
 	probeCtx, probeCancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer probeCancel()
 
-	iris, err := client.NewIrisDiscoveryClient(probeCtx)
+	apollo, err := client.NewApolloMarketDataClient(probeCtx)
 	if err != nil {
-		log.Fatalf("Iris websocket connection/login failed: %v", err)
+		log.Fatalf("Apollo websocket connection/login failed: %v", err)
 	}
 	defer func() {
-		if err := iris.Close(); err != nil {
-			log.Printf("[WSPROBE] close warning: %v", err)
+		if err := apollo.Close(); err != nil {
+			log.Printf("[APOLLOPROBE] close warning: %v", err)
 		}
 	}()
 
-	log.Printf("[WSPROBE] Iris login request sent; reading frames only; no orders will be placed")
+	if err := apollo.Subscribe(tokens); err != nil {
+		log.Fatalf("Apollo subscribe failed: %v", err)
+	}
+	log.Printf("[APOLLOPROBE] subscribed tokens=%v; reading frames for 45s", tokens)
 
-	err = iris.ReadLoop(probeCtx, func(frame greeksoft.IrisFrame) {
-		log.Printf("[WSPROBE EVENT] type=%s service=%s", frame.StreamingType, frame.ServiceName)
+	err = apollo.ReadLoop(probeCtx, func(frame greeksoft.ApolloFrame) {
+		log.Printf("[APOLLOPROBE EVENT] type=%s service=%s raw=%s", frame.StreamingType, frame.ServiceName, string(frame.Raw))
 	})
 	if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-		log.Fatalf("Iris read loop failed: %v", err)
+		log.Fatalf("Apollo read loop failed: %v", err)
 	}
 
-	log.Printf("[WSPROBE] passive capture complete")
+	log.Printf("[APOLLOPROBE] capture complete")
 }

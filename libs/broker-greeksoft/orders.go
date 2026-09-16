@@ -70,38 +70,39 @@ func (c *Client) PlaceOrder(ctx context.Context, intent *broker.OrderIntent) (*b
 	}
 
 	// Greeksoft requires a matching lot and quantity for F&O orders.
-
 	// Example: NIFTY qty=130, exchange lot size=65 -> lot=2.
-
-	lotSize := greeksoftLotSize(intent.Symbol)
-
-	brokerLots := 1
-
-	if lotSize > 0 {
-
-		if intent.Quantity%lotSize != 0 {
-
-			return nil, fmt.Errorf(
-
-				"quantity %d is not a multiple of lot size %d for %s",
-
-				intent.Quantity,
-
-				lotSize,
-
-				intent.Symbol,
-			)
-
-		}
-
-		brokerLots = intent.Quantity / lotSize
-
+	//
+	// LotSize should normally come from the caller (the contract-master-backed
+	// lot size in Postgres, via intent.LotSize) since that's the actual
+	// source of truth and covers every symbol. The hardcoded table in
+	// greeksoftLotSize is only a fallback for callers that don't populate
+	// LotSize yet. An unknown lot size is a hard error, not silently
+	// treated as "1 lot" -- getting this wrong sends an order sized
+	// completely differently from what was requested.
+	lotSize := intent.LotSize
+	if lotSize <= 0 {
+		lotSize = greeksoftLotSize(intent.Symbol)
 	}
 
+	if lotSize <= 0 {
+		return nil, fmt.Errorf(
+			"unknown lot size for symbol %s; set intent.LotSize (contract lookup) or add it to greeksoftLotSize",
+			intent.Symbol,
+		)
+	}
+
+	if intent.Quantity%lotSize != 0 {
+		return nil, fmt.Errorf(
+			"quantity %d is not a multiple of lot size %d for %s",
+			intent.Quantity,
+			lotSize,
+			intent.Symbol,
+		)
+	}
+
+	brokerLots := intent.Quantity / lotSize
 	if brokerLots <= 0 {
-
 		return nil, fmt.Errorf("invalid broker lot count %d", brokerLots)
-
 	}
 
 	reqBody := greekEnvelope{

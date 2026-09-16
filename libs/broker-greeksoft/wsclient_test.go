@@ -3,7 +3,7 @@ package greeksoft
 import "testing"
 
 func TestBuildIrisWebSocketURL(t *testing.T) {
-	got, err := buildIrisWebSocketURL("192.168.1.10", "3031")
+	got, err := buildGreekSoftWebSocketURL("192.168.1.10", "3031")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

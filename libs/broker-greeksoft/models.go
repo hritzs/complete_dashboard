@@ -26,6 +26,7 @@ type greekRequestPayload struct {
 	ResponseFormat string      `json:"response_format,omitempty"`
 	RequestType    string      `json:"request_type,omitempty"`
 	StreamingType  string      `json:"streaming_type,omitempty"`
+	FormFactor     string      `json:"FormFactor,omitempty"` // used by the portfolio-family endpoints (NPRequest, MarginDetailRequest, HoldingValueInfo, ...)
 }
 
 type jloginRequestData struct {
@@ -63,7 +64,7 @@ type jloginInnerResponse struct {
 type jloginResponseData struct {
 	ErrorCode           int    `json:"ErrorCode"`
 	Message             string `json:"message"`
-	ClientCode          int `json:"ClientCode"`
+	ClientCode          int    `json:"ClientCode"`
 	Gscid               string `json:"gscid"`
 	IrisIP              string `json:"Iris_IP"`
 	IrisPort            int    `json:"Iris_Port"`
@@ -101,6 +102,12 @@ type flagValuesData struct {
 	ArachnePort         int    `json:"Arachne_Port"`
 	BroadcastSenderPort int    `json:"BroadcastSender_Port"`
 	OrderSenderPort     int    `json:"OrderSender_Port"`
+	// HeartbeatIntervalSec is the number of seconds between required Iris/
+	// Apollo websocket HeartBeat frames (per GreekSoft's websocket docs:
+	// "Send heartbeat request in every interval (seconds) received in flag
+	// values request"). A connection that doesn't heartbeat at this cadence
+	// is expected to be dropped by the broker.
+	HeartbeatIntervalSec int `json:"heartbeat_Intervals"`
 }
 
 type newOrderRequestData struct {

@@ -36,3 +36,24 @@ func Publish(nc *nats.Conn, subject string, event interface{}) error {
 	}
 	return nil
 }
+
+// Subscribe registers a handler for every message published to subject,
+// decoding the raw payload as JSON into a new T for each message. Decode
+// errors are passed to onDecodeError rather than silently dropped; pass
+// nil to ignore them.
+func Subscribe[T any](nc *nats.Conn, subject string, handler func(T), onDecodeError func(error)) (*nats.Subscription, error) {
+	sub, err := nc.Subscribe(subject, func(msg *nats.Msg) {
+		var event T
+		if err := json.Unmarshal(msg.Data, &event); err != nil {
+			if onDecodeError != nil {
+				onDecodeError(fmt.Errorf("decode event on subject %s: %w", subject, err))
+			}
+			return
+		}
+		handler(event)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to subscribe to subject %s: %w", subject, err)
+	}
+	return sub, nil
+}
