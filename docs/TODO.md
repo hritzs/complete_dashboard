@@ -149,14 +149,15 @@ not just the interrupted-process story it first looked like.
       Root cause of that second mechanism unconfirmed -- possibly a
       "Full Exit" action fired while the first was still in flight, or a
       direct GreekSoft terminal action; user asked to confirm.
-- [ ] **Pending, needs user confirmation before running**: the DB still
-      shows the affected trade (`trade_uid` starting `TRD_U001_GREEKSOFT_
-      147_NIFTY_22SEP26...`) as `SQUARING_OFF` with `-325/-325`, which is
-      now confirmed stale/wrong (broker is flat). Auto-mode's safety
-      classifier blocked a direct corrective `UPDATE` as a
-      shared-resource modification; the exact SQL to run was given to the
-      user, awaiting their go-ahead (or they may prefer the UI's "Sync
-      Trade" action if it reconciles against the live broker instead).
+- [x] **Corrected 2026-09-16, with user confirmation**: the affected trade
+      (`trade_uid=TRD_U001_GREEKSOFT_147_NIFTY_22SEP26_23250_20260916095239`,
+      `id=1`) was a one-time historical correction, not a live position --
+      `trades.status` set to `CLOSEDSQF` (the same terminal status
+      `SquareOff` sets on real success), both `trade_legs.current_quantity`
+      set to 0 and `status='CLOSED'`. A separately-placed trade the same
+      day (`id=5`) squared off correctly end-to-end (65/65 verified both
+      legs, realized P&L recorded), confirming the Phase 7 fixes above
+      actually work on a live trade, not just in theory.
 
 ## Phase 5: GreekSoft Integration Rewire (Sep 2026)
 Full plan: see the design decisions and phase breakdown discussed in-session
