@@ -11,6 +11,7 @@ use (
 	./libs/go-common/events
 	./services/contract-master
 	./services/greeksoft-feed-bridge
+	./services/latency-dashboard
 	./services/control-api
 	./services/execution-gateway
 	./services/market-data-gateway
