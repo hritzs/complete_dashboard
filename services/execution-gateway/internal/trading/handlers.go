@@ -1,10 +1,10 @@
 package trading
 
 import (
-	"log"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strings"

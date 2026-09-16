@@ -126,6 +126,12 @@ func main() {
 	appConfig := LoadConfig()
 
 	var store trading.Store = trading.NewMemoryStore()
+	// Hoisted out of the if-block below (not just local to it) because the
+	// GreekSoft executor factory further down also needs it, to share a
+	// GreekSoft login with reconciler/greeksoft-feed-bridge via
+	// broker_sessions instead of each independently authenticating -- see
+	// libs/broker-greeksoft/shared_session.go.
+	var sharedDB *sql.DB
 	if dsn := strings.TrimSpace(os.Getenv("POSTGRES_DSN")); dsn != "" {
 		db, err := sql.Open("postgres", dsn)
 		if err != nil {
@@ -134,6 +140,7 @@ func main() {
 			log.Printf("[SQL STORE] ping failed err=%v; using memory store", err)
 		} else {
 			store = trading.NewPostgresBackedStore(db)
+			sharedDB = db
 			log.Printf("[SQL STORE] postgres-backed store enabled")
 		}
 	} else {
@@ -249,14 +256,21 @@ func main() {
 			loginCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
-			session, err := gsClient.PerformFullLogin(loginCtx, &broker.AccountConfig{
+			// LoginShared reuses a session reconciler/greeksoft-feed-bridge
+			// already established (via broker_sessions) when one is fresh
+			// enough, instead of always logging in fresh -- each process
+			// independently authenticating for the same account was
+			// confirmed to invalidate the others' sessions. sharedDB may be
+			// nil (no POSTGRES_DSN), in which case this always does a
+			// normal fresh login, unchanged from before.
+			session, err := gsClient.LoginShared(loginCtx, sharedDB, &broker.AccountConfig{
 				Name:       "greeksoft-" + strings.ToLower(accountID),
 				BrokerType: "greeksoft",
 				APIKey:     accountID,
 				APISecret:  appConfig.GreekPassword,
 				ClientID:   accountID,
 				PanDob:     appConfig.GreekPanDob,
-			})
+			}, 10*time.Minute)
 			if err != nil {
 				return nil, fmt.Errorf("greeksoft login failed for account %s: %w", accountID, err)
 			}

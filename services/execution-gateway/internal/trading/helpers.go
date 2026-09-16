@@ -1,8 +1,8 @@
 package trading
 
 import (
-	"log"
 	"fmt"
+	"log"
 	"math"
 	"strings"
 	"time"

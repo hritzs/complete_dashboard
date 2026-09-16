@@ -111,6 +111,19 @@ type Service struct {
 	BrokerFactory   BrokerFactory
 	Snapshot        SnapshotProvider
 	LotSize         LotSizeProvider
+
+	// tradeLocks serializes exit-side actions (SquareOff, PartialSquareOff)
+	// per trade UID, in-process. Without this, two nearly-simultaneous
+	// calls for the same trade (e.g. a double-click, or a retry racing an
+	// still-in-flight attempt) can both pass the LoadTrade/status check
+	// before either writes "SQUARING_OFF" back, and both proceed to place
+	// real exit orders concurrently. Confirmed as a real (not just
+	// theoretical) risk: a live trade was found with two overlapping
+	// square-off attempts, one of which briefly overbought a leg before a
+	// corrective order fixed it. This only protects against races within
+	// this one process, not a second process instance or a manual action
+	// taken directly against the broker outside this platform.
+	tradeLocks sync.Map // map[string]*sync.Mutex
 }
 
 func NewService(store Store, clientID string) *Service {
@@ -121,6 +134,15 @@ func NewService(store Store, clientID string) *Service {
 		Snapshot:        NewSnapshotClient(),
 		LotSize:         NewLotSizeClient(),
 	}
+}
+
+// lockTrade serializes exit-side actions for one trade UID. Call it first
+// thing and defer the returned unlock func.
+func (s *Service) lockTrade(tradeUID string) func() {
+	v, _ := s.tradeLocks.LoadOrStore(tradeUID, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest) (*DeployStraddleResponse, error) {
@@ -976,7 +998,32 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 
 }
 
+// persistSQFProgress durably checkpoints a square-off's progress mid-flight:
+// persists any verified fills so far (idempotent -- fills.fill_id/order_id
+// is UNIQUE with ON CONFLICT DO NOTHING, so calling this repeatedly with
+// the full accumulated fill list is safe, not a duplicate-insert risk) and
+// updates the trade's remaining CE/PE quantity. Call this after every
+// chunk, not just once at the end -- see SquareOff's call site comment for
+// why that mattered in practice, not just in theory.
+func (s *Service) persistSQFProgress(tradeUID string, tr StoredTrade, verifiedFills []BrokerFill, remainingCE, remainingPE int64, inProgressStatus string) {
+	if len(verifiedFills) > 0 {
+		if persister, ok := s.Store.(VerifiedFillPersistence); ok {
+			if _, err := persister.PersistVerifiedFills(context.Background(), tr.BrokerName, tr.AccountID, verifiedFills); err != nil {
+				log.Printf("⚠️ SQF verified-fill checkpoint persistence failed for %s: %v", tradeUID, err)
+			}
+		}
+	}
+
+	tr.CEQty = int(remainingCE)
+	tr.PEQty = int(remainingPE)
+	tr.LastUpdateTime = time.Now()
+	tr.Status = inProgressStatus
+	s.Store.UpdateTrade(tr)
+}
+
 func (s *Service) SquareOff(tradeUID string, reason string) error {
+	defer s.lockTrade(tradeUID)()
+
 	tr, ok := s.Store.LoadTrade(tradeUID)
 	if !ok {
 		return fmt.Errorf("trade not found")
@@ -1222,6 +1269,18 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 				remainingPE,
 			)
 
+			// Persist this chunk's verified fills and checkpoint the
+			// trade's remaining quantity IMMEDIATELY, not after the whole
+			// multi-chunk/multi-attempt loop finishes. Previously this
+			// only happened once at the very end, so a process
+			// interruption mid-square-off (confirmed to happen live: a
+			// process restart) lost every already-broker-confirmed
+			// chunk's progress -- the orders had genuinely executed and
+			// moved the real position, but the DB never found out, so a
+			// later retry would have started from the stale original
+			// quantity instead of the true remainder.
+			s.persistSQFProgress(tradeUID, tr, allVerifiedFills, remainingCE, remainingPE, "SQUARING_OFF")
+
 			if remainingCE == 0 && remainingPE == 0 {
 				break
 			}
@@ -1235,21 +1294,6 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 				tradeUID,
 			)
 			break
-		}
-	}
-
-	if len(allVerifiedFills) > 0 {
-		log.Printf("🔍 DEBUG PersistVerifiedFills check: allVerifiedFills=%d, persister_ok=%t", len(allVerifiedFills), func() bool { _, ok := s.Store.(VerifiedFillPersistence); return ok }())
-		if persister, ok := s.Store.(VerifiedFillPersistence); ok {
-			_, persistErr := persister.PersistVerifiedFills(
-				context.Background(),
-				tr.BrokerName,
-				tr.AccountID,
-				allVerifiedFills,
-			)
-			if persistErr != nil {
-				log.Printf("⚠️ SQF verified-fill persistence failed for %s: %v", tradeUID, persistErr)
-			}
 		}
 	}
 
@@ -1366,6 +1410,8 @@ func (s *Service) computeVerifiedRealizedPnL(ctx context.Context, tr StoredTrade
 	return total, true
 }
 func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
+	defer s.lockTrade(tradeUID)()
+
 	tr, ok := s.Store.LoadTrade(tradeUID)
 	if !ok {
 		return fmt.Errorf("trade not found")
@@ -1374,8 +1420,11 @@ func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
 		return fmt.Errorf("invalid percentage")
 	}
 
-	if tr.Status == "CLOSEDSQF" || tr.Status == "CLOSED" || tr.Status == "CLOSED_SQF" || tr.Status == "CLOSED_MANUAL" {
+	switch tr.Status {
+	case "CLOSEDSQF", "CLOSED", "CLOSED_SQF", "CLOSED_MANUAL":
 		return fmt.Errorf("partial square-off not allowed for status %s", tr.Status)
+	case "SQUARING_OFF", "PARTIAL-SQF":
+		return fmt.Errorf("an exit is already in progress for %s", tradeUID)
 	}
 
 	if tr.CEToken <= 0 && tr.PEToken <= 0 {
@@ -1388,6 +1437,17 @@ func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
 	executor, err := s.BrokerFactory.GetExecutor(tr.UserID, tr.BrokerName, tr.AccountID)
 	if err != nil {
 		return err
+	}
+
+	// Unlike SquareOff, this previously had NO verification step at all --
+	// it trusted the synchronous order-placement response's status field
+	// (treating even a bare "SUBMITTED" ack as good enough) and then
+	// unconditionally subtracted the REQUESTED quantity from the trade's
+	// remaining CE/PE, regardless of whether anything actually filled.
+	// Bringing this up to the same standard as SquareOff.
+	provider, ok := executor.(VerifiedFillsProvider)
+	if !ok {
+		return fmt.Errorf("partial square-off requires VerifiedFillsProvider for %s", tradeUID)
 	}
 
 	prevStatus := tr.Status
@@ -1473,71 +1533,135 @@ func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
 		return fmt.Errorf("chunk generation failed: %w", err)
 	}
 
-	// Execute chunks with verification
+	// Execute chunks, verifying and durably checkpointing progress after
+	// each one -- an interrupted partial exit must never lose track of
+	// chunks that already executed on the broker, for the same reason
+	// documented on SquareOff/persistSQFProgress above.
+	remainingCE := ceQty
+	remainingPE := peQty
+	var allVerifiedFills []BrokerFill
+
 	for chunkIdx, chunk := range chunks {
-		ordersToProcess := append([]ExecOrder(nil), chunk...)
-		maxChunkRetries := 3
+		submitted := make(map[string]struct{})
+		requestedCE := int64(0)
+		requestedPE := int64(0)
 
-		for retryIter := 0; retryIter < maxChunkRetries && len(ordersToProcess) > 0; retryIter++ {
-			if retryIter > 0 {
-				time.Sleep(1 * time.Second)
+		for _, order := range chunk {
+			if order.Quantity <= 0 {
+				continue
 			}
 
-			var nextRetry []ExecOrder
-			for i := range ordersToProcess {
-				order := ordersToProcess[i]
-				if order.Quantity <= 0 {
-					continue
-				}
-
-				intent := OrderIntent{
-					IntentID:        order.UID,
-					TradeUID:        tradeUID,
-					Token:           order.Token,
-					Symbol:          order.Symbol,
-					Side:            order.Action,
-					Quantity:        int64(order.Quantity),
-					OrderType:       "MARKET",
-					ProductType:     tr.ProductType,
-					ExchangeSegment: tr.ExchangeSegment,
-					LegType:         order.OptionType,
-					Phase:           "PSQF",
-					OrderUID:        order.UID,
-					BrokerName:      tr.BrokerName,
-					AccountID:       tr.AccountID,
-				}
-
-				s.Store.AppendIntent(tradeUID, intent)
-
-				res, err := executor.ExecuteOrderIntent(context.Background(), intent)
-				if err != nil {
-					log.Printf("❌ PSQF chunk=%d retry=%d leg=%s err=%v", chunkIdx+1, retryIter+1, order.OptionType, err)
-					nextRetry = append(nextRetry, order)
-					continue
-				}
-
-				if updater, ok := s.Store.(interface {
-					MarkOrderSubmitted(intentID string, brokerOrderID string, status string, rawResponse string)
-				}); ok {
-					updater.MarkOrderSubmitted(intent.IntentID, res.BrokerOrderID, res.Status, res.RawResponse)
-				}
-
-				if res.Status != "FILLED" && res.Status != "SUCCESS" && res.Status != "ACKED" && res.Status != "SUBMITTED" {
-					nextRetry = append(nextRetry, order)
-				}
+			intent := OrderIntent{
+				IntentID:        order.UID,
+				TradeUID:        tradeUID,
+				Token:           order.Token,
+				Symbol:          order.Symbol,
+				Side:            order.Action,
+				Quantity:        int64(order.Quantity),
+				OrderType:       "MARKET",
+				ProductType:     tr.ProductType,
+				ExchangeSegment: tr.ExchangeSegment,
+				LegType:         order.OptionType,
+				Phase:           "PSQF",
+				OrderUID:        order.UID,
+				BrokerName:      tr.BrokerName,
+				AccountID:       tr.AccountID,
 			}
 
-			ordersToProcess = nextRetry
+			s.Store.AppendIntent(tradeUID, intent)
+
+			res, execErr := executor.ExecuteOrderIntent(context.Background(), intent)
+			if execErr != nil {
+				log.Printf("❌ PSQF chunk=%d leg=%s qty=%d err=%v", chunkIdx+1, order.OptionType, order.Quantity, execErr)
+				continue
+			}
+			if res == nil || res.BrokerOrderID == "" {
+				log.Printf("❌ PSQF chunk=%d leg=%s: placement returned no broker order ID", chunkIdx+1, order.OptionType)
+				continue
+			}
+
+			submitted[res.BrokerOrderID] = struct{}{}
+			if order.OptionType == "CE" {
+				requestedCE += int64(order.Quantity)
+			} else if order.OptionType == "PE" {
+				requestedPE += int64(order.Quantity)
+			}
+
+			if updater, ok := s.Store.(interface {
+				MarkOrderSubmitted(intentID string, brokerOrderID string, status string, rawResponse string)
+			}); ok {
+				updater.MarkOrderSubmitted(intent.IntentID, res.BrokerOrderID, res.Status, res.RawResponse)
+			}
 		}
+
+		if len(submitted) == 0 {
+			continue
+		}
+
+		verifyCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		summary := waitForVerifiedFills(
+			verifyCtx, provider, submitted,
+			tr.CEToken, tr.PEToken, requestedCE, requestedPE,
+			6, 800*time.Millisecond,
+		)
+		cancel()
+
+		if len(summary.Fills) > 0 {
+			allVerifiedFills = append(allVerifiedFills, summary.Fills...)
+		}
+
+		remainingCE = ceQty - verifiedQuantityForToken(allVerifiedFills, tr.CEToken)
+		remainingPE = peQty - verifiedQuantityForToken(allVerifiedFills, tr.PEToken)
+		if remainingCE < 0 {
+			remainingCE = 0
+		}
+		if remainingPE < 0 {
+			remainingPE = 0
+		}
+
+		log.Printf(
+			"📊 PSQF reconciliation trade=%s chunk=%d verifiedCE=%d/%d verifiedPE=%d/%d remainingCE=%d remainingPE=%d",
+			tradeUID, chunkIdx+1, ceQty-remainingCE, ceQty, peQty-remainingPE, peQty, remainingCE, remainingPE,
+		)
+
+		// Reuses SquareOff's checkpoint helper: persists verified fills so
+		// far (idempotent) and durably records the trade's new overall
+		// remaining CE/PE (its full open quantity minus what this partial
+		// exit has verified so far), not just this partial exit's own
+		// target -- persistSQFProgress writes the trade's total remaining
+		// position, so pass tr.CEQty/PEQty reduced by verified progress.
+		s.persistSQFProgress(
+			tradeUID, tr, allVerifiedFills,
+			int64(tr.CEQty)-(ceQty-remainingCE),
+			int64(tr.PEQty)-(peQty-remainingPE),
+			"PARTIAL-SQF",
+		)
 	}
 
-	// Update quantities after successful execution
-	tr.CEQty = int(math.Max(0, float64(tr.CEQty)-float64(ceQty)))
-	tr.PEQty = int(math.Max(0, float64(tr.PEQty)-float64(peQty)))
+	verifiedCE := ceQty - remainingCE
+	verifiedPE := peQty - remainingPE
+
+	tr.CEQty = int(math.Max(0, float64(tr.CEQty)-float64(verifiedCE)))
+	tr.PEQty = int(math.Max(0, float64(tr.PEQty)-float64(verifiedPE)))
 	tr.LastUpdateTime = time.Now()
+
+	if tr.CEQty == 0 && tr.PEQty == 0 {
+		tr.Status = "CLOSEDSQF"
+		tr.ClosedAt = time.Now()
+	} else {
+		tr.Status = prevStatus
+	}
 	s.Store.UpdateTrade(tr)
 
-	log.Printf("✅ Partial Square Off (%v%%) completed for Trade %s (CE: %d, PE: %d)", percentage, tradeUID, ceQty, peQty)
+	if remainingCE > 0 || remainingPE > 0 {
+		log.Printf(
+			"⚠️ Partial square-off %s incomplete: verified CE=%d/%d PE=%d/%d",
+			tradeUID, verifiedCE, ceQty, verifiedPE, peQty,
+		)
+		return fmt.Errorf("partial square-off incomplete: verified CE=%d/%d PE=%d/%d", verifiedCE, ceQty, verifiedPE, peQty)
+	}
+
+	log.Printf("✅ Partial Square Off (%v%%) completed for Trade %s (CE: %d, PE: %d)", percentage, tradeUID, verifiedCE, verifiedPE)
 	return nil
 }
 
