@@ -104,7 +104,7 @@ safe_curl() {
 if [ "$MODE" = "normal" ]; then
   echo "Cleaning old processes"
 
-  for port in 8003 8005 8010 5556 5557 3000; do
+  for port in 8003 8005 8010 8021 8022 5556 5557 3000; do
     kill_by_port "$port"
   done
 
@@ -114,6 +114,8 @@ if [ "$MODE" = "normal" ]; then
   pkill -9 -f execution-gateway || true
   pkill -9 -f trade-worker || true
   pkill -9 -f vite || true
+  pkill -9 -f "services/reconciler" || true
+  pkill -9 -f "services/greeksoft-feed-bridge" || true
 
   sleep 1
 fi
@@ -206,19 +208,45 @@ start_if_needed \
 
 sleep 2
 
+# Reconciler: consumes GreekSoft's live Iris order-push feed and persists
+# canonical order/fill state to Postgres. See
+# docs/greeksoft-integration-architecture.md. Requires the GREEK_* and
+# POSTGRES_DSN vars already loaded from .env above.
+start_if_needed \
+  "Reconciler" \
+  "8021" \
+  "services/reconciler" \
+  "cd '$BASE_DIR/services/reconciler' && go run ./cmd" \
+  "$LOG_DIR/6_reconciler.log"
+
+sleep 2
+
+# GreekSoft feed bridge: Apollo market-data websocket as a staleness-gated
+# backup to the existing primary feed (see docs/greeksoft-integration-architecture.md
+# section 3). GREEK_APOLLO_TOKENS is optional -- set it in .env to back up
+# specific instruments; unsolicited broadcasts (e.g. index ticks) work
+# without it.
+start_if_needed \
+  "GreekSoft Feed Bridge" \
+  "8022" \
+  "services/greeksoft-feed-bridge" \
+  "cd '$BASE_DIR/services/greeksoft-feed-bridge' && go run ./cmd" \
+  "$LOG_DIR/7_greeksoft-feed-bridge.log"
+
+sleep 2
+
 if [ "$FORCE_RESTART" = "1" ]; then
   kill_by_match "trade-worker"
 fi
 
-if is_proc_running "trade-worker"; then
-  echo "Trade Worker already running"
-else
-  echo "Starting Trade Worker"
-  (
-    cd "$BUILD_DIR"
-    ./services/trade-worker/trade-worker
-  ) > "$LOG_DIR/5_trade-worker.log" 2>&1 &
-fi
+# trade-worker now requires explicit <trade_id> <symbol> <quantity> args
+# and refuses to run without them (it used to hardcode a live NIFTY
+# 50-qty straddle that started unconditionally on every launch -- see
+# services/trade-worker/src/main.cpp). Left uninvoked here on purpose:
+# a real trade should be started deliberately (e.g. once trade-supervisor
+# spawns workers per-trade, or by running the binary directly with args),
+# not automatically every time the platform starts.
+echo "Trade Worker: not auto-started (requires explicit trade args -- see main.cpp)"
 
 if [ "$FORCE_RESTART" = "1" ]; then
   kill_by_port 3000
@@ -243,7 +271,7 @@ sleep 5
 HTTP_PROTO="http"
 
 echo "Port status"
-ss -lntp | egrep '5556|8003|8005|8010|3000' || true
+ss -lntp | egrep '5556|8003|8005|8010|8021|8022|3000' || true
 echo
 
 echo "Contract Master"
@@ -252,6 +280,14 @@ echo
 
 echo "Snapshot Service"
 safe_curl "${HTTP_PROTO}://localhost:8003/api/health"
+echo
+
+echo "Reconciler"
+safe_curl "${HTTP_PROTO}://localhost:8021/api/health"
+echo
+
+echo "GreekSoft Feed Bridge"
+safe_curl "${HTTP_PROTO}://localhost:8022/api/health"
 echo
 
 echo "Chain readiness"

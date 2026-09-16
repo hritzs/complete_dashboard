@@ -436,6 +436,7 @@
     };
 
     let portfolioSnapshotTimer;
+    let portfolioResyncTimer;
 
     onMount(() => {
       connectSocket();
@@ -449,6 +450,19 @@
         }
       }, 2000);
 
+      // refreshLiveMetrics (above) only re-fetches PnL/greeks for trades
+      // already sitting in the cached portfolio list -- it never
+      // re-validates the list itself against the backend, so a trade
+      // cleared server-side while this tab stays open would otherwise
+      // keep showing until the next full page reload. Periodically
+      // re-running loadPortfolioFromBackend (which now correctly clears
+      // stale cache on a confirmed-empty response) closes that gap so
+      // this self-corrects without ever needing a manual
+      // localStorage.removeItem or a reload.
+      portfolioResyncTimer = setInterval(() => {
+        loadPortfolioFromBackend();
+      }, 20000);
+
       heartbeatTimer = setInterval(() => {
         appendEventLog('info', `Heartbeat • ${selectedSymbol()} • ${selectedExpiry() || 'no-expiry'}`);
       }, 10000);
@@ -459,6 +473,7 @@
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       if (portfolioSnapshotTimer) clearInterval(portfolioSnapshotTimer);
+      if (portfolioResyncTimer) clearInterval(portfolioResyncTimer);
     });
 
     const handleSymbolChange = (e) => {
@@ -777,7 +792,16 @@
           .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 
         if (!rows.length) {
-          appendEventLog("warn", "Backend returned no useful current-account straddles; showing cached/local portfolio if available");
+          // A successful fetch that confirms zero trades is authoritative,
+          // not the same as a failed fetch (handled in the catch block
+          // below, which intentionally keeps showing cached data as a
+          // resilience fallback). Previously this returned early without
+          // clearing anything, so a trade cached once in localStorage
+          // would keep displaying forever even after the backend's data
+          // was cleared -- there was no way to make it go away short of
+          // manually clearing browser storage.
+          appendEventLog("info", "Backend confirms no active trades; clearing any stale cached portfolio entries");
+          setPortfolioItemsPersisted(() => []);
           return;
         }
 
