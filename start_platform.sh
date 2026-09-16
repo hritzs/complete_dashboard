@@ -104,7 +104,7 @@ safe_curl() {
 if [ "$MODE" = "normal" ]; then
   echo "Cleaning old processes"
 
-  for port in 8003 8005 8010 8021 8022 5556 5557 3000; do
+  for port in 8003 8005 8010 8021 8022 8023 5556 5557 3000; do
     kill_by_port "$port"
   done
 
@@ -116,6 +116,7 @@ if [ "$MODE" = "normal" ]; then
   pkill -9 -f vite || true
   pkill -9 -f "services/reconciler" || true
   pkill -9 -f "services/greeksoft-feed-bridge" || true
+  pkill -9 -f "services/latency-dashboard" || true
 
   sleep 1
 fi
@@ -235,6 +236,19 @@ start_if_needed \
 
 sleep 2
 
+# Latency dashboard: read-only REST API over latency_samples (written by
+# the reconciler -- see services/reconciler/internal/persistence/latency.go).
+# No NATS/websocket -- REST polling from the UI is sufficient at this
+# platform's order volume. Requires POSTGRES_DSN already loaded from .env.
+start_if_needed \
+  "Latency Dashboard" \
+  "8023" \
+  "services/latency-dashboard" \
+  "cd '$BASE_DIR/services/latency-dashboard' && go run ./cmd" \
+  "$LOG_DIR/9_latency-dashboard.log"
+
+sleep 2
+
 if [ "$FORCE_RESTART" = "1" ]; then
   kill_by_match "trade-worker"
 fi
@@ -271,7 +285,7 @@ sleep 5
 HTTP_PROTO="http"
 
 echo "Port status"
-ss -lntp | egrep '5556|8003|8005|8010|8021|8022|3000' || true
+ss -lntp | egrep '5556|8003|8005|8010|8021|8022|8023|3000' || true
 echo
 
 echo "Contract Master"
@@ -288,6 +302,10 @@ echo
 
 echo "GreekSoft Feed Bridge"
 safe_curl "${HTTP_PROTO}://localhost:8022/api/health"
+echo
+
+echo "Latency Dashboard"
+safe_curl "${HTTP_PROTO}://localhost:8023/api/health"
 echo
 
 echo "Chain readiness"

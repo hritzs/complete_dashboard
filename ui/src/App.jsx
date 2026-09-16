@@ -1,5 +1,6 @@
   import { createSignal, createMemo, onMount, onCleanup, Index, Show, For } from 'solid-js';
   import './App.css';
+  import LatencyDashboard from './LatencyDashboard.jsx';
 
 
   const normalize = (s) => (s || '').toString().trim().toUpperCase();
@@ -1476,6 +1477,12 @@
             onClick={() => setActiveTab('logs')}
           >
             Logs
+          </button>
+          <button
+            class={`tab-btn ${activeTab() === 'latency' ? 'active' : ''}`}
+            onClick={() => setActiveTab('latency')}
+          >
+            Latency
           </button>
         </div>
 
@@ -3029,6 +3036,10 @@
               </For>
             </div>
           </section>
+        </Show>
+
+        <Show when={activeTab() === 'latency'}>
+          <LatencyDashboard />
         </Show>
       </div>
     );
