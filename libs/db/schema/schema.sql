@@ -166,3 +166,19 @@ CREATE TABLE audit_logs (
     details JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Latency samples: stage-discriminated so future latency sources (feed
+-- tick-to-publish, order-to-REST-ack, etc.) can share this table without
+-- a schema change. v1 (see libs/db/migrations/0006_latency_samples.sql)
+-- only writes stage='iris_confirmation', sampled once per order (the
+-- first Iris push), not once per status transition.
+CREATE TABLE latency_samples (
+    id BIGSERIAL PRIMARY KEY,
+    stage TEXT NOT NULL,
+    order_id BIGINT REFERENCES orders(id),
+    trade_uid TEXT,
+    broker_order_id TEXT NOT NULL,
+    latency_us BIGINT NOT NULL,
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_latency_samples_stage_recorded_at ON latency_samples(stage, recorded_at DESC);
