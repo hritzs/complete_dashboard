@@ -785,3 +785,70 @@ clarifying answers from the user scoped the work.
       Python-reference migration; building out the empty stub services;
       wiring session-manager/market-data-gateway into
       `start_platform.sh`.
+
+## Phase 2 (of the Python-migration roadmap): autonomous SL that actually exits (2026-09-17)
+Started the actual Python-reference migration. A fresh code read (not
+assumed from memory) surfaced something more serious than "a stub is
+missing a call": `runMonitorCycle`'s SL check
+(`internal/trading/service.go`) was **already firing autonomously** --
+no human involved -- and, on breach, only set `trade.Status =
+"CLOSED_SL"` and deleted the runtime, **without ever placing an exit
+order**. The system could mark a position closed and stop watching it
+while the real position stayed open at the broker. This directly
+contradicted `models.go`'s own doc comment on `SLPointsPerLot`
+("alert-only and must never directly set a trade to CLOSED_SL") -- the
+code had silently stopped honoring its own documented safety intent.
+
+- [x] `runMonitorCycle`'s SL branch now calls
+      `s.SquareOff(tradeUID, "SL")` -- the same function every manual
+      square-off uses -- instead of flipping the status directly. This
+      activates `SquareOff`'s existing `reason=="SL"` branch
+      (`GenerateAggressiveChunkedOrders`, max-lots-per-order, fastest
+      exit) that was confirmed **dead code** until now (nothing in the
+      repo called `SquareOff` with `reason=="SL"` before this).
+      Inherits `SquareOff`'s existing per-trade locking, verified-fill-
+      based completion, and revert-on-error semantics for free.
+- [x] Traced every `return` path inside `SquareOff` to confirm it never
+      leaves a trade stuck at `SQUARING_OFF` on failure -- it always
+      resolves to either a terminal status or reverts to the prior
+      status. This is what makes "retry on the next `PollIntervalSec`
+      tick" safe: a failed SL exit isn't lost, and can't deadlock the
+      trade out of ever being retried.
+- [x] `SquareOff`'s success path now sets `CLOSED_SL` (not `CLOSEDSQF`)
+      when `reason=="SL"`, preserving the audit distinction --
+      `CLOSED_SL` was already a recognized terminal status elsewhere in
+      the file, just never reached. **Found and fixed a bug this same
+      change introduced before it shipped**: the post-loop success
+      check re-derived "did this succeed" from
+      `tr.Status != "CLOSEDSQF"`, which would have misreported every
+      successful SL exit as a failure. Caught by the new test
+      (`TestSquareOff_ReasonDeterminesFinalStatus/SL`) failing
+      immediately on first run. Fixed to check `remainingCE/PE == 0`
+      directly instead of re-deriving success from a status string.
+- [x] `slThresholdForTrade` fixes the SL threshold to the trade's
+      **original** size (`trade.Lots`), not live `CEQty+PEQty` --
+      matching the Python reference system's deliberate
+      `FIXED_ORIGINAL_POSITION_SL` design, so a partial square-off,
+      hedge, or roll can't drift the effective stop-loss tighter by
+      shrinking the denominator. This codebase already used
+      `trade.Lots` for exactly this reason a few lines above in the
+      same function's `pnlPerStraddle` calc; the SL threshold just
+      hadn't been updated to match.
+- [x] Corrected `SLPointsPerLot`'s stale, contradictory doc comment.
+- [x] Tests (`sl_trigger_test.go`): the threshold formula against known
+      inputs (including the shrink-after-partial-exit case); a
+      table-driven `SquareOff` test proving `reason="SL"` → `CLOSED_SL`
+      and `reason="manual"` → `CLOSEDSQF`, via a purpose-built fake
+      `Executor`/`VerifiedFillsProvider` (not a resurrection of the
+      dead `MockExecutor` removed in Phase 11's cleanup). All pass with
+      `-race`.
+- [ ] **Live validation not yet run** -- requires deliberately setting
+      an aggressively tight `sl_points_per_lot` on a real small trade
+      to force a real breach, since market conditions can't be relied
+      on to do it naturally. Flagged so it isn't forgotten; only to be
+      run with explicit approval, same pattern as every other live test
+      this session.
+- [ ] Not in this pass: TP, roll, hedge-fix, fast-exit engine, wings,
+      special-OMS ledger, event-bus priority arbitration --
+      `tickRuntime`'s separate `SLPnLLimit`-based alert-only log is
+      also untouched (a different, pre-existing config knob).
