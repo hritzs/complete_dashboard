@@ -1823,31 +1823,3 @@ func chooseUnderlying(chain OptionChainSnapshot) float64 {
 	}
 	return 0
 }
-
-// CalculateWeightedAveragePrice computes exact execution price across multi-lot split fills
-func CalculateWeightedAveragePrice(fills []map[string]interface{}) float64 {
-	totalValue := 0.0
-	totalQty := 0.0
-	for _, fill := range fills {
-		qty := 0.0
-		if q, ok := fill["CumulativeQuantity"].(float64); ok {
-			qty = q
-		} else if q, ok := fill["CumulativeQuantity"].(int); ok {
-			qty = float64(q)
-		}
-
-		price := 0.0
-		if p, ok := fill["OrderAverageTradedPrice"].(float64); ok {
-			price = p
-		}
-
-		if qty > 0 && price > 0 {
-			totalValue += price * qty
-			totalQty += qty
-		}
-	}
-	if totalQty > 0 {
-		return totalValue / totalQty
-	}
-	return 0.0
-}

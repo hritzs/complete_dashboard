@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 )
 
 type SnapshotClient struct {
@@ -160,31 +159,4 @@ func (c *LotSizeClient) GetLotSize(ctx context.Context, symbol string, expiry st
 	}
 
 	return result.LotSize, nil
-}
-
-func FormatExpiryForContractMaster(expiry string) string {
-	s := strings.TrimSpace(expiry)
-	if s == "" {
-		return s
-	}
-
-	layouts := []string{
-		"02Jan2006",
-		"02JAN2006",
-		"02-Jan-2006",
-		"02-JAN-2006",
-		"02-Jan-06",
-		"02-JAN-06",
-		"2006-01-02",
-		"2006-01-02T15:04:05",
-		time.RFC3339,
-	}
-
-	for _, layout := range layouts {
-		if t, err := time.Parse(layout, s); err == nil {
-			return strings.ToUpper(t.Format("02-Jan-06"))
-		}
-	}
-
-	return strings.ToUpper(s)
 }
