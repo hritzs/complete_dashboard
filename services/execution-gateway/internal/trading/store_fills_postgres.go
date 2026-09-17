@@ -104,6 +104,16 @@ func (s *PostgresBackedStore) persistVerifiedFill(
 	// Scoped to broker_name + account_id: broker_order_id alone has no
 	// uniqueness guarantee at the schema level, so an unscoped lookup could
 	// nondeterministically match another account's order on collision.
+	//
+	// GreekSoft's broker_order_id is only unique within a trading session,
+	// not globally -- confirmed 2026-09-17: order ids like 120000003 and
+	// 120000013 were reused the very next day for unrelated orders (even
+	// with the opposite side), and without an ORDER BY this lookup could
+	// return yesterday's stale row instead of today's real one, producing
+	// a false "side mismatch" and leaving today's trade stuck in PARTIAL
+	// with its autonomous SL/TP/TIME monitor never started. ORDER BY
+	// created_at DESC picks the most recently placed matching order,
+	// which is always the correct one to reconcile against.
 	err = tx.QueryRowContext(ctx, `
 		SELECT
 			id,
@@ -115,6 +125,8 @@ func (s *PostgresBackedStore) persistVerifiedFill(
 		WHERE broker_order_id = $1
 		  AND broker_name = $2
 		  AND account_id = $3
+		ORDER BY created_at DESC
+		LIMIT 1
 		FOR UPDATE
 	`,
 		fill.BrokerOrderID,
