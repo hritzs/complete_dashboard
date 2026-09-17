@@ -647,15 +647,54 @@ needs its own review/tests/paper-soak).
       restarted cleanly, no active straddles). `omsfeed.go`'s doc
       comments now carry an explicit, unmissable warning not to call
       `Start()` while `reconciler` runs for the same account.
-      **Not yet done**: the actual redesign -- `OMSFeed` should read
-      reconciler-persisted state (e.g. Postgres `LISTEN/NOTIFY`, or fast
-      polling -- reconciler already writes within milliseconds of an
-      Iris push) instead of opening a second competing Iris connection.
-      Until that's built, Phase 1's TBT-verification goal is only
-      half-delivered: the reconciler-side latency win (Phase 8's
-      dashboard) is real and live; the execution-gateway-side
-      REST-poll-to-Iris-push swap is designed and coded but cannot be
-      safely enabled yet.
+- [x] **OMSFeed redesigned and re-validated live, same day (2026-09-17).**
+      Per the user's direction ("websocket as primary verifier, REST as
+      fallback if it fails"), rebuilt `OMSFeed` to read
+      reconciler-persisted Postgres state (today's `orders`/`fills`/
+      `contracts`, quantity-weighted average price across partial fills)
+      instead of opening a second Iris connection -- eliminates the
+      collision entirely, no feature flag needed since it's always safe.
+      `Executor.GetVerifiedFills` tries this first, falls back to REST
+      only on a genuine error (including a cached reconciler
+      `/api/health` check), never on a merely-empty result (that's the
+      normal "still pending" case). Unit tests (health-check caching/
+      pass/fail with `httptest`) plus a new integration test against
+      live Postgres (quantity-weighted price math, the unfilled-order
+      filter, the unhealthy-reconciler fallback trigger) all pass.
+      **Validated live**: one real 1-lot NIFTY straddle build verified
+      fully through the reconciler-DB path with zero REST fallbacks.
+- [x] **Second live incident found and fixed the same day: the
+      pre-existing "no matching order row" race actually lost a real
+      fill.** Squaring off the validation trade above hit exactly the
+      race this session's earlier summary had already flagged as a
+      known-but-unfixed issue: execution-gateway's own order-row write
+      (`broker_order_id`) can commit *after* GreekSoft's Iris push for
+      that same order has already been dispatched and found no matching
+      row (`ExecuteOrderIntent` does its own synchronous REST-based
+      confirmation, up to ~2s, before writing `broker_order_id`, while
+      Iris pushes often arrive within tens of milliseconds). The
+      reconciler logged "no matching order row -- skipping" for both
+      buy-back orders and never persisted the fills, leaving the DB
+      showing the trade open/short 65/65 when the broker was actually
+      flat (confirmed via live `NPRequest`, `netQty: 0` both legs) --
+      corrected with user approval, same pattern as the first incident.
+      **Fixed at the root**: `services/reconciler/cmd/main.go`'s
+      `ApplyOrderUpdate` → `ErrOrderNotFound` path now hands off to a
+      background `retryUnmatched` goroutine (6 attempts, 300ms apart,
+      ~1.8s total) instead of giving up immediately, without blocking
+      the Iris read loop. Not yet re-validated live (the fix landed
+      after this session's live trades were already closed out) --
+      worth confirming next time a real square-off runs.
+- [x] **UI fix, same session**: the Latency tab showed "NetworkError
+      when attempting to fetch resource" -- the browser could reach the
+      vite dev server (port 3000) but not `services/latency-dashboard`'s
+      own port (8023) directly, depending on how this environment's
+      ports are exposed. Fixed by adding a `/api/latency` vite proxy
+      rule (checked before the general `/api` rule) and switching
+      `LatencyDashboard.jsx` to relative fetch paths -- the proxy runs
+      server-side, so it only needs 8023 reachable from the machine
+      running vite, not from the browser. Confirmed working via the
+      proxy after a UI dev-server restart.
 - [ ] **Not yet done**: `depthslicer.go` (depth-aware, impact-minimizing
       slice sizing replacing the fixed-7-chunk generator) -- the other
       half of Phase 1. Deliberately sequenced after `omsfeed.go` was
