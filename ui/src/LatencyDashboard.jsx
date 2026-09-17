@@ -1,15 +1,13 @@
 import { createSignal, onMount, onCleanup, For, Show } from 'solid-js';
 
-// Talks directly to services/latency-dashboard (port 8023) rather than
-// going through vite's /api proxy (which targets execution-gateway's
-// 8005) -- same approach App.jsx already uses for its snapshot-service
-// websocket connection (see connectSocket's window.location.hostname
-// usage).
-const latencyBaseUrl = () => {
-  const proto = window.location.protocol === 'https:' ? 'https' : 'http';
-  return `${proto}://${window.location.hostname}:8023`;
-};
-
+// Routed through vite's dev-server proxy (see vite.config.js's
+// '/api/latency' rule -> services/latency-dashboard on 8023), NOT a
+// direct window.location.hostname:8023 URL -- confirmed live that the
+// browser can only reach the vite dev server's own port; a second
+// service's port isn't necessarily reachable directly depending on how
+// this environment is tunneled/exposed. The vite proxy runs server-side,
+// so it only needs 8023 to be reachable from the machine running vite,
+// not from the browser.
 async function fetchJson(url) {
   const res = await fetch(url);
   const text = await res.text();
@@ -54,8 +52,8 @@ function LatencyDashboard() {
   const refresh = async () => {
     try {
       const [statsData, recentData] = await Promise.all([
-        fetchJson(`${latencyBaseUrl()}/api/latency/stats?window=5m`),
-        fetchJson(`${latencyBaseUrl()}/api/latency/recent?limit=200`),
+        fetchJson('/api/latency/stats?window=5m'),
+        fetchJson('/api/latency/recent?limit=200'),
       ]);
       setStats(statsData);
       setRecent(recentData);
