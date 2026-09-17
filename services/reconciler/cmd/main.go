@@ -116,17 +116,9 @@ func main() {
 	}
 	log.Printf("[RECONCILER] login successful account=%s user_id=%s", accountID, session.UserID)
 
-	applyAndPublish := func(update normalize.OrderUpdate, raw []byte) {
-		result, err := store.ApplyOrderUpdate(ctx, update, raw)
-		if err == persistence.ErrOrderNotFound {
-			log.Printf("[RECONCILER] no matching order row for broker_order_id=%s (today) -- skipping", update.BrokerOrderID)
-			return
-		}
-		if err != nil {
-			log.Printf("[RECONCILER] persist broker_order_id=%s failed: %v", update.BrokerOrderID, err)
-			return
-		}
-
+	// handleApplied runs after a successful ApplyOrderUpdate, whether that
+	// happened on the first try or after retryUnmatched's backoff below.
+	handleApplied := func(result persistence.ApplyResult, update normalize.OrderUpdate) {
 		// Iris order-confirmation latency: time between execution-gateway
 		// creating the local order row (order submission) and this push
 		// being processed. Logged unconditionally (not just on fills) so
@@ -149,6 +141,58 @@ func main() {
 				log.Printf("[RECONCILER] publish fill event failed: %v", err)
 			}
 		}
+	}
+
+	// retryUnmatched handles a confirmed live race (2026-09-17): an Iris
+	// push can arrive and be dispatched before execution-gateway's own
+	// order-row write (broker_order_id) commits -- ExecuteOrderIntent
+	// does its own synchronous REST-based order confirmation (up to
+	// ~2s) before it writes broker_order_id, while GreekSoft's Iris push
+	// for that same order often arrives within tens of milliseconds of
+	// placement. Without this retry, that race silently drops a real
+	// fill (confirmed live: a square-off's BUY-back orders filled at the
+	// broker but were never recorded, leaving the DB showing an open
+	// position the broker didn't actually have).
+	//
+	// Runs in its own goroutine, never blocking the Iris read loop, so a
+	// slow-to-match order can't delay processing of other orders'
+	// pushes. Six attempts over 300ms each (~1.8s) comfortably covers
+	// the observed race window without duplicating the 30s recovery
+	// poller's job of handling much longer gaps.
+	retryUnmatched := func(update normalize.OrderUpdate, raw []byte) {
+		for attempt := 0; attempt < 6; attempt++ {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(300 * time.Millisecond):
+			}
+
+			result, err := store.ApplyOrderUpdate(ctx, update, raw)
+			if err == persistence.ErrOrderNotFound {
+				continue
+			}
+			if err != nil {
+				log.Printf("[RECONCILER] retry persist broker_order_id=%s failed: %v", update.BrokerOrderID, err)
+				return
+			}
+			log.Printf("[RECONCILER] matched broker_order_id=%s on retry attempt=%d", update.BrokerOrderID, attempt+1)
+			handleApplied(result, update)
+			return
+		}
+		log.Printf("[RECONCILER] no matching order row for broker_order_id=%s after retries -- giving up (recovery poller will catch it later)", update.BrokerOrderID)
+	}
+
+	applyAndPublish := func(update normalize.OrderUpdate, raw []byte) {
+		result, err := store.ApplyOrderUpdate(ctx, update, raw)
+		if err == persistence.ErrOrderNotFound {
+			go retryUnmatched(update, raw)
+			return
+		}
+		if err != nil {
+			log.Printf("[RECONCILER] persist broker_order_id=%s failed: %v", update.BrokerOrderID, err)
+			return
+		}
+		handleApplied(result, update)
 	}
 
 	// Recovery/catch-up path: reconciles orders stuck in a non-terminal
