@@ -210,6 +210,9 @@ func main() {
 
 	xtsClient := xts.NewClient()
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	factory := trading.NewDefaultBrokerFactory()
 
 	factory.Register(
@@ -278,6 +281,28 @@ func main() {
 			log.Printf("Greeksoft executor ready account=%s user_id=%s", accountID, session.UserID)
 
 			executor := greeksoftbroker.NewExecutor(gsClient)
+
+			// EXEC_VERIFY_MODE=iris switches fill verification from
+			// REST order-book polling to GreekSoft's live Iris push feed
+			// (see internal/brokers/greeksoft/omsfeed.go and the approved
+			// TBT-driven OMS/PMS migration plan). Off by default until
+			// validated live against a real trade -- REST polling
+			// (the existing, already-proven path) remains the default.
+			if strings.EqualFold(strings.TrimSpace(os.Getenv("EXEC_VERIFY_MODE")), "iris") {
+				feed := greeksoftbroker.NewOMSFeed()
+				feed.Start(ctx, gsClient, sharedDB, &broker.AccountConfig{
+					Name:       "greeksoft-omsfeed-" + strings.ToLower(accountID),
+					BrokerType: "greeksoft",
+					APIKey:     accountID,
+					APISecret:  appConfig.GreekPassword,
+					ClientID:   accountID,
+					PanDob:     appConfig.GreekPanDob,
+				})
+				executor.OMSFeed = feed
+				executor.VerifyViaIris = true
+				log.Printf("Greeksoft executor account=%s verifying fills via Iris push (EXEC_VERIFY_MODE=iris)", accountID)
+			}
+
 			greekExecutors[accountID] = executor
 
 			return executor, nil
@@ -289,9 +314,6 @@ func main() {
 	handlers := trading.NewHandlers(service, store)
 
 	go startHTTPServer(appConfig, handlers)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	go waitForShutdown(cancel)
 	go startZMQListener(ctx, appConfig, xtsClient)

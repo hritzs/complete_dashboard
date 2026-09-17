@@ -17,6 +17,15 @@ import (
 
 type Executor struct {
 	Client *gs.Client
+
+	// OMSFeed, when non-nil, backs GetVerifiedFills with GreekSoft's live
+	// Iris push feed instead of REST order-book polling -- see
+	// omsfeed.go's doc comment and the approved TBT-driven OMS/PMS
+	// migration plan. Gated by VerifyViaIris rather than presence alone,
+	// so a feed can be started (warming up its in-memory state) before
+	// being trusted as the verification source of record.
+	OMSFeed       *OMSFeed
+	VerifyViaIris bool
 }
 
 func NewExecutor(client *gs.Client) *Executor {
@@ -374,6 +383,10 @@ func (e *Executor) GetVerifiedFills(
 ) ([]trading.BrokerFill, error) {
 	if e == nil || e.Client == nil {
 		return nil, fmt.Errorf("greeksoft executor client is nil")
+	}
+
+	if e.VerifyViaIris && e.OMSFeed != nil {
+		return e.OMSFeed.GetVerifiedFills(ctx)
 	}
 
 	book, err := e.Client.GetOrderBook(ctx)
