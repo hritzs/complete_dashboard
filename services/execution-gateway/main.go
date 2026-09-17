@@ -282,12 +282,21 @@ func main() {
 
 			executor := greeksoftbroker.NewExecutor(gsClient)
 
-			// EXEC_VERIFY_MODE=iris switches fill verification from
-			// REST order-book polling to GreekSoft's live Iris push feed
-			// (see internal/brokers/greeksoft/omsfeed.go and the approved
-			// TBT-driven OMS/PMS migration plan). Off by default until
-			// validated live against a real trade -- REST polling
-			// (the existing, already-proven path) remains the default.
+			// EXEC_VERIFY_MODE=iris switches fill verification from REST
+			// order-book polling to GreekSoft's live Iris push feed (see
+			// internal/brokers/greeksoft/omsfeed.go). CONFIRMED UNSAFE
+			// live on 2026-09-17: GreekSoft allows only one live Iris
+			// websocket connection per account, so OMSFeed's own
+			// connection fights services/reconciler's for the same
+			// account and repeatedly disconnects it -- this directly
+			// caused reconciler to miss a real fill during a live test
+			// (required a manual DB correction afterward). Do not set
+			// EXEC_VERIFY_MODE=iris until OMSFeed is redesigned to read
+			// reconciler-persisted state instead of opening a second
+			// Iris connection -- see omsfeed.go's doc comment and
+			// docs/TODO.md Phase 10. REST polling (the existing,
+			// already-proven path) remains the default and is the only
+			// safe option today.
 			if strings.EqualFold(strings.TrimSpace(os.Getenv("EXEC_VERIFY_MODE")), "iris") {
 				feed := greeksoftbroker.NewOMSFeed()
 				feed.Start(ctx, gsClient, sharedDB, &broker.AccountConfig{

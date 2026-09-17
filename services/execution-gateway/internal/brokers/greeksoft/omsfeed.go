@@ -33,6 +33,14 @@ import (
 // process restarts, OMSFeed simply starts with an empty view, exactly
 // like a fresh REST poll would only see the broker's current state; nothing
 // durable is lost because nothing durable was ever kept here.
+//
+// DISABLED as of 2026-09-17 (see Start's doc comment for the full
+// incident): this type's Iris subscription is currently NOT SAFE to run
+// alongside services/reconciler for the same account -- GreekSoft allows
+// only one live Iris connection per account, and the two fight over it.
+// EXEC_VERIFY_MODE=iris (main.go) is commented out in .env until this is
+// redesigned to read reconciler-persisted state instead of opening a
+// second Iris connection.
 type OMSFeed struct {
 	mu     sync.RWMutex
 	orders map[string]omsOrderState // key: broker order ID (gorderid)
@@ -64,10 +72,29 @@ func NewOMSFeed() *OMSFeed {
 }
 
 // Start begins consuming GreekSoft's Iris push feed in the background.
-// Safe to call once per process; ctx cancellation stops it. Uses the same
-// shared-session login as everything else in this platform (LoginShared
-// via the caller), so it doesn't collide with the reconciler's or
-// greeksoft-feed-bridge's own GreekSoft sessions.
+// ctx cancellation stops it.
+//
+// CONFIRMED LIVE INCIDENT (2026-09-17): GreekSoft allows only ONE live
+// Iris WEBSOCKET connection per account, not just one HTTP session.
+// LoginShared's shared *session token* is safe to reuse across processes
+// (that's what it's for), but each call to this method opens its own,
+// separate Iris websocket -- calling it from execution-gateway while
+// services/reconciler already holds its own Iris connection for the same
+// account caused the two to repeatedly disconnect each other
+// ("disconnecting the current session, User has been logged in on
+// another session"), and directly caused a real fill to be missed
+// (reconciler's connection dropped at the exact moment an order's
+// TradeResponse would have arrived, so the fill was never persisted --
+// required a manual DB correction afterward, confirmed against the
+// broker's live NPRequest net position).
+//
+// DO NOT call this from execution-gateway (or any second process) while
+// services/reconciler is running for the same GreekSoft account, until
+// this is redesigned. The safer path for the OMS side of the OMS/PMS
+// split is to read reconciler-persisted state (e.g. LISTEN/NOTIFY or
+// polling Postgres, which reconciler already updates within
+// milliseconds of an Iris push) rather than opening a second competing
+// Iris connection. See docs/TODO.md Phase 10.
 func (f *OMSFeed) Start(ctx context.Context, client *gs.Client, db *sql.DB, accCfg *broker.AccountConfig) {
 	go func() {
 		err := client.ReadLoopWithReconnect(ctx, db, accCfg, func(frame gs.IrisFrame) {
@@ -171,6 +198,8 @@ func (f *OMSFeed) apply(brokerOrderID string, token int64, side, status string, 
 func (f *OMSFeed) GetVerifiedFills(ctx context.Context) ([]trading.BrokerFill, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
+
+	log.Printf("[OMSFEED] GetVerifiedFills via Iris in-memory map (tracked_orders=%d)", len(f.orders))
 
 	fills := make([]trading.BrokerFill, 0, len(f.orders))
 	for brokerOrderID, st := range f.orders {

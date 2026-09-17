@@ -619,14 +619,43 @@ needs its own review/tests/paper-soak).
       channel, and multiple independent orders. All pass with `-race`,
       no real broker/network dependency (constructs `normalize.*`
       payloads directly, doesn't need a live Iris frame).
-- [ ] **Not yet done**: `EXEC_VERIFY_MODE=iris` has not been validated
-      against a real live trade (deliberately -- this session avoids
-      placing live trades merely to self-verify infra changes; the
-      default REST path is unchanged and still what's live). Do this
-      once the user is ready: set the env var, run one small real
-      partial square-off, confirm `[OMSFEED]`/`Greeksoft executor
-      account=... verifying fills via Iris push` logs appear and the
-      result matches what REST verification would have found.
+- [x] **`EXEC_VERIFY_MODE=iris` validated live on 2026-09-17 -- found a
+      real bug, now DISABLED pending redesign.** With user approval, ran
+      one real 1-lot NIFTY straddle (`TRD_U001_GREEKSOFT_147_NIFTY_
+      22SEP26_23300_20260917105853`) with the flag on. Confirmed
+      `OMSFeed` opens its **own separate Iris websocket connection** --
+      and GreekSoft allows only **one live Iris connection per account**,
+      not just one HTTP session (LoginShared's shared session token is
+      safe to reuse; a second live websocket for the same account is
+      not). `OMSFeed`'s connection and `services/reconciler`'s existing
+      one repeatedly kicked each other offline
+      (`"disconnecting the current session, User has been logged in on
+      another session"`), and this directly caused a real fill to be
+      lost: the reconciler's connection dropped at the exact moment the
+      original SELL orders' `TradeResponse` pushes would have arrived,
+      so those fills were never persisted. The subsequent square-off's
+      BUY-back fills *were* persisted fine (connection was stable by
+      then), leaving the DB showing the trade net **long** 65 CE/65 PE
+      when the broker was actually flat -- confirmed via a live
+      `NPRequest` call (`netQty: 0` on both legs) and corrected with
+      user approval (`trades.status='CLOSEDSQF'`,
+      `trade_legs.current_quantity=0`), same pattern as the earlier
+      Phase 7 incident.
+      **Fix applied**: `EXEC_VERIFY_MODE=iris` commented out in `.env`
+      (REST verification, the proven path, is active again -- confirmed
+      the platform is healthy: reconciler stable, execution-gateway
+      restarted cleanly, no active straddles). `omsfeed.go`'s doc
+      comments now carry an explicit, unmissable warning not to call
+      `Start()` while `reconciler` runs for the same account.
+      **Not yet done**: the actual redesign -- `OMSFeed` should read
+      reconciler-persisted state (e.g. Postgres `LISTEN/NOTIFY`, or fast
+      polling -- reconciler already writes within milliseconds of an
+      Iris push) instead of opening a second competing Iris connection.
+      Until that's built, Phase 1's TBT-verification goal is only
+      half-delivered: the reconciler-side latency win (Phase 8's
+      dashboard) is real and live; the execution-gateway-side
+      REST-poll-to-Iris-push swap is designed and coded but cannot be
+      safely enabled yet.
 - [ ] **Not yet done**: `depthslicer.go` (depth-aware, impact-minimizing
       slice sizing replacing the fixed-7-chunk generator) -- the other
       half of Phase 1. Deliberately sequenced after `omsfeed.go` was
