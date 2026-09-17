@@ -852,3 +852,63 @@ code had silently stopped honoring its own documented safety intent.
       special-OMS ledger, event-bus priority arbitration --
       `tickRuntime`'s separate `SLPnLLimit`-based alert-only log is
       also untouched (a different, pre-existing config knob).
+
+## Phase 2 continued: autonomous TP and time-based hard exit; SL unified with bps-of-spot (2026-09-17)
+User asked to build TP (didn't exist as an autonomous exit at all) and a
+15:15 hard time-based exit, then test SL/TP live with 1 lot and a
+1-bps-of-synthetic-spot threshold. Two fields already existed unused in
+`MonitorConfig` for exactly this: `SLPnLBpsOfSpot`/`TPPnLBpsOfSpot` (a
+paired bps-of-spot pair with clearer semantics than the older
+`SpotStopLossBps`, and the only one of the two with a TP counterpart) --
+used these instead of `SpotStopLossBps`.
+
+- [x] Added `bpsOfSpotThreshold(spot, bps)` = `spot*bps/10000.0`, the
+      shared formula for all bps-of-spot comparisons, compared against
+      `pnlPerStraddle` (already computed in `runMonitorCycle` from the
+      original lot count, not live CE/PE quantity).
+- [x] SL is now a single unified check: `SLPointsPerLot` OR
+      `SLPnLBpsOfSpot`, first match wins -- structured as one evaluation
+      rather than two independent `if`s specifically to avoid a double
+      `SquareOff` call in the same tick if both are configured and both
+      breach simultaneously (harmless either way since `SquareOff` no-ops
+      on zero remaining quantity, but avoided structurally for clean
+      logs).
+- [x] New autonomous TP (`TPPnLBpsOfSpot`): fires when
+      `pnlPerStraddle >= bpsOfSpotThreshold(spot, bps)`, verified exit via
+      `SquareOff(tradeUID, "TP")`, final status `CLOSED_TP`.
+- [x] New autonomous time-based hard exit (`SquareOffHardTime`, a field
+      that existed but was completely unused): fires once
+      `time.Now()` reaches the configured deadline, verified exit via
+      `SquareOff(tradeUID, "TIME")`, final status `CLOSED_TIME`.
+- [x] Added `executeAutoExit(tradeUID, reason, wantStatus)` -- shared
+      helper for all three triggers (SL/TP/TIME): calls `SquareOff`, on
+      success stops the runtime, on failure leaves it running so the next
+      tick retries (same safe-retry property proven for SL in the
+      previous phase, now shared by all three instead of duplicated).
+- [x] All three terminal-status switches in `service.go` (skip guard,
+      both PnL-reporting switches) and the UI's closed-trade lists
+      (`CLOSED_TRADE_STATUSES`, `refreshLiveMetrics`'s skip filter, plus
+      a new `.status-badge.closed_time` CSS rule) now recognize
+      `CLOSED_SL`/`CLOSED_TP`/`CLOSED_TIME`.
+- [x] `ModifyTradeRequest`/`ModifyTrade` gained `sl_pnl_bps_of_spot`,
+      `tp_pnl_bps_of_spot`, and `square_off_hard_time` (accepts `HH:MM`
+      or `HH:MM:SS`) so these can be configured on a live trade without a
+      restart -- needed for the upcoming live validation test.
+- [x] Fixed a doc-comment numerical error found while writing the tests:
+      `SLPnLBpsOfSpot`'s worked example said "24200 spot, 14 bps = 338.8
+      points" -- actually `24200*14/10000=33.88`, a 10x error. Cross-
+      checked the formula itself against `SpotStopLossBps`'s own correct
+      example (`24400*1/10000=2.44`) to confirm only the comment's
+      arithmetic was wrong, not the design. Locked both correct examples
+      into `TestBpsOfSpotThreshold`.
+- [x] Extended `TestSquareOff_ReasonDeterminesFinalStatus` to cover TP
+      and TIME. Full `go build`/`go vet`/`go test -race` clean; UI
+      `vite build` clean. Rebuilt and restarted the `execution-gateway`
+      binary so this is live.
+- [ ] **Live validation not yet run** -- place a 1-lot NIFTY straddle and
+      test SL (`sl_pnl_bps_of_spot=1`) and TP (`tp_pnl_bps_of_spot=1`)
+      paths, configure `square_off_hard_time=15:15` as a safety net, and
+      separately test the pre-existing synthetic-hedge autonomous trigger
+      with 1 lot of NIFTY via `force_one_lot_hedge_test`. Requires
+      explicit approval before any real order is placed, same pattern as
+      every other live test this session.
