@@ -1,11 +1,10 @@
-// Package normalize turns GreekSoft's Iris OrderResponse push frames into
-// the reconciler's canonical OrderUpdate/FillEvent shape.
-//
-// The previous version of this file modeled an XTS-shaped wire format
-// (AppOrderID, LeavesQuantity, ...) that doesn't match GreekSoft's actual
-// Iris push format at all -- confirmed against GreekSoft's own websocket
-// documentation and a live capture. This rewrite targets the real
-// OrderResponse shape.
+// Package normalize turns GreekSoft's Iris OrderResponse/TradeResponse push
+// frames into a canonical OrderUpdate/FillEvent shape. It lives in
+// libs/broker-greeksoft (not a single service's internal/) because both
+// services/reconciler (durable Postgres persistence) and
+// services/execution-gateway (real-time in-memory fill tracking, see
+// internal/trading/omsfeed.go) parse the identical Iris wire format and
+// must not drift into two different interpretations of it.
 package normalize
 
 import (

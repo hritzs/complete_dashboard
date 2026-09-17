@@ -17,7 +17,7 @@ import (
 
 	_ "github.com/lib/pq"
 
-	"trading-platform/services/reconciler/internal/normalize"
+	"trading-platform/libs/broker-greeksoft/normalize"
 )
 
 func testDB(t *testing.T) *sql.DB {

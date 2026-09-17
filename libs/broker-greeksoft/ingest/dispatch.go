@@ -1,7 +1,9 @@
-// Package ingest turns a raw Iris websocket frame into a typed payload the
-// rest of the reconciler can work with. Business logic (what an
-// OrderResponse means, how to persist it) deliberately does NOT live
-// here -- this package only classifies and decodes.
+// Package ingest turns a raw Iris websocket frame into a typed payload
+// callers can work with. Business logic (what an OrderResponse means, how
+// to persist it) deliberately does NOT live here -- this package only
+// classifies and decodes. Lives in libs/broker-greeksoft (not a single
+// service's internal/) since both services/reconciler and
+// services/execution-gateway consume the same Iris wire format.
 package ingest
 
 import (
@@ -9,7 +11,7 @@ import (
 	"fmt"
 
 	greeksoft "trading-platform/libs/broker-greeksoft"
-	"trading-platform/services/reconciler/internal/normalize"
+	"trading-platform/libs/broker-greeksoft/normalize"
 )
 
 // FrameKind identifies what an Iris frame contained.

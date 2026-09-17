@@ -7,9 +7,9 @@ import (
 
 	"github.com/nats-io/nats.go"
 
+	"trading-platform/libs/broker-greeksoft/normalize"
 	"trading-platform/libs/contracts"
 	"trading-platform/libs/go-common/events"
-	"trading-platform/services/reconciler/internal/normalize"
 	"trading-platform/services/reconciler/internal/persistence"
 )
 

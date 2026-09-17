@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"trading-platform/services/reconciler/internal/normalize"
+	"trading-platform/libs/broker-greeksoft/normalize"
 )
 
 // ErrOrderNotFound is returned when no order row matches the incoming

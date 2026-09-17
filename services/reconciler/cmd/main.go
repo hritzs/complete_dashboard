@@ -21,10 +21,10 @@ import (
 	"github.com/sirupsen/logrus"
 
 	greeksoft "trading-platform/libs/broker-greeksoft"
+	"trading-platform/libs/broker-greeksoft/ingest"
+	"trading-platform/libs/broker-greeksoft/normalize"
 	broker "trading-platform/libs/go-broker"
 	"trading-platform/libs/go-common/events"
-	"trading-platform/services/reconciler/internal/ingest"
-	"trading-platform/services/reconciler/internal/normalize"
 	"trading-platform/services/reconciler/internal/persistence"
 	"trading-platform/services/reconciler/internal/publish"
 	"trading-platform/services/reconciler/internal/recover"
