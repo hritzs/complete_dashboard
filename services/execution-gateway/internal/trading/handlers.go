@@ -518,6 +518,17 @@ type ModifyTradeRequest struct {
 	TakeProfitPointsPerStraddle *float64 `json:"take_profit_points_per_straddle,omitempty"`
 	AutoRiskExecutionEnabled    *bool    `json:"auto_risk_execution_enabled,omitempty"`
 
+	// Autonomous bps-of-spot SL/TP, wired in runMonitorCycle (see
+	// bpsOfSpotThreshold): exits via a real, verified SquareOff when
+	// pnlPerStraddle crosses spot*bps/10,000 in either direction.
+	SLPnLBpsOfSpot *float64 `json:"sl_pnl_bps_of_spot,omitempty"`
+	TPPnLBpsOfSpot *float64 `json:"tp_pnl_bps_of_spot,omitempty"`
+
+	// Autonomous time-based hard exit, wired in runMonitorCycle -- unlike
+	// SquareOffTime below (still alert-only in tickRuntime), reaching
+	// this time triggers a real, verified SquareOff(reason="TIME").
+	SquareOffHardTime *string `json:"square_off_hard_time,omitempty"` // "15:15:00"
+
 	StraddleDiv                  *float64 `json:"straddle_div,omitempty"`
 	HedgeDiv                     *float64 `json:"hedge_div,omitempty"`
 	HedgeThresholdDelta          *float64 `json:"hedge_threshold_delta,omitempty"`
@@ -599,6 +610,22 @@ func (h *Handlers) ModifyTrade(w http.ResponseWriter, r *http.Request) {
 		tr.Config.AutoRiskExecutionEnabled = *req.AutoRiskExecutionEnabled
 	}
 
+	if req.SLPnLBpsOfSpot != nil {
+		if *req.SLPnLBpsOfSpot < 0 {
+			http.Error(w, "sl_pnl_bps_of_spot must be >= 0", http.StatusBadRequest)
+			return
+		}
+		tr.Config.SLPnLBpsOfSpot = *req.SLPnLBpsOfSpot
+	}
+
+	if req.TPPnLBpsOfSpot != nil {
+		if *req.TPPnLBpsOfSpot < 0 {
+			http.Error(w, "tp_pnl_bps_of_spot must be >= 0", http.StatusBadRequest)
+			return
+		}
+		tr.Config.TPPnLBpsOfSpot = *req.TPPnLBpsOfSpot
+	}
+
 	if req.StraddleDiv != nil {
 		tr.Config.StraddleDiv = *req.StraddleDiv
 	}
@@ -629,6 +656,21 @@ func (h *Handlers) ModifyTrade(w http.ResponseWriter, r *http.Request) {
 	if req.ForceHedgeRegardlessOfPoints != nil {
 		tr.Config.ForceHedgeRegardlessOfPoints = *req.ForceHedgeRegardlessOfPoints
 		tr.Config.HedgeTestExecuted = false
+	}
+
+	if req.SquareOffHardTime != nil {
+		// Accepts "15:15:00" or "15:15" for convenience.
+		layout := "15:04:05"
+		if len(strings.TrimSpace(*req.SquareOffHardTime)) <= len("15:04") {
+			layout = "15:04"
+		}
+		t, err := time.Parse(layout, *req.SquareOffHardTime)
+		if err != nil {
+			http.Error(w, "square_off_hard_time must be HH:MM or HH:MM:SS", http.StatusBadRequest)
+			return
+		}
+		now := time.Now()
+		tr.Config.SquareOffHardTime = time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), t.Second(), 0, now.Location())
 	}
 
 	tr.LastUpdateTime = time.Now()

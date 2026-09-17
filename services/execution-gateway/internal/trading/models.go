@@ -208,10 +208,17 @@ type MonitorConfig struct {
 	// === EXIT MODES (any can fire first, all independent) ===
 	// Time-based square-off: hard exit at this time (e.g., 15:15:00)
 	SquareOffHardTime time.Time `json:"square_off_hard_time,omitempty"`
-	// PnL-based SL: exit if total loss exceeds X bps of spot price (default 14 bps = 0.0014)
-	// Example: NIFTY spot 24200, 14 bps = 338.8 points straddle loss threshold
+	// PnL-based SL, wired in runMonitorCycle: when > 0, exits (via
+	// SquareOff(tradeUID, "SL")) once pnlPerStraddle <= -(spot * bps /
+	// 10,000). Example: NIFTY spot 24,200, 14 bps -> a 33.88-point
+	// straddle loss threshold (corrected from an earlier, numerically
+	// wrong "338.8" example in this comment). Independent of, and
+	// checked alongside, SLPointsPerLot -- either can trigger the exit.
 	SLPnLBpsOfSpot float64 `json:"sl_pnl_bps_of_spot,omitempty"`
-	// PnL-based TP: exit if total profit exceeds Y bps of spot price (default 0 = disabled)
+	// PnL-based TP, wired in runMonitorCycle: when > 0, exits (via
+	// SquareOff(tradeUID, "TP"), normal (non-aggressive) chunking) once
+	// pnlPerStraddle >= (spot * bps / 10,000). Sets CLOSED_TP on
+	// success. TPPnLTarget (rupee-based) remains alert-only.
 	TPPnLBpsOfSpot float64 `json:"tp_pnl_bps_of_spot,omitempty"`
 	// MTM-based square-off: exit if intraday MTM crosses this threshold (+/- ₹ value)
 	// Positive = take profit, negative = stop loss

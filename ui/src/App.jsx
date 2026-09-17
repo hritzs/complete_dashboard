@@ -882,6 +882,8 @@
             "CLOSED_SQF",
             "CLOSED_MANUAL",
             "CLOSED_SL",
+            "CLOSED_TP",
+            "CLOSED_TIME",
             "FAILED"
           ].includes(status);
         })
@@ -965,7 +967,9 @@
       "CLOSED_SQF",
       "CLOSED_MANUAL",
       "CLOSEDSQF",
-      "CLOSED_SL"
+      "CLOSED_SL",
+      "CLOSED_TP",
+      "CLOSED_TIME"
     ]);
 
     const isTradeClosed = (item) =>

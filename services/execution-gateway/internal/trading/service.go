@@ -733,13 +733,48 @@ func slThresholdForTrade(trade StoredTrade) (originalLotsOpen float64, threshold
 	return originalLotsOpen, threshold
 }
 
+// executeAutoExit calls SquareOff for an autonomous risk trigger (SL or
+// TP) and handles both outcomes consistently: on success (the trade's
+// reloaded status matches wantStatus), it stops the trade's runtime,
+// exactly like the old direct-status-flip code used to on every trigger
+// regardless of whether an exit actually happened. On failure, it leaves
+// the runtime running -- SquareOff always reverts the trade's status on
+// failure (traced through every return path when this was built for
+// SL), so it is not yet a terminal status, and runMonitorCycle's own
+// terminal-status guard at the top of this function will therefore NOT
+// skip the next tick: the exit attempt is retried on the next
+// PollIntervalSec cycle instead of being lost, with no separate retry
+// loop needed.
+func (s *Service) executeAutoExit(tradeUID string, reason string, wantStatus string) {
+	if err := s.SquareOff(tradeUID, reason); err != nil {
+		log.Printf("[RISK] %s_TRIGGER SquareOff failed trade=%s err=%v", reason, tradeUID, err)
+		return
+	}
+	if closedTrade, ok := s.Store.LoadTrade(tradeUID); ok && closedTrade.Status == wantStatus {
+		if rt, ok := s.Store.LoadRuntime(tradeUID); ok {
+			close(rt.StopCh)
+			s.Store.DeleteRuntime(tradeUID)
+		}
+	}
+}
+
+// bpsOfSpotThreshold converts a basis-points-of-spot config value into a
+// PnL-per-straddle points threshold: spot * bps / 10,000. Used by both
+// the SL (SLPnLBpsOfSpot) and TP (TPPnLBpsOfSpot) bps-based triggers in
+// runMonitorCycle, compared against pnlPerStraddle -- e.g. 1bps on a
+// 24,400 spot is a 2.44-point threshold. Always returns a non-negative
+// number; callers negate it for the SL (loss) side.
+func bpsOfSpotThreshold(spot float64, bps float64) float64 {
+	return spot * bps / 10000.0
+}
+
 func (s *Service) runMonitorCycle(tradeUID string) {
 	trade, ok := s.Store.LoadTrade(tradeUID)
 	if !ok {
 		return
 	}
 	switch trade.Status {
-	case "CLOSED", "CLOSEDSQF", "CLOSED_SQF", "CLOSED_SL", "CLOSED_MANUAL", "FAILED":
+	case "CLOSED", "CLOSEDSQF", "CLOSED_SQF", "CLOSED_SL", "CLOSED_TP", "CLOSED_TIME", "CLOSED_MANUAL", "FAILED":
 		return
 	}
 
@@ -839,7 +874,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 		PointsAllowed:    pointsAllowed,
 		RealizedPNL: func() float64 {
 			switch trade.Status {
-			case "CLOSED", "CLOSEDSQF", "CLOSED_SQF", "CLOSED_SL", "CLOSED_MANUAL", "FAILED":
+			case "CLOSED", "CLOSEDSQF", "CLOSED_SQF", "CLOSED_SL", "CLOSED_TP", "CLOSED_TIME", "CLOSED_MANUAL", "FAILED":
 				return totalPNL
 			default:
 				return 0
@@ -847,7 +882,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 		}(),
 		UnrealizedPNL: func() float64 {
 			switch trade.Status {
-			case "CLOSED", "CLOSEDSQF", "CLOSED_SQF", "CLOSED_SL", "CLOSED_MANUAL", "FAILED":
+			case "CLOSED", "CLOSEDSQF", "CLOSED_SQF", "CLOSED_SL", "CLOSED_TP", "CLOSED_TIME", "CLOSED_MANUAL", "FAILED":
 				return 0
 			default:
 				return totalPNL
@@ -899,35 +934,62 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 		}
 	}
 
-	// Stop-loss check. This executes on every monitor cycle.
+	// Stop-loss check. This executes on every monitor cycle. Two
+	// independent SL mechanisms can each trigger it: SLPointsPerLot
+	// (fixed points-per-original-lot, see slThresholdForTrade) or
+	// SLPnLBpsOfSpot (loss as a fraction of live synthetic spot,
+	// compared against pnlPerStraddle -- e.g. 1bps on a 24,400 spot is a
+	// 2.44-point-per-straddle threshold). Checked as one unified
+	// condition, not two separate ifs, so a tick where both happen to be
+	// configured and breached can't call SquareOff twice.
+	slBreached, slThreshold, slSource := false, 0.0, ""
 	if trade.Config.SLPointsPerLot > 0 {
-		originalLotsOpen, slThreshold := slThresholdForTrade(trade)
-
-		if totalPNL <= slThreshold {
-			log.Printf(
-				"[RISK] SL_TRIGGER trade=%s pnl=%.2f threshold=%.2f lots=%.2f",
-				tradeUID,
-				totalPNL,
-				slThreshold,
-				originalLotsOpen,
-			)
-
-			if err := s.SquareOff(tradeUID, "SL"); err != nil {
-				log.Printf("[RISK] SL_TRIGGER SquareOff failed trade=%s err=%v", tradeUID, err)
-				// Leave the runtime running: SquareOff reverts the trade's
-				// status on failure, so it is not CLOSED_SL, and
-				// runMonitorCycle's own terminal-status guard at the top
-				// of this function will therefore NOT skip the next tick
-				// -- the exit attempt is retried on the next
-				// PollIntervalSec cycle instead of being lost.
-			} else if closedTrade, ok := s.Store.LoadTrade(tradeUID); ok &&
-				closedTrade.Status == "CLOSED_SL" {
-				if rt, ok := s.Store.LoadRuntime(tradeUID); ok {
-					close(rt.StopCh)
-					s.Store.DeleteRuntime(tradeUID)
-				}
-			}
+		lots, threshold := slThresholdForTrade(trade)
+		if totalPNL <= threshold {
+			slBreached, slThreshold = true, threshold
+			slSource = fmt.Sprintf("points_per_lot lots=%.2f", lots)
 		}
+	}
+	if !slBreached && trade.Config.SLPnLBpsOfSpot > 0 {
+		threshold := -bpsOfSpotThreshold(spot, trade.Config.SLPnLBpsOfSpot)
+		if pnlPerStraddle <= threshold {
+			slBreached, slThreshold = true, threshold
+			slSource = fmt.Sprintf("bps_of_spot spot=%.2f bps=%.2f", spot, trade.Config.SLPnLBpsOfSpot)
+		}
+	}
+	if slBreached {
+		log.Printf(
+			"[RISK] SL_TRIGGER trade=%s source=%s pnl=%.2f pnl_per_straddle=%.2f threshold=%.2f",
+			tradeUID, slSource, totalPNL, pnlPerStraddle, slThreshold,
+		)
+		s.executeAutoExit(tradeUID, "SL", "CLOSED_SL")
+	}
+
+	// Take-profit check: symmetric to the SL bps mechanism above.
+	// TPPnLBpsOfSpot > 0 enables it; TPPnLTarget (rupee-based) remains
+	// alert-only in tickRuntime, unchanged.
+	if trade.Config.TPPnLBpsOfSpot > 0 {
+		tpThreshold := bpsOfSpotThreshold(spot, trade.Config.TPPnLBpsOfSpot)
+		if pnlPerStraddle >= tpThreshold {
+			log.Printf(
+				"[RISK] TP_TRIGGER trade=%s pnl_per_straddle=%.2f threshold=%.2f spot=%.2f bps=%.2f",
+				tradeUID, pnlPerStraddle, tpThreshold, spot, trade.Config.TPPnLBpsOfSpot,
+			)
+			s.executeAutoExit(tradeUID, "TP", "CLOSED_TP")
+		}
+	}
+
+	// Time-based hard exit: unlike tickRuntime's separate SquareOffTime
+	// check (still alert-only, [RISK][EXIT_TIME_ALERT] -- a different,
+	// pre-existing config field), SquareOffHardTime actually exits via a
+	// real, verified SquareOff once reached. Normal (non-aggressive)
+	// chunking -- a scheduled close isn't an emergency.
+	if !trade.Config.SquareOffHardTime.IsZero() && !time.Now().Before(trade.Config.SquareOffHardTime) {
+		log.Printf(
+			"[RISK] TIME_TRIGGER trade=%s now=%s target=%s",
+			tradeUID, time.Now().Format(time.RFC3339), trade.Config.SquareOffHardTime.Format(time.RFC3339),
+		)
+		s.executeAutoExit(tradeUID, "TIME", "CLOSED_TIME")
 	}
 
 	// Minute-end hedge eligibility check
@@ -1328,13 +1390,18 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 	tr.LastUpdateTime = time.Now()
 
 	if remainingCE == 0 && remainingPE == 0 {
-		if reason == "SL" {
+		switch reason {
+		case "SL":
 			// Preserves the audit distinction between a real
 			// stop-loss-triggered close and a manual/other square-off --
 			// CLOSED_SL is already a recognized terminal status
 			// elsewhere in this file (see the status-guard switches).
 			tr.Status = "CLOSED_SL"
-		} else {
+		case "TP":
+			tr.Status = "CLOSED_TP"
+		case "TIME":
+			tr.Status = "CLOSED_TIME"
+		default:
 			tr.Status = "CLOSEDSQF"
 		}
 		tr.ClosedAt = time.Now()

@@ -61,6 +61,32 @@ func TestSlThresholdForTrade_FallsBackToLiveQuantityWhenLotsUnset(t *testing.T) 
 	}
 }
 
+func almostEqual(a, b float64) bool {
+	const epsilon = 1e-9
+	diff := a - b
+	if diff < 0 {
+		diff = -diff
+	}
+	return diff < epsilon
+}
+
+func TestBpsOfSpotThreshold(t *testing.T) {
+	// Cross-checked against MonitorConfig.SpotStopLossBps's own worked
+	// example: "A 1-bps NIFTY stop at 24,400 is 2.44 PnL-per-straddle
+	// points."
+	if got := bpsOfSpotThreshold(24400, 1); !almostEqual(got, 2.44) {
+		t.Fatalf("bpsOfSpotThreshold(24400, 1) = %v, want 2.44", got)
+	}
+	// SLPnLBpsOfSpot's own worked example (corrected from an earlier,
+	// numerically wrong "338.8" in the doc comment): spot 24,200, 14bps.
+	if got := bpsOfSpotThreshold(24200, 14); !almostEqual(got, 33.88) {
+		t.Fatalf("bpsOfSpotThreshold(24200, 14) = %v, want 33.88", got)
+	}
+	if got := bpsOfSpotThreshold(0, 14); got != 0 {
+		t.Fatalf("bpsOfSpotThreshold(0, 14) = %v, want 0", got)
+	}
+}
+
 // fakeSLExecutor is a minimal Executor + VerifiedFillsProvider scoped
 // narrowly to proving SquareOff's reason-to-final-status behavior -- not
 // a general-purpose mock (the previous, unused MockExecutor was removed
@@ -125,18 +151,20 @@ func newTestSquareOffTrade(tradeUID string) StoredTrade {
 }
 
 // TestSquareOff_ReasonDeterminesFinalStatus proves the reason-to-final-
-// status mapping added for the autonomous-SL-exit change: a real,
-// verified square-off closes with CLOSED_SL when triggered by the SL
-// monitor (reason="SL"), and with the existing CLOSEDSQF for every other
-// reason (e.g. a manual square-off) -- preserving the audit distinction
-// between "closed because of a real stop-loss" and "closed some other
-// way" that a single shared terminal status would erase.
+// status mapping added for the autonomous SL/TP-exit changes: a real,
+// verified square-off closes with CLOSED_SL for reason="SL", CLOSED_TP
+// for reason="TP", and the existing CLOSEDSQF for every other reason
+// (e.g. a manual square-off) -- preserving the audit distinction between
+// "closed because of a real stop-loss/take-profit" and "closed some
+// other way" that a single shared terminal status would erase.
 func TestSquareOff_ReasonDeterminesFinalStatus(t *testing.T) {
 	cases := []struct {
 		reason     string
 		wantStatus string
 	}{
 		{reason: "SL", wantStatus: "CLOSED_SL"},
+		{reason: "TP", wantStatus: "CLOSED_TP"},
+		{reason: "TIME", wantStatus: "CLOSED_TIME"},
 		{reason: "manual", wantStatus: "CLOSEDSQF"},
 	}
 
