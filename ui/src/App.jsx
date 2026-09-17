@@ -1103,7 +1103,7 @@
 
         hedge_div: cfg.hedge_div ?? cfg.hedgeDiv ?? "57",
 
-        hedge_threshold_delta: cfg.hedge_threshold_delta ?? cfg.hedgeThresholdDelta ?? "65",
+        hedge_threshold_delta: cfg.hedge_threshold_delta ?? cfg.hedgeThresholdDelta ?? String(item.lotSize || ""),
 
         square_off_time: /^\d{2}:\d{2}:\d{2}$/.test(squareOffTime)
 
