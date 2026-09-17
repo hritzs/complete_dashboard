@@ -18,14 +18,14 @@ import (
 type Executor struct {
 	Client *gs.Client
 
-	// OMSFeed, when non-nil, backs GetVerifiedFills with GreekSoft's live
-	// Iris push feed instead of REST order-book polling -- see
-	// omsfeed.go's doc comment and the approved TBT-driven OMS/PMS
-	// migration plan. Gated by VerifyViaIris rather than presence alone,
-	// so a feed can be started (warming up its in-memory state) before
-	// being trusted as the verification source of record.
-	OMSFeed       *OMSFeed
-	VerifyViaIris bool
+	// OMSFeed, when non-nil, is tried FIRST by GetVerifiedFills -- it
+	// reads fills services/reconciler has already persisted from
+	// GreekSoft's live Iris push feed (see omsfeed.go's doc comment).
+	// REST order-book polling (the original, always-available path)
+	// remains the automatic fallback whenever OMSFeed returns an error
+	// (including when reconciler's health check fails), so verification
+	// keeps working even if OMSFeed/reconciler/Postgres has a problem.
+	OMSFeed *OMSFeed
 }
 
 func NewExecutor(client *gs.Client) *Executor {
@@ -385,8 +385,18 @@ func (e *Executor) GetVerifiedFills(
 		return nil, fmt.Errorf("greeksoft executor client is nil")
 	}
 
-	if e.VerifyViaIris && e.OMSFeed != nil {
-		return e.OMSFeed.GetVerifiedFills(ctx)
+	// Primary: reconciler-persisted (Iris-sourced) fills. Only falls
+	// through to REST on a genuine error -- an empty-but-error-free
+	// result means "no fills yet," which the caller's own retry loop
+	// already handles correctly by polling again, and must NOT trigger a
+	// REST call every single attempt (that would erase the latency
+	// benefit of trying the fast path at all).
+	if e.OMSFeed != nil {
+		fills, err := e.OMSFeed.GetVerifiedFills(ctx)
+		if err == nil {
+			return fills, nil
+		}
+		fmt.Printf("[GREEKSOFT VERIFY] primary (reconciler DB) path failed, falling back to REST: %v\n", err)
 	}
 
 	book, err := e.Client.GetOrderBook(ctx)

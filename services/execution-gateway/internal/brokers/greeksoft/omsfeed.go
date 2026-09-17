@@ -3,238 +3,178 @@ package greeksoft
 import (
 	"context"
 	"database/sql"
-	"log"
-	"strconv"
+	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"execution-gateway/internal/trading"
-	gs "trading-platform/libs/broker-greeksoft"
-	"trading-platform/libs/broker-greeksoft/ingest"
-	"trading-platform/libs/broker-greeksoft/normalize"
-	broker "trading-platform/libs/go-broker"
 )
 
-// OMSFeed maintains a real-time, in-memory view of GreekSoft order/fill
-// state fed by the Iris push feed (order_status pushes and TradeResponse
-// fills), replacing REST-order-book polling as the OMS's own
-// fill-verification source. It implements trading.VerifiedFillsProvider,
-// so it is a drop-in alternative to Executor.GetVerifiedFills
-// (which polls GetOrderBook over REST).
+// OMSFeed implements trading.VerifiedFillsProvider by reading the fills
+// services/reconciler has already persisted to Postgres from GreekSoft's
+// live Iris push feed -- i.e. it's a fast, Iris-sourced read path that
+// never opens its own Iris connection.
 //
-// This is the OMS side of an explicit OMS/PMS split: OMSFeed is
-// advisory/real-time-only and never persists anything -- it exists only
-// to let a single execution call (e.g. PartialSquareOff's chunk loop)
-// learn about a fill in microseconds instead of waiting out a REST-poll
-// cycle. services/reconciler remains the sole durable, transactional
-// (ACID) writer of canonical order/fill state to Postgres from the same
-// Iris stream (the PMS side) -- that does not change here. If this
-// process restarts, OMSFeed simply starts with an empty view, exactly
-// like a fresh REST poll would only see the broker's current state; nothing
-// durable is lost because nothing durable was ever kept here.
+// CONFIRMED LIVE INCIDENT (2026-09-17): an earlier version of this type
+// opened its own separate Iris websocket subscription. GreekSoft allows
+// only ONE live Iris connection per account (not just one HTTP session),
+// so that connection and services/reconciler's existing one repeatedly
+// disconnected each other, and this directly caused a real fill to be
+// missed (reconciler's connection dropped at the exact moment an order's
+// TradeResponse would have arrived). Required a manual DB correction
+// afterward, confirmed against the broker's live NPRequest net position.
+// This redesign avoids a second Iris connection entirely: it only ever
+// reads Postgres, which reconciler already updates within milliseconds
+// of an Iris push arriving -- the OMS/PMS split's OMS side reading the
+// PMS side's own durable state, rather than trying to observe Iris
+// independently.
 //
-// DISABLED as of 2026-09-17 (see Start's doc comment for the full
-// incident): this type's Iris subscription is currently NOT SAFE to run
-// alongside services/reconciler for the same account -- GreekSoft allows
-// only one live Iris connection per account, and the two fight over it.
-// EXEC_VERIFY_MODE=iris (main.go) is commented out in .env until this is
-// redesigned to read reconciler-persisted state instead of opening a
-// second Iris connection.
+// "Websocket as primary verifier, REST as fallback": Executor.GetVerifiedFills
+// tries this (Postgres/Iris-sourced) path first; on any error here --
+// including reconciler being down, since GetVerifiedFills also checks
+// reconciler's own health endpoint -- it falls back to the existing
+// REST order-book poll unchanged. A genuinely empty (but error-free)
+// result (no fills yet) is NOT treated as a failure -- that's the normal
+// "still pending" case the existing retry loop already handles by
+// polling again.
 type OMSFeed struct {
-	mu     sync.RWMutex
-	orders map[string]omsOrderState // key: broker order ID (gorderid)
+	db *sql.DB
 
-	// updates fires (best-effort, non-blocking) whenever any order's state
-	// changes, so a caller can react to a push immediately instead of
-	// waiting out a fixed poll delay. Not yet consumed anywhere -- exposed
-	// for a future event-driven wait loop; the current integration keeps
-	// waitForVerifiedFills's existing loop shape unchanged and simply
-	// points it at this fast in-memory provider instead of REST, per the
-	// approved migration plan's "smallest blast radius" phasing.
-	updates chan string
+	healthURL   string
+	httpClient  *http.Client
+	healthMu    sync.Mutex
+	healthOK    bool
+	healthAt    time.Time
+	healthCache time.Duration
 }
 
-type omsOrderState struct {
-	Token        int64
-	Side         string
-	Status       string
-	FilledQty    int64
-	AveragePrice float64
-	BrokerTime   time.Time
-}
-
-func NewOMSFeed() *OMSFeed {
+// NewOMSFeed builds a Postgres-backed verified-fills reader. healthURL is
+// services/reconciler's health endpoint (e.g.
+// "http://localhost:8021/api/health") -- used only as a cheap, cached
+// liveness signal for the "websocket path" (reconciler is what's actually
+// consuming Iris); if it's unreachable, GetVerifiedFills reports an error
+// so the caller falls back to REST instead of silently returning "no
+// fills yet" forever because nothing is writing new rows.
+func NewOMSFeed(db *sql.DB, healthURL string) *OMSFeed {
 	return &OMSFeed{
-		orders:  make(map[string]omsOrderState),
-		updates: make(chan string, 256),
+		db:          db,
+		healthURL:   strings.TrimSpace(healthURL),
+		httpClient:  &http.Client{Timeout: 2 * time.Second},
+		healthCache: 3 * time.Second,
 	}
 }
 
-// Start begins consuming GreekSoft's Iris push feed in the background.
-// ctx cancellation stops it.
-//
-// CONFIRMED LIVE INCIDENT (2026-09-17): GreekSoft allows only ONE live
-// Iris WEBSOCKET connection per account, not just one HTTP session.
-// LoginShared's shared *session token* is safe to reuse across processes
-// (that's what it's for), but each call to this method opens its own,
-// separate Iris websocket -- calling it from execution-gateway while
-// services/reconciler already holds its own Iris connection for the same
-// account caused the two to repeatedly disconnect each other
-// ("disconnecting the current session, User has been logged in on
-// another session"), and directly caused a real fill to be missed
-// (reconciler's connection dropped at the exact moment an order's
-// TradeResponse would have arrived, so the fill was never persisted --
-// required a manual DB correction afterward, confirmed against the
-// broker's live NPRequest net position).
-//
-// DO NOT call this from execution-gateway (or any second process) while
-// services/reconciler is running for the same GreekSoft account, until
-// this is redesigned. The safer path for the OMS side of the OMS/PMS
-// split is to read reconciler-persisted state (e.g. LISTEN/NOTIFY or
-// polling Postgres, which reconciler already updates within
-// milliseconds of an Iris push) rather than opening a second competing
-// Iris connection. See docs/TODO.md Phase 10.
-func (f *OMSFeed) Start(ctx context.Context, client *gs.Client, db *sql.DB, accCfg *broker.AccountConfig) {
-	go func() {
-		err := client.ReadLoopWithReconnect(ctx, db, accCfg, func(frame gs.IrisFrame) {
-			kind, orderPayload, tradePayload, dispatchErr := ingest.Dispatch(frame)
-			if dispatchErr != nil {
-				return
-			}
-			switch kind {
-			case ingest.KindOrderResponse:
-				if orderPayload != nil {
-					f.applyOrder(*orderPayload)
-				}
-			case ingest.KindTradeResponse:
-				if tradePayload != nil {
-					f.applyTrade(*tradePayload)
-				}
-			}
-		})
-		if err != nil && ctx.Err() == nil {
-			log.Printf("[OMSFEED] Iris read loop exited unexpectedly: %v", err)
-		}
-	}()
-}
-
-func (f *OMSFeed) applyOrder(raw normalize.GreeksoftOrderResponse) {
-	update := normalize.Parse(&raw)
-	token := resolveGreeksoftShortToken(parseIntOrZeroLocal(raw.GToken))
-	f.apply(update.BrokerOrderID, token, update.Side, string(update.Status), update.FilledQtyToday, update.Price, update.BrokerTimestamp)
-}
-
-func (f *OMSFeed) applyTrade(raw normalize.GreeksoftTradeResponse) {
-	update := normalize.ParseTradeResponse(&raw)
-	// TradeResponse carries no gtoken field of its own -- reuse whatever
-	// token this order was already tracked under (populated by an
-	// OrderResponse push, which GreekSoft always sends alongside/around a
-	// TradeResponse per this session's live captures). If genuinely never
-	// seen before, token stays 0 and this fill won't match any CE/PE
-	// token filter until an OrderResponse arrives for it too.
-	f.mu.RLock()
-	existing, ok := f.orders[update.BrokerOrderID]
-	f.mu.RUnlock()
-	token := int64(0)
-	if ok {
-		token = existing.Token
-	}
-	f.apply(update.BrokerOrderID, token, update.Side, string(update.Status), update.FilledQtyToday, update.Price, update.BrokerTimestamp)
-}
-
-// apply records the latest known state for a broker order. FilledQty from
-// GreekSoft's qty_filled_today is already cumulative (matches the REST
-// order book's own filled_qty/traded_qty semantics), so it's stored
-// directly, never summed.
-//
-// AveragePrice is kept as the most recent non-zero price seen for the
-// order's current (or higher) filled quantity -- since a TradeResponse's
-// exact traded_price and a same-increment OrderResponse's approximate
-// price can arrive in either order, a later OrderResponse push carrying a
-// stale/approximate price can overwrite a more precise TradeResponse
-// price for the same fill. This is an accepted, documented imprecision:
-// OMSFeed is advisory/real-time-only for pacing decisions, never the
-// durable source of truth (that's the reconciler's Postgres writes).
-func (f *OMSFeed) apply(brokerOrderID string, token int64, side, status string, filledQty int64, price float64, brokerTime time.Time) {
-	if strings.TrimSpace(brokerOrderID) == "" {
-		return
+// reconcilerHealthy checks (with a short cache, since GetVerifiedFills
+// can be called every few hundred milliseconds by the existing retry
+// loop) whether services/reconciler's health endpoint is reachable.
+func (f *OMSFeed) reconcilerHealthy(ctx context.Context) bool {
+	if f.healthURL == "" {
+		return true // no health URL configured: skip the check, trust the DB path
 	}
 
-	f.mu.Lock()
-	existing := f.orders[brokerOrderID]
+	f.healthMu.Lock()
+	if time.Since(f.healthAt) < f.healthCache {
+		ok := f.healthOK
+		f.healthMu.Unlock()
+		return ok
+	}
+	f.healthMu.Unlock()
 
-	next := existing
-	next.Status = status
-	if side != "" {
-		next.Side = side
-	}
-	if token > 0 {
-		next.Token = token
-	}
-	if filledQty >= existing.FilledQty {
-		next.FilledQty = filledQty
-		if price > 0 {
-			next.AveragePrice = price
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.healthURL, nil)
+	ok := false
+	if err == nil {
+		resp, doErr := f.httpClient.Do(req)
+		if doErr == nil {
+			ok = resp.StatusCode == http.StatusOK
+			_ = resp.Body.Close()
 		}
 	}
-	if !brokerTime.IsZero() {
-		next.BrokerTime = brokerTime
-	}
-	f.orders[brokerOrderID] = next
-	f.mu.Unlock()
 
-	select {
-	case f.updates <- brokerOrderID:
-	default:
-	}
+	f.healthMu.Lock()
+	f.healthOK = ok
+	f.healthAt = time.Now()
+	f.healthMu.Unlock()
+
+	return ok
 }
 
-// GetVerifiedFills implements trading.VerifiedFillsProvider by reading
-// this in-memory, Iris-fed map instead of calling GreekSoft's order-book
-// REST endpoint. Only orders with a positive filled quantity and average
-// price are returned, matching the REST-based provider's own filter
-// (see greeksoftMapToVerifiedFill).
+// GetVerifiedFills implements trading.VerifiedFillsProvider by querying
+// today's orders/fills/contracts (the same tables services/reconciler
+// writes transactionally on every Iris push -- see
+// services/reconciler/internal/persistence/store.go) instead of calling
+// GreekSoft's order-book REST endpoint. One row per order with at least
+// one fill, filled_qty summed and fill_price quantity-weighted, matching
+// the REST-based provider's own cumulative-per-order semantics (see
+// greeksoftMapToVerifiedFill).
 func (f *OMSFeed) GetVerifiedFills(ctx context.Context) ([]trading.BrokerFill, error) {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-
-	log.Printf("[OMSFEED] GetVerifiedFills via Iris in-memory map (tracked_orders=%d)", len(f.orders))
-
-	fills := make([]trading.BrokerFill, 0, len(f.orders))
-	for brokerOrderID, st := range f.orders {
-		if st.FilledQty <= 0 || st.AveragePrice <= 0 {
-			continue
-		}
-		fills = append(fills, trading.BrokerFill{
-			BrokerOrderID: brokerOrderID,
-			Token:         st.Token,
-			BrokerToken:   st.Token,
-			Side:          st.Side,
-			FilledQty:     st.FilledQty,
-			AveragePrice:  st.AveragePrice,
-			Status:        st.Status,
-			BrokerTime:    st.BrokerTime,
-			Verified:      true,
-			Source:        "GREEKSOFT_IRIS",
-		})
+	if f == nil || f.db == nil {
+		return nil, fmt.Errorf("greeksoft OMSFeed: nil db")
 	}
+	if !f.reconcilerHealthy(ctx) {
+		return nil, fmt.Errorf("greeksoft OMSFeed: reconciler health check failed at %s", f.healthURL)
+	}
+
+	rows, err := f.db.QueryContext(ctx, `
+		SELECT
+			o.broker_order_id,
+			o.side,
+			c.broker_token,
+			o.status,
+			COALESCE(SUM(fl.fill_quantity), 0) AS filled_qty,
+			CASE WHEN COALESCE(SUM(fl.fill_quantity), 0) > 0
+			     THEN SUM(fl.fill_quantity * fl.fill_price) / SUM(fl.fill_quantity)
+			     ELSE 0 END AS avg_price,
+			MAX(fl.fill_timestamp) AS last_fill_time
+		FROM orders o
+		JOIN contracts c ON c.id = o.contract_id
+		JOIN fills fl ON fl.order_id = o.id
+		WHERE o.created_at::date = CURRENT_DATE
+		GROUP BY o.id, o.broker_order_id, o.side, c.broker_token, o.status
+		HAVING COALESCE(SUM(fl.fill_quantity), 0) > 0
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("greeksoft OMSFeed: query verified fills: %w", err)
+	}
+	defer rows.Close()
+
+	var fills []trading.BrokerFill
+	for rows.Next() {
+		var (
+			brokerOrderID string
+			side          string
+			token         int64
+			status        string
+			filledQty     int64
+			avgPrice      float64
+			lastFillTime  sql.NullTime
+		)
+		if err := rows.Scan(&brokerOrderID, &side, &token, &status, &filledQty, &avgPrice, &lastFillTime); err != nil {
+			return nil, fmt.Errorf("greeksoft OMSFeed: scan verified fill row: %w", err)
+		}
+
+		fill := trading.BrokerFill{
+			BrokerOrderID: brokerOrderID,
+			Token:         token,
+			BrokerToken:   token,
+			Side:          strings.ToUpper(strings.TrimSpace(side)),
+			FilledQty:     filledQty,
+			AveragePrice:  avgPrice,
+			Status:        status,
+			Verified:      true,
+			Source:        "GREEKSOFT_RECONCILER_DB",
+		}
+		if lastFillTime.Valid {
+			fill.BrokerTime = lastFillTime.Time
+		}
+		fills = append(fills, fill)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("greeksoft OMSFeed: iterate verified fill rows: %w", err)
+	}
+
 	return fills, nil
 }
 
-// Updates returns a channel that receives a broker order ID every time
-// that order's state changes via an Iris push. Best-effort: an update is
-// dropped (never blocks the Iris read loop) if the channel is full.
-func (f *OMSFeed) Updates() <-chan string {
-	return f.updates
-}
-
 var _ trading.VerifiedFillsProvider = (*OMSFeed)(nil)
-
-func parseIntOrZeroLocal(s string) int64 {
-	v, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
-	if err != nil {
-		return 0
-	}
-	return v
-}

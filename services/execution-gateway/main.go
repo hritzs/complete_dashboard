@@ -282,34 +282,25 @@ func main() {
 
 			executor := greeksoftbroker.NewExecutor(gsClient)
 
-			// EXEC_VERIFY_MODE=iris switches fill verification from REST
-			// order-book polling to GreekSoft's live Iris push feed (see
-			// internal/brokers/greeksoft/omsfeed.go). CONFIRMED UNSAFE
-			// live on 2026-09-17: GreekSoft allows only one live Iris
-			// websocket connection per account, so OMSFeed's own
-			// connection fights services/reconciler's for the same
-			// account and repeatedly disconnects it -- this directly
-			// caused reconciler to miss a real fill during a live test
-			// (required a manual DB correction afterward). Do not set
-			// EXEC_VERIFY_MODE=iris until OMSFeed is redesigned to read
-			// reconciler-persisted state instead of opening a second
-			// Iris connection -- see omsfeed.go's doc comment and
-			// docs/TODO.md Phase 10. REST polling (the existing,
-			// already-proven path) remains the default and is the only
-			// safe option today.
-			if strings.EqualFold(strings.TrimSpace(os.Getenv("EXEC_VERIFY_MODE")), "iris") {
-				feed := greeksoftbroker.NewOMSFeed()
-				feed.Start(ctx, gsClient, sharedDB, &broker.AccountConfig{
-					Name:       "greeksoft-omsfeed-" + strings.ToLower(accountID),
-					BrokerType: "greeksoft",
-					APIKey:     accountID,
-					APISecret:  appConfig.GreekPassword,
-					ClientID:   accountID,
-					PanDob:     appConfig.GreekPanDob,
-				})
-				executor.OMSFeed = feed
-				executor.VerifyViaIris = true
-				log.Printf("Greeksoft executor account=%s verifying fills via Iris push (EXEC_VERIFY_MODE=iris)", accountID)
+			// Fill verification tries the reconciler-persisted (Iris-sourced)
+			// Postgres path first, falling back to REST order-book polling
+			// automatically on any error -- see
+			// internal/brokers/greeksoft/omsfeed.go and
+			// Executor.GetVerifiedFills. This reads Postgres only; it does
+			// NOT open a second Iris connection (an earlier version did,
+			// and that collided with services/reconciler's own Iris
+			// connection live on 2026-09-17 -- see docs/TODO.md Phase 10
+			// for the full incident). Only wired up when sharedDB is
+			// available; otherwise GetVerifiedFills silently stays
+			// REST-only, unchanged from before.
+			if sharedDB != nil {
+				reconcilerHealthPort := strings.TrimSpace(os.Getenv("RECONCILER_HEALTH_PORT"))
+				if reconcilerHealthPort == "" {
+					reconcilerHealthPort = "8021"
+				}
+				reconcilerHealthURL := "http://localhost:" + reconcilerHealthPort + "/api/health"
+				executor.OMSFeed = greeksoftbroker.NewOMSFeed(sharedDB, reconcilerHealthURL)
+				log.Printf("Greeksoft executor account=%s: fill verification tries reconciler DB first, REST fallback (health=%s)", accountID, reconcilerHealthURL)
 			}
 
 			greekExecutors[accountID] = executor
