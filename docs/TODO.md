@@ -702,3 +702,86 @@ needs its own review/tests/paper-soak).
 - [ ] Phase 2+ (autonomous SL that actually exits, TP, roll, hedge
       fix + fast-exit engine, wings/special-OMS ledger, event-bus
       priority arbitration) -- documented in the plan file, not started.
+
+## Phase 11: Repo cleanup, UI end-to-end fix, complete HLD/LLD (2026-09-17)
+Before starting Phase 2+, the user asked for the repo cleaned up and
+fully documented. Three parallel research passes (dead-code survey, UI
+functional audit, full-system architecture inventory) plus two
+clarifying answers from the user scoped the work.
+
+- [x] Removed 103 backup/dead files (`*.bak*`/`*.broken*`/`*.orig`/
+      `*_old.*`) across `services/`, `libs/`, `ui/`, `scripts/`, plus 2
+      tiny inert `.git.*.backup` pointer artifacts from a prior
+      worktree recovery -- 19,763 lines removed in one commit.
+      `refernce_py_code/`'s own ~250 patch/backup files are untouched
+      per the standing agreement.
+- [x] Removed confirmed-dead Go code (each verified via grep -- zero
+      call sites outside its own definition): `internal/trading/`'s
+      `zmq_loop.go`, `env.go`, `executor.go`, `builder.go` (whole
+      files), `CalculateWeightedAveragePrice`, `PriceIntentFromLiveQuote`,
+      `FormatExpiryForContractMaster`; `libs/broker-registry/factory.go`
+      (whole file -- was ALSO the source of a pre-existing compile
+      break, `xts.NewClient()` not implementing `broker.Client`, fixed
+      as a byproduct of deleting the dead code that called it);
+      `snapshot-service/internal/{zmq,websocket}` and
+      `market-data-gateway/internal/{socketio,publisher}` (both dead,
+      logic lives elsewhere or was never wired up).
+- [x] Removed `services/control-api` entirely (user approved): the
+      root module didn't compile (`cfg.GatewayURL`/`cfg.Greeksoft`
+      undefined), plus an orphaned duplicate `control-api/cmd/` module
+      with its own disconnected `go.mod`. Nothing live used it. Removed
+      from `go.work`.
+- [x] Verified every affected module builds/vets/tests clean
+      (`-race` for execution-gateway) after each removal, individually,
+      not just at the end.
+- [x] Fixed confirmed UI bugs found by the functional audit
+      (`ui/src/App.jsx`): `/api/manual/order`'s stray absolute
+      `http://localhost:8005` URL (only call in the file that wasn't
+      relative); `openModifyTradeModal` populating the wrong field
+      names entirely (the modal always showed blank SL/TP and an
+      unchecked Auto-Risk box instead of the trade's real config) and
+      `handleModifyTrade` never actually sending
+      `auto_risk_execution_enabled` even though the form collected it;
+      a dead `calcAllowed` computation; `handlePortfolioSync` ("Sync
+      Trade") doing nothing but a generic reload -- now calls the
+      existing read-only `/api/trade/:uid/sync-preview` and surfaces
+      CE/PE open qty + proposed status; the Testing tab's "Live ATM
+      leg" display hardcoded to "lot=2 | qty=130" regardless of the
+      actual user-editable lot inputs (the real submit logic was
+      already correct -- only the display text was stale, including a
+      wrong permanent "ONE ORDER" claim); `refreshLiveMetrics` silently
+      swallowing snapshot-fetch failures forever (now logs on
+      failure/recovery transitions, not per-poll); a dead
+      `window._lastPrices` read; the Portfolio "Monitor Status" card's
+      hardcoded "Running" for SL/Hedge regardless of trade state (now
+      reflects `isTradeClosed`); Automation tab missing
+      `hedge_start_time`/`roll_start_time` inputs (added, matching the
+      existing `sl_start_time` pattern). Left "Minimum Hedge Points:
+      19.50" as-is with a comment -- confirmed it's a real
+      execution-gateway constant (`runtime.go`'s hedge floor), not a
+      fabricated placeholder. Reworded "Recent Events"'s misleading
+      "No current events" (implies zero events occurred) to "Not shown
+      here yet" (the feature to show them here doesn't exist).
+      Verified via `npx vite build` + curl-level endpoint checks --
+      **no browser/screenshot tool is available in this environment**
+      for a true interactive click-through, stated explicitly rather
+      than implied as full coverage.
+- [x] Pushed `greeksoft-websocket-discovery` to `origin` as a new
+      branch (was 37 commits ahead of `origin/september-recovery`,
+      never pushed before). Additive only -- did not touch `main` or
+      any other branch.
+- [x] Wrote `docs/HLD.md` and `docs/LLD.md` -- complete, accurate
+      current-state architecture documentation (superseding
+      `docs/architecture.MD`, which is the original pre-implementation
+      plan and doesn't match what was actually built -- kept for
+      historical reference, not deleted). Covers every service
+      (including honestly marking `market-state`/`risk-engine`/
+      `trade-supervisor`/`zmq-nats-bridge` as empty stubs, and
+      `session-manager`/`market-data-gateway` as real-but-not-started),
+      the ZMQ port map, the DB schema, sequence diagrams for order
+      execution and market-data flow, and the testing patterns
+      established across this session.
+- [ ] Not in this pass, explicitly deferred: the actual Phase 2+
+      Python-reference migration; building out the empty stub services;
+      wiring session-manager/market-data-gateway into
+      `start_platform.sh`.
