@@ -524,17 +524,113 @@ order instead of just the first.
       fast-follow using the same `latency_samples` table with a new
       `stage` value); cleanup of stale `ui/src/*.bak*` files.
 
-## Phase 9: Python-reference migration plan (BLOCKED, awaiting files)
+## Phase 9: Python-reference migration research (COMPLETE - unblocked 2026-09-17)
 The user wants the Python reference system's straddle trading logic
 (SL/MTM/straddle-price exits, hedge/roll monitors, chunked fast-exit
 rules) ported to C++/Go/GreekSoft for better latency and TBT support.
-The pasted `refernce_py_code/` folder only contains orchestration code
-(`api/routes.py`, `api/websocket.py`, `background/tasks.py` - confirmed
-via full read by a research agent). The modules with the actual
-exit-rule algorithms are referenced by `routes.py`'s imports but were
-not included: `trading/builder.py`, `trading/trade_manager.py`,
-`trading/fast_exit_monitor.py`, `trading/square_off.py`,
-`trading/event_bus.py`, `trading/special_oms_db.py`. User chose to add
-those files before a migration plan is drafted, rather than have one
-written from guesses about the missing algorithms (2026-09-16).
-**Do not delete/touch `refernce_py_code/`** until this is resolved.
+`refernce_py_code/` initially only had orchestration code (`api/routes.py`,
+`api/websocket.py`, `background/tasks.py`); the user then added the
+actual `trading/*.py` modules (`builder.py`, `trade_manager.py`,
+`fast_exit_monitor.py`, `square_off.py`, `event_bus.py`,
+`special_oms_db.py`, a `trading/monitors/` package, and ~250 dated
+patch/backup/diagnose files alongside them, ignored).
+
+- [x] Three parallel research passes read every real module (order
+      execution/square-off/chunking; exit/risk monitor thresholds and
+      formulas; infra/event-bus/special-OMS/DB), plus a fourth pass
+      confirming this Go platform's actual current state (chunking
+      already ported and matching Python's algorithm; verification is
+      REST-poll-based; no autonomous SL/TP/roll/fast-exit exists yet;
+      the one existing autonomous action -- a hedge trigger -- doesn't
+      fold fills back into the leg-quantity model). Findings and the
+      full design are in the plan file used to build Phase 10 below
+      (not duplicated here in full -- see git history/session log for
+      the complete per-module algorithm writeups).
+- [x] User gave explicit architecture direction on *how* to port, not
+      just *what*: replace Python's fixed-7-chunk/REST-poll/asyncio
+      model with a TBT (Iris push)-driven execution engine, an explicit
+      OMS/PMS split to minimize market impact cost, and true (goroutine)
+      parallelism instead of asyncio's cooperative concurrency. See
+      Phase 10.
+- [ ] `refernce_py_code/` stays in the repo, untouched, until the port
+      reaches functional parity (Phase 10's later sub-phases).
+
+## Phase 10: TBT-driven OMS/PMS execution engine (in progress, 2026-09-17)
+Phase 1 of the approved migration plan. Scope: replace REST-poll-based
+fill verification with Iris-push-based verification and make concurrent
+order placement genuinely parallel. Does **not** change what
+SquareOff/PartialSquareOff/DeployStraddle are allowed to do, and does
+**not** yet add any autonomous SL/TP/roll/fast-exit decision logic (that
+is Phase 2+ of the plan, deliberately deferred -- real-money risk that
+needs its own review/tests/paper-soak).
+
+- [x] **Moved `ingest`/`normalize` out of `services/reconciler/internal/`
+      into `libs/broker-greeksoft/ingest` and `libs/broker-greeksoft/normalize`.**
+      Go's `internal/` visibility rule meant execution-gateway could not
+      import the reconciler's copies to parse the identical Iris wire
+      format for its own real-time use -- moving them to the shared lib
+      (same package names, so only import paths changed) lets both
+      services share one parsing implementation instead of forking a
+      second one. Verified: `libs/broker-greeksoft`, `services/reconciler`
+      (including the `-tags=integration` test against live Postgres) all
+      still build/vet/test clean after the move.
+- [x] **`services/execution-gateway/internal/brokers/greeksoft/omsfeed.go`
+      (new)**: `OMSFeed` maintains an in-memory, Iris-push-fed
+      `map[brokerOrderID]state` (side, status, cumulative filled qty,
+      average price) and implements `trading.VerifiedFillsProvider` --
+      a drop-in alternative to the existing REST-poll-based
+      `Executor.GetVerifiedFills`. Deliberately advisory/real-time-only:
+      it persists nothing and is never the durable source of truth --
+      `services/reconciler` remains the sole ACID writer to Postgres
+      from the same Iris stream (the PMS side of the OMS/PMS split;
+      OMSFeed is the OMS side). Placed in `internal/brokers/greeksoft`
+      rather than `internal/trading` (a refinement found during
+      implementation, not in the original plan text) because the
+      GreekSoft-token-to-internal-token mapping it needs
+      (`resolveGreeksoftShortToken`) already lives there, and
+      `internal/trading` must stay broker-agnostic (documented
+      constraint already in `reconciliation_types.go`: broker packages
+      import `trading`, so `trading` must never import a broker package
+      back). Handles both `OrderResponse` and `TradeResponse` pushes,
+      preferring `TradeResponse`'s exact `traded_price` and inheriting
+      token from a prior `OrderResponse` for the same order (confirmed
+      live this session: GreekSoft always sends both for a fill).
+      State only moves forward (a stale/out-of-order push can't regress
+      a known filled quantity).
+- [x] `Executor` gained an `OMSFeed`/`VerifyViaIris` field;
+      `GetVerifiedFills` delegates to the Iris feed when both are set,
+      else falls back to the existing, already-proven REST path
+      unchanged. `waitForVerifiedFills`/`verifySubmittedFills`
+      (`verified_execution.go`) needed **zero changes** -- they just
+      call whichever provider the executor exposes, so every call site
+      (BUILD, `SquareOff`, `PartialSquareOff`, `ManualHedge`) gets the
+      faster verification uniformly through one central switch instead
+      of separate per-call-site plumbing.
+- [x] `main.go`: gated behind `EXEC_VERIFY_MODE=iris` (unset/anything
+      else keeps the existing REST-poll default). When enabled, starts
+      an `OMSFeed.Start(...)` using the same shared-session login
+      (`LoginShared`) pattern as the rest of this platform, so it
+      doesn't collide with the reconciler's or greeksoft-feed-bridge's
+      GreekSoft sessions.
+- [x] Tests: 7 unit tests in `omsfeed_test.go` covering fill tracking,
+      token resolution, the anti-regression rule, `TradeResponse`
+      token-inheritance from a prior `OrderResponse`, the
+      unknown-order-gets-zero-token case, the update-notification
+      channel, and multiple independent orders. All pass with `-race`,
+      no real broker/network dependency (constructs `normalize.*`
+      payloads directly, doesn't need a live Iris frame).
+- [ ] **Not yet done**: `EXEC_VERIFY_MODE=iris` has not been validated
+      against a real live trade (deliberately -- this session avoids
+      placing live trades merely to self-verify infra changes; the
+      default REST path is unchanged and still what's live). Do this
+      once the user is ready: set the env var, run one small real
+      partial square-off, confirm `[OMSFEED]`/`Greeksoft executor
+      account=... verifying fills via Iris push` logs appear and the
+      result matches what REST verification would have found.
+- [ ] **Not yet done**: `depthslicer.go` (depth-aware, impact-minimizing
+      slice sizing replacing the fixed-7-chunk generator) -- the other
+      half of Phase 1. Deliberately sequenced after `omsfeed.go` was
+      fully built and tested rather than building both at once.
+- [ ] Phase 2+ (autonomous SL that actually exits, TP, roll, hedge
+      fix + fast-exit engine, wings/special-OMS ledger, event-bus
+      priority arbitration) -- documented in the plan file, not started.
