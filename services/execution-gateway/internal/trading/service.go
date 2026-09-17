@@ -716,6 +716,23 @@ func (s *Service) executeBuild(
 	return outcome, nil
 }
 
+// slThresholdForTrade computes the stop-loss lot count and rupee
+// threshold for a trade. The lot count is deliberately fixed to the
+// trade's ORIGINAL configured size (trade.Lots), not its current, live
+// CEQty/PEQty -- matching the Python reference system's
+// FIXED_ORIGINAL_POSITION_SL design, so a partial square-off, hedge, or
+// roll can't drift the effective stop-loss tighter by shrinking the
+// denominator. Falls back to live quantities only if Lots was never
+// set (e.g. an older trade row predating this field).
+func slThresholdForTrade(trade StoredTrade) (originalLotsOpen float64, threshold float64) {
+	originalLotsOpen = float64(trade.Lots)
+	if originalLotsOpen <= 0 {
+		originalLotsOpen = float64(trade.CEQty+trade.PEQty) / (2.0 * float64(maxInt(1, trade.LotSize)))
+	}
+	threshold = -trade.Config.SLPointsPerLot * originalLotsOpen
+	return originalLotsOpen, threshold
+}
+
 func (s *Service) runMonitorCycle(tradeUID string) {
 	trade, ok := s.Store.LoadTrade(tradeUID)
 	if !ok {
@@ -884,8 +901,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 
 	// Stop-loss check. This executes on every monitor cycle.
 	if trade.Config.SLPointsPerLot > 0 {
-		totalLotsOpen := float64(trade.CEQty+trade.PEQty) / (2.0 * float64(maxInt(1, trade.LotSize)))
-		slThreshold := -trade.Config.SLPointsPerLot * totalLotsOpen
+		originalLotsOpen, slThreshold := slThresholdForTrade(trade)
 
 		if totalPNL <= slThreshold {
 			log.Printf(
@@ -893,16 +909,23 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 				tradeUID,
 				totalPNL,
 				slThreshold,
-				totalLotsOpen,
+				originalLotsOpen,
 			)
 
-			trade.Status = "CLOSED_SL"
-			trade.LastUpdateTime = time.Now()
-			s.Store.UpdateTrade(trade)
-
-			if rt, ok := s.Store.LoadRuntime(tradeUID); ok {
-				close(rt.StopCh)
-				s.Store.DeleteRuntime(tradeUID)
+			if err := s.SquareOff(tradeUID, "SL"); err != nil {
+				log.Printf("[RISK] SL_TRIGGER SquareOff failed trade=%s err=%v", tradeUID, err)
+				// Leave the runtime running: SquareOff reverts the trade's
+				// status on failure, so it is not CLOSED_SL, and
+				// runMonitorCycle's own terminal-status guard at the top
+				// of this function will therefore NOT skip the next tick
+				// -- the exit attempt is retried on the next
+				// PollIntervalSec cycle instead of being lost.
+			} else if closedTrade, ok := s.Store.LoadTrade(tradeUID); ok &&
+				closedTrade.Status == "CLOSED_SL" {
+				if rt, ok := s.Store.LoadRuntime(tradeUID); ok {
+					close(rt.StopCh)
+					s.Store.DeleteRuntime(tradeUID)
+				}
 			}
 		}
 	}
@@ -1305,7 +1328,15 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 	tr.LastUpdateTime = time.Now()
 
 	if remainingCE == 0 && remainingPE == 0 {
-		tr.Status = "CLOSEDSQF"
+		if reason == "SL" {
+			// Preserves the audit distinction between a real
+			// stop-loss-triggered close and a manual/other square-off --
+			// CLOSED_SL is already a recognized terminal status
+			// elsewhere in this file (see the status-guard switches).
+			tr.Status = "CLOSED_SL"
+		} else {
+			tr.Status = "CLOSEDSQF"
+		}
 		tr.ClosedAt = time.Now()
 	} else {
 		tr.Status = prevStatus
@@ -1318,7 +1349,11 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 		s.Store.UpdateTrade(tr)
 	}
 
-	if tr.Status != "CLOSEDSQF" {
+	// The actual success condition is remainingCE/PE == 0 (that's what
+	// decided the status above) -- checked directly here, not re-derived
+	// from tr.Status, so adding a new terminal status (e.g. CLOSED_SL)
+	// for a still-fully-verified exit can never be misread as a failure.
+	if remainingCE != 0 || remainingPE != 0 {
 		log.Printf(
 			"⚠️ Partial square-off %s: verified CE=%d/%d PE=%d/%d",
 			tradeUID,
@@ -1334,8 +1369,7 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 		)
 	}
 
-	log.Printf("✅ Square-off completed for %s", tradeUID)
-	_ = reason
+	log.Printf("✅ Square-off completed for %s reason=%s status=%s", tradeUID, reason, tr.Status)
 	return nil
 }
 

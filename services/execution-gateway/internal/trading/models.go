@@ -155,8 +155,12 @@ type MonitorConfig struct {
 	// Legacy / existing fields
 	BuyBuffer  float64 `json:"buy_buffer"`
 	SellBuffer float64 `json:"sell_buffer"`
-	// Deprecated: retained for compatibility only. It is alert-only and
-	// must never directly set a trade to CLOSED_SL.
+	// When > 0, drives a real, verified autonomous exit: runMonitorCycle
+	// compares live PnL against a threshold fixed to the trade's
+	// ORIGINAL size (trade.Lots, not live CEQty/PEQty -- see
+	// slThresholdForTrade) and, on breach, calls SquareOff(tradeUID, "SL")
+	// (aggressive chunking, verified fills, sets CLOSED_SL only once the
+	// exit is confirmed -- never a bare status flip).
 	SLPointsPerLot float64 `json:"sl_points_per_lot"`
 
 	// Existing rupee-PnL monitor fields. These remain alert-only until
