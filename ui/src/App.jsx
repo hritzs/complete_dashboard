@@ -108,7 +108,7 @@
     setDirectOrderResult(null);
 
     try {
-      const result = await safeFetchJson('http://localhost:8005/api/manual/order', {
+      const result = await safeFetchJson('/api/manual/order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -180,6 +180,10 @@
 
     const [positionsError, setPositionsError] = createSignal("");
     const [straddleMetrics, setStraddleMetrics] = createSignal({});
+    // Plain (non-reactive) tracking set for refreshLiveMetrics's
+    // failure-transition logging -- not rendered, so it doesn't need to
+    // be a signal.
+    const snapshotFailureUids = new Set();
     const [expandedTrade, setExpandedTrade] = createSignal(null);
   const [modifyTradeModal, setModifyTradeModal] = createSignal({ open: false, trade: null });
   const [modifyTradeForm, setModifyTradeForm] = createSignal({
@@ -889,10 +893,10 @@
               `/api/snapshots/${encodeURIComponent(tradeUid)}`
             );
             const snapshot = payload?.data ?? payload;
-            if (!snapshot || snapshot.success === false) return null;
+            if (!snapshot || snapshot.success === false) return { tradeUid, snapshot: null };
             return { tradeUid, snapshot };
-          } catch (_) {
-            return null;
+          } catch (err) {
+            return { tradeUid, snapshot: null, error: err?.message || "snapshot fetch failed" };
           }
         });
 
@@ -900,9 +904,25 @@
       const fresh = {};
 
       for (const result of results) {
-        if (result?.tradeUid && result.snapshot) {
-          fresh[result.tradeUid] = result.snapshot;
+        if (!result?.tradeUid) continue;
+
+        // Log only on the first failure for a trade and once more on
+        // recovery, not once per poll (this runs on a timer) -- a
+        // persistently-broken snapshot feed used to fail completely
+        // silently forever.
+        const wasFailing = snapshotFailureUids.has(result.tradeUid);
+        if (result.error || !result.snapshot) {
+          if (!wasFailing) {
+            snapshotFailureUids.add(result.tradeUid);
+            appendEventLog("warn", `Live metrics unavailable for ${result.tradeUid}: ${result.error || "no snapshot data"}`);
+          }
+          continue;
         }
+        if (wasFailing) {
+          snapshotFailureUids.delete(result.tradeUid);
+          appendEventLog("info", `Live metrics recovered for ${result.tradeUid}`);
+        }
+        fresh[result.tradeUid] = result.snapshot;
       }
 
       if (Object.keys(fresh).length > 0) {
@@ -953,7 +973,24 @@
 
     const handlePortfolioSync = async (item) => {
       const tradeUid = item.tradeUid || item.id;
+      if (!tradeUid) return;
+
       appendEventLog("info", `Sync requested for ${tradeUid}`);
+      try {
+        const res = await fetch(`/api/trade/${encodeURIComponent(tradeUid)}/sync-preview`);
+        const data = await res.json();
+        if (data && data.success) {
+          appendEventLog(
+            "success",
+            `Sync preview for ${tradeUid}: CE open=${data.ce?.open_qty ?? "—"} PE open=${data.pe?.open_qty ?? "—"} proposed_status=${data.proposed_trade_status ?? "—"}`
+          );
+        } else {
+          appendEventLog("warn", `Sync preview for ${tradeUid}: ${data?.error || "no verified broker fills matched"}`);
+        }
+      } catch (err) {
+        appendEventLog("error", `Sync preview failed for ${tradeUid}: ${err.message}`);
+      }
+
       await refreshPortfolio();
     };
 
@@ -1040,9 +1077,17 @@
 
       setModifyTradeForm({
 
-        // Conservative defaults for an active one-lot NIFTY straddle.
+        // Prefilled from the trade's actual persisted config -- falling
+        // back to the same conservative defaults used for a brand-new
+        // one-lot NIFTY straddle only when a value was never set.
 
         sl_points_per_lot: cfg.sl_points_per_lot ?? cfg.slPointsPerLot ?? "30",
+
+        spot_stop_loss_bps: cfg.spot_stop_loss_bps ?? cfg.spotStopLossBps ?? "14",
+
+        take_profit_points_per_straddle: cfg.take_profit_points_per_straddle ?? cfg.takeProfitPointsPerStraddle ?? "0",
+
+        auto_risk_execution_enabled: cfg.auto_risk_execution_enabled ?? cfg.autoRiskExecutionEnabled ?? true,
 
         straddle_div: cfg.straddle_div ?? cfg.straddleDiv ?? "4",
 
@@ -1119,6 +1164,8 @@
         payload[field] = value;
 
       }
+
+      payload.auto_risk_execution_enabled = !!form.auto_risk_execution_enabled;
 
 
       const squareOffTime = String(form.square_off_time ?? "").trim();
@@ -1945,7 +1992,6 @@
                         );
 
                         const ceLtp = () =>
-                          (window._lastPrices && window._lastPrices[String(item.ceToken)]) ??
                           metrics().position_ltps?.[item.ceToken] ??
                           leg("CE")?.ltp ??
                           live().ce_ltp ??
@@ -1953,7 +1999,6 @@
                           0;
 
                         const peLtp = () =>
-                          (window._lastPrices && window._lastPrices[String(item.peToken)]) ??
                           metrics().position_ltps?.[item.peToken] ??
                           leg("PE")?.ltp ??
                           live().pe_ltp ??
@@ -2037,21 +2082,7 @@
                               <td style={{ padding: "10px" }}>₹{fmt(peLtp(), 2)}</td>
                               <td style={{ padding: "10px" }}>{fmt(netDelta(), 4)}</td>
                               <td style={{ padding: "10px" }}>{fmt(pointsOut(), 2)}</td>
-                              <td style={{ padding: "10px" }}>{(() => {
-                                const m = metrics();
-                                const cfg = m.config || item.config || {};
-                                const ce = m.ce_ltp ?? item.ceLTP ?? 0;
-                                const pe = m.pe_ltp ?? item.peLTP ?? 0;
-                                const straddle = ce + pe;
-                                const iv = m.net_iv ?? item.iv ?? 0;
-                                const hDiv = cfg.hedge_div || 57.0;
-                                const sDiv = cfg.straddle_div || 3.0;
-                                
-                                // Apply formula: (IV / Hedge Div) OR (ATM Straddle / Straddle Div)
-                                const calcAllowed = (iv > 0) ? (iv / hDiv) : (straddle / sDiv);
-                                const allowed = pointsAllowed();
-                                return fmt(allowed, 2);
-                              })()}</td>
+                              <td style={{ padding: "10px" }}>{fmt(pointsAllowed(), 2)}</td>
                               
                               
                               
@@ -2188,8 +2219,8 @@
                                         <div class="monitor-row">
                                           <span>Stop Loss</span>
                                           <span class="monitor-value">
-                                            <span class="monitor-dot"></span>
-                                            Running
+                                            <span class="monitor-dot" style={isTradeClosed(item) ? { background: "#6b7280", "box-shadow": "none" } : undefined}></span>
+                                            {isTradeClosed(item) ? "Stopped" : "Running"}
                                           </span>
                                         </div>
 
@@ -2205,8 +2236,8 @@
                                         <div class="monitor-row">
                                           <span>Hedge</span>
                                           <span class="monitor-value">
-                                            <span class="monitor-dot"></span>
-                                            Running
+                                            <span class="monitor-dot" style={isTradeClosed(item) ? { background: "#6b7280", "box-shadow": "none" } : undefined}></span>
+                                            {isTradeClosed(item) ? "Stopped" : "Running"}
                                           </span>
                                         </div>
 
@@ -2247,6 +2278,11 @@
                                         </div>
 
                                         <div class="monitor-row">
+                                          {/* 19.5 is execution-gateway's own hardcoded hedge-eligibility
+                                              floor (see runtime.go's minimumPointsReached check, also
+                                              used in the Risk Action formula below) -- a real platform
+                                              constant, not a per-trade config value, so it's fine to
+                                              display fixed here rather than reading it from item.config. */}
                                           <span>Minimum Hedge Points</span>
                                           <strong>19.50</strong>
                                         </div>
@@ -2279,7 +2315,7 @@
 
                                       <section class="trade-card recent-events-card">
                                         <div class="trade-card-title">Recent Events</div>
-                                        <div class="trade-events-empty">No current events</div>
+                                        <div class="trade-events-empty">Not shown here yet</div>
                                         <div class="trade-event-hint">
                                           Risk breaches, SL, TP, time-square-off, and order events
                                           are available in the Logs tab.
@@ -2666,6 +2702,28 @@
               </div>
 
               <div class="control-block">
+                <label class="control-label">Hedge Start Time</label>
+                <input
+                  class="symbol-select"
+                  type="text"
+                  placeholder="HH:MM:SS"
+                  value={automationConfig().hedge_start_time}
+                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, hedge_start_time: e.target.value }))}
+                />
+              </div>
+
+              <div class="control-block">
+                <label class="control-label">Roll Start Time</label>
+                <input
+                  class="symbol-select"
+                  type="text"
+                  placeholder="HH:MM:SS"
+                  value={automationConfig().roll_start_time}
+                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, roll_start_time: e.target.value }))}
+                />
+              </div>
+
+              <div class="control-block">
                 <label class="control-label">Buy Buffer</label>
                 <input
                   class="symbol-select"
@@ -2893,7 +2951,7 @@
                 </button>
                 <span style={{ color: '#8fa5c7', 'font-family': 'monospace', 'font-size': '12px' }}>
                   {atmRow()
-                    ? `${selectedSymbol()} ${selectedExpiry() || optionChain().expiry} ${directOrderLeg()} ${Math.round(atmRow().strike)} | token=${directOrderLeg() === 'CE' ? atmRow().ce_token : atmRow().pe_token} | LTP=${fmt(directOrderLeg() === 'CE' ? atmRow().ce_ltp : atmRow().pe_ltp)} | lot=2 | qty=130`
+                    ? `${selectedSymbol()} ${selectedExpiry() || optionChain().expiry} ${directOrderLeg()} ${Math.round(atmRow().strike)} | token=${directOrderLeg() === 'CE' ? atmRow().ce_token : atmRow().pe_token} | LTP=${fmt(directOrderLeg() === 'CE' ? atmRow().ce_ltp : atmRow().pe_ltp)} | lot=${manualTotalLots()} | qty=${manualTotalLots() * (toNum(optionChain().lot_size) || 65)}`
                     : 'Waiting for live ATM option data…'}
                 </span>
               </div>
@@ -2904,7 +2962,9 @@
                 disabled={manualHedgeBusy() || directOrderBusy()}
                 style={{ background: '#dc3545', color: '#fff' }}
               >
-                {directOrderBusy() ? 'SUBMITTING 130...' : 'SELL LIVE ATM ' + directOrderLeg() + ' — 2 LOTS / 130 QTY / ONE ORDER'}
+                {directOrderBusy()
+                  ? `SUBMITTING ${manualTotalLots() * (toNum(optionChain().lot_size) || 65)}...`
+                  : `SELL LIVE ATM ${directOrderLeg()} — ${manualTotalLots()} LOT${manualTotalLots() === 1 ? '' : 'S'} / ${manualTotalLots() * (toNum(optionChain().lot_size) || 65)} QTY / ${Math.ceil(manualTotalLots() / Math.max(1, Math.floor(toNum(manualLotsPerOrder()))))} ORDER${Math.ceil(manualTotalLots() / Math.max(1, Math.floor(toNum(manualLotsPerOrder())))) === 1 ? '' : 'S'}`}
               </button>
 
             </div>
