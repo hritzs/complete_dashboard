@@ -187,9 +187,11 @@
     const [expandedTrade, setExpandedTrade] = createSignal(null);
   const [modifyTradeModal, setModifyTradeModal] = createSignal({ open: false, trade: null });
   const [modifyTradeForm, setModifyTradeForm] = createSignal({
-    spot_stop_loss_bps: "14",
-    take_profit_points_per_straddle: "0",
+    sl_points_per_lot: "30",
+    sl_pnl_bps_of_spot: "14",
+    tp_pnl_bps_of_spot: "0",
     square_off_time: "15:37:00",
+    square_off_hard_time: "",
     auto_risk_execution_enabled: true,
     straddle_div: "4",
     hedge_div: "57",
@@ -1076,6 +1078,10 @@
 
       const squareOffTime = String(rawSquareOffTime || "");
 
+      const rawSquareOffHardTime = cfg.square_off_hard_time ?? cfg.squareOffHardTime ?? "";
+
+      const squareOffHardTime = String(rawSquareOffHardTime || "");
+
 
       setModifyTradeError("");
 
@@ -1087,9 +1093,9 @@
 
         sl_points_per_lot: cfg.sl_points_per_lot ?? cfg.slPointsPerLot ?? "30",
 
-        spot_stop_loss_bps: cfg.spot_stop_loss_bps ?? cfg.spotStopLossBps ?? "14",
+        sl_pnl_bps_of_spot: cfg.sl_pnl_bps_of_spot ?? cfg.slPnlBpsOfSpot ?? "14",
 
-        take_profit_points_per_straddle: cfg.take_profit_points_per_straddle ?? cfg.takeProfitPointsPerStraddle ?? "0",
+        tp_pnl_bps_of_spot: cfg.tp_pnl_bps_of_spot ?? cfg.tpPnlBpsOfSpot ?? "0",
 
         auto_risk_execution_enabled: cfg.auto_risk_execution_enabled ?? cfg.autoRiskExecutionEnabled ?? true,
 
@@ -1099,9 +1105,15 @@
 
         hedge_threshold_delta: cfg.hedge_threshold_delta ?? cfg.hedgeThresholdDelta ?? "65",
 
-        square_off_time: /^\\d{2}:\\d{2}:\\d{2}$/.test(squareOffTime)
+        square_off_time: /^\d{2}:\d{2}:\d{2}$/.test(squareOffTime)
 
           ? squareOffTime
+
+          : "",
+
+        square_off_hard_time: /^\d{2}:\d{2}(:\d{2})?$/.test(squareOffHardTime)
+
+          ? squareOffHardTime
 
           : ""
 
@@ -1138,9 +1150,9 @@
 
         "sl_points_per_lot",
 
-        "spot_stop_loss_bps",
+        "sl_pnl_bps_of_spot",
 
-        "take_profit_points_per_straddle",
+        "tp_pnl_bps_of_spot",
 
         "straddle_div",
 
@@ -1185,6 +1197,23 @@
         }
 
         payload.square_off_time = squareOffTime;
+
+      }
+
+
+      const squareOffHardTime = String(form.square_off_hard_time ?? "").trim();
+
+      if (squareOffHardTime !== "") {
+
+        if (!/^\d{2}:\d{2}(:\d{2})?$/.test(squareOffHardTime)) {
+
+          setModifyTradeError("Hard square-off time must be HH:MM or HH:MM:SS, for example 15:15.");
+
+          return;
+
+        }
+
+        payload.square_off_hard_time = squareOffHardTime;
 
       }
 
@@ -1826,23 +1855,34 @@
 
               <div style={{ display: "grid", "grid-template-columns": "repeat(2, minmax(0, 1fr))", gap: "12px" }}>
                 <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
-                  Spot Stop Loss (BPS)
+                  SL (points / lot)
                   <input
                     type="number"
                     step="0.01"
-                    value={modifyTradeForm().spot_stop_loss_bps}
-                    onInput={(event) => setModifyTradeForm((form) => ({ ...form, spot_stop_loss_bps: event.currentTarget.value }))}
+                    value={modifyTradeForm().sl_points_per_lot}
+                    onInput={(event) => setModifyTradeForm((form) => ({ ...form, sl_points_per_lot: event.currentTarget.value }))}
                     style={{ padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
                   />
                 </label>
 
                 <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
-                  Take Profit (Points/Straddle)
+                  SL (bps of spot)
                   <input
                     type="number"
                     step="0.01"
-                    value={modifyTradeForm().take_profit_points_per_straddle}
-                    onInput={(event) => setModifyTradeForm((form) => ({ ...form, take_profit_points_per_straddle: event.currentTarget.value }))}
+                    value={modifyTradeForm().sl_pnl_bps_of_spot}
+                    onInput={(event) => setModifyTradeForm((form) => ({ ...form, sl_pnl_bps_of_spot: event.currentTarget.value }))}
+                    style={{ padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                  />
+                </label>
+
+                <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
+                  TP (bps of spot)
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={modifyTradeForm().tp_pnl_bps_of_spot}
+                    onInput={(event) => setModifyTradeForm((form) => ({ ...form, tp_pnl_bps_of_spot: event.currentTarget.value }))}
                     style={{ padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
                   />
                 </label>
@@ -1883,7 +1923,18 @@
                 </label>
 
                 <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px", "grid-column": "1 / -1" }}>
-                  Auto Square-Off Time (HH:MM:SS)
+                  Hard Square-Off Time (HH:MM) -- real verified exit
+                  <input
+                    type="text"
+                    placeholder="15:15"
+                    value={modifyTradeForm().square_off_hard_time}
+                    onInput={(event) => setModifyTradeForm((form) => ({ ...form, square_off_hard_time: event.currentTarget.value }))}
+                    style={{ padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                  />
+                </label>
+
+                <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px", "grid-column": "1 / -1" }}>
+                  Auto Square-Off Time (HH:MM:SS) -- alert only, no exit
                   <input
                     type="text"
                     placeholder="15:37:00"
@@ -2234,6 +2285,50 @@
                                             {item.config?.sl_points_per_lot ??
                                               item.config?.slPointsPerLot ??
                                               "—"}
+                                          </strong>
+                                        </div>
+
+                                        <div class="monitor-row">
+                                          <span>SL (bps of spot)</span>
+                                          <strong>
+                                            {(() => {
+                                              const bps = item.config?.sl_pnl_bps_of_spot ?? item.config?.slPnlBpsOfSpot;
+                                              const underlying = Number(live().underlying) || 0;
+                                              if (!bps || Number(bps) <= 0) return "—";
+                                              const threshold = -(underlying * Number(bps)) / 10000;
+                                              return underlying > 0
+                                                ? `${bps} bps (₹${fmt(threshold, 2)}/straddle)`
+                                                : `${bps} bps`;
+                                            })()}
+                                          </strong>
+                                        </div>
+
+                                        <div class="monitor-row">
+                                          <span>TP (bps of spot)</span>
+                                          <strong>
+                                            {(() => {
+                                              const bps = item.config?.tp_pnl_bps_of_spot ?? item.config?.tpPnlBpsOfSpot;
+                                              const underlying = Number(live().underlying) || 0;
+                                              if (!bps || Number(bps) <= 0) return "—";
+                                              const threshold = (underlying * Number(bps)) / 10000;
+                                              return underlying > 0
+                                                ? `${bps} bps (₹${fmt(threshold, 2)}/straddle)`
+                                                : `${bps} bps`;
+                                            })()}
+                                          </strong>
+                                        </div>
+
+                                        <div class="monitor-row">
+                                          <span>Hard Square-Off</span>
+                                          <strong>
+                                            {(() => {
+                                              const raw = item.config?.square_off_hard_time ?? item.config?.squareOffHardTime ?? "";
+                                              if (!raw) return "Not configured";
+                                              const d = new Date(raw);
+                                              return Number.isNaN(d.getTime())
+                                                ? "Not configured"
+                                                : d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+                                            })()}
                                           </strong>
                                         </div>
 
