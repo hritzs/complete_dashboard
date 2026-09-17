@@ -905,10 +905,51 @@ used these instead of `SpotStopLossBps`.
       and TIME. Full `go build`/`go vet`/`go test -race` clean; UI
       `vite build` clean. Rebuilt and restarted the `execution-gateway`
       binary so this is live.
-- [ ] **Live validation not yet run** -- place a 1-lot NIFTY straddle and
-      test SL (`sl_pnl_bps_of_spot=1`) and TP (`tp_pnl_bps_of_spot=1`)
-      paths, configure `square_off_hard_time=15:15` as a safety net, and
-      separately test the pre-existing synthetic-hedge autonomous trigger
-      with 1 lot of NIFTY via `force_one_lot_hedge_test`. Requires
-      explicit approval before any real order is placed, same pattern as
-      every other live test this session.
+- [x] **Live validation, 2026-09-17 ~15:11-15:32 IST, real 1-lot NIFTY
+      straddles via GreekSoft account 147**:
+      - Fixed a real GreekSoft login blocker first: `DeployStraddle`'s
+        account default was the stale literal `"HRITIK"`, but the active
+        `.env` block is configured for client `147`
+        (`GREEK_USERNAME`/`GREEK_CLIENT_ID=147`), which was never actually
+        read into the login path. Passing `account_id: "147"` explicitly
+        fixed it. (A separate `GreekBrokerID`-wiring theory was tried and
+        reverted -- the Postman collection confirmed `jloginNew` already
+        hardcodes `brokerid: "1"` correctly, unrelated to the login
+        failure.)
+      - **TP test passed end-to-end**: armed `tp_pnl_bps_of_spot=1` on a
+        live trade already at +2.40/straddle vs. a 2.33 threshold;
+        `[RISK] TP_TRIGGER` fired within one poll tick, both legs bought
+        back and verified 65/65, final status `CLOSED_TP`. First live
+        proof of the TP mechanism built this session.
+      - **SL/TIME test uncovered a real incident**: a second test trade
+        got stuck in `PARTIAL` status (fill-persistence error), so its
+        monitor runtime never started -- meaning the `sl_pnl_bps_of_spot`
+        and `square_off_hard_time=15:24` configured on it were silently
+        never being evaluated. The configured hard-cutoff did not fire.
+        The trade sat as a real, live, completely unmonitored short
+        options position at the broker for several minutes before being
+        caught and manually flattened (verified 65/65 via the broker's
+        own fill confirmation, not just a status flip). A second trade
+        hit the exact same issue and was manually flattened at the
+        user's requested 15:32 cutoff after its own auto-cutoff also
+        failed to fire for the same reason.
+      - **Root cause found and fixed**: `persistVerifiedFill`'s lookup
+        (`store_fills_postgres.go`) matched local `orders` rows by
+        `broker_order_id + broker_name + account_id` with no `ORDER BY`.
+        GreekSoft's paper/UAT `broker_order_id` is only unique within a
+        session, not globally -- confirmed live: order ids like
+        `120000003` and `120000013` were reused the very next day for
+        unrelated, even opposite-side, orders. The unscoped lookup could
+        return yesterday's stale row instead of today's real one,
+        producing a false "side mismatch" error that blocked the status
+        transition to `ACTIVE`. Fixed with `ORDER BY created_at DESC
+        LIMIT 1`, so reconciliation always matches the most recently
+        placed local order. Deployed (rebuilt + restarted) with zero
+        open positions and no new orders placed, per explicit
+        instruction once the market was close to closing.
+      - **Not yet done**: re-run the SL and TIME tests end-to-end now
+        that the root cause is fixed (today's tests only proved TP
+        cleanly; SL and TIME were proven only via manual intervention
+        after the bug above blocked their automatic path). The
+        synthetic-hedge autonomous trigger test (`force_one_lot_hedge_test`)
+        was not attempted today -- ran out of market hours.
