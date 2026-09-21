@@ -131,6 +131,47 @@ func (h *Handlers) ConfigBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The expiry must be chosen explicitly. It used to be inherited silently
+	// from whatever the UI last had selected, which sold a 23-NOV-26 straddle
+	// when the weekly expiry was intended.
+	targetExpiry := strings.TrimSpace(req.TargetExpiry)
+	if targetExpiry == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "target_expiry is required: choose the expiry explicitly (e.g. 22-SEP-26); the automated build never picks one for you",
+		})
+		return
+	}
+	// Check it exists for this symbol now, while no order exists, instead of
+	// failing (or selling something else) at entry time.
+	if h.Service != nil && h.Service.Snapshot != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		chain, cerr := h.Service.Snapshot.GetOptionChain(ctx, NormalizeSymbol(req.Symbol), targetExpiry)
+		cancel()
+		switch {
+		case cerr != nil:
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("expiry %s is not available for %s: %v", targetExpiry, req.Symbol, cerr),
+			})
+			return
+		case chain == nil || !strings.EqualFold(strings.TrimSpace(chain.Expiry), targetExpiry):
+			got := ""
+			if chain != nil {
+				got = chain.Expiry
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("requested expiry %s but the market data returned %q; not scheduling", targetExpiry, got),
+			})
+			return
+		}
+	}
+	req.TargetExpiry = targetExpiry
+
 	risk := &BuildRiskConfig{
 		ExitTime:    req.ExitTime,
 		SlBps:       req.SlBps,
@@ -195,6 +236,7 @@ func (h *Handlers) ConfigBuild(w http.ResponseWriter, r *http.Request) {
 		"lots":         dReq.Lots,
 		"entry_time":   job.RunAt.Format("15:04:05"),
 		"scheduled_at": job.RunAt.Format(time.RFC3339),
+		"expiry":       targetExpiry,
 		"exit_time":    strings.TrimSpace(req.ExitTime),
 		"sl_bps":       req.SlBps,
 		"not_applied":  notAppliedBuildFields(req),
@@ -214,6 +256,7 @@ func (h *Handlers) ListScheduledBuilds(w http.ResponseWriter, r *http.Request) {
 				"source":       j.Source,
 				"symbol":       j.Request.Symbol,
 				"lots":         j.Request.Lots,
+				"expiry":       j.Request.TargetExpiry,
 				"broker_name":  j.Request.BrokerName,
 				"account_id":   j.Request.AccountID,
 				"run_at":       j.RunAt.Format(time.RFC3339),

@@ -131,7 +131,7 @@ func (s *BuildScheduler) Schedule(
 	s.mu.Unlock()
 
 	delay := time.Until(runAt)
-	log.Printf("[BUILD SCHEDULER] scheduled id=%s source=%s symbol=%s lots=%d run_at=%s", id, source, req.Symbol, req.Lots, runAt.Format(time.RFC3339))
+	log.Printf("[BUILD SCHEDULER] scheduled id=%s source=%s symbol=%s expiry=%s lots=%d run_at=%s", id, source, req.Symbol, req.TargetExpiry, req.Lots, runAt.Format(time.RFC3339))
 
 	go func() {
 		timer := time.NewTimer(delay)
@@ -153,8 +153,8 @@ func (s *BuildScheduler) Schedule(
 		s.mu.Unlock()
 
 		log.Printf(
-			"[BUILD SCHEDULER] executing id=%s source=%s symbol=%s lots=%d run_at=%s",
-			job.ID, job.Source, job.Request.Symbol, job.Request.Lots, job.RunAt.Format(time.RFC3339),
+			"[BUILD SCHEDULER] executing id=%s source=%s symbol=%s expiry=%s lots=%d run_at=%s",
+			job.ID, job.Source, job.Request.Symbol, job.Request.TargetExpiry, job.Request.Lots, job.RunAt.Format(time.RFC3339),
 		)
 
 		resp, err := s.service.ExecuteFinalBuild(

@@ -45,6 +45,19 @@ type Executor interface {
 	ExecuteOrderIntent(ctx context.Context, intent OrderIntent) (*ExecutionResult, error)
 }
 
+// OrderModifier and OrderCanceller are optional broker capabilities. The
+// build's leftover-quantity chase uses them and does nothing (leaves the
+// order as it was) when an executor lacks either.
+type OrderModifier interface {
+	// ModifyOrderPrice re-prices a resting LIMIT order in place, keeping its
+	// quantity, so no second order exists that could also fill.
+	ModifyOrderPrice(ctx context.Context, brokerOrderID string, price float64, quantity int64, lotSize int) error
+}
+
+type OrderCanceller interface {
+	CancelOrder(ctx context.Context, brokerOrderID string) error
+}
+
 type BrokerFactory interface {
 	GetExecutor(userID, brokerName, accountID string) (Executor, error)
 }

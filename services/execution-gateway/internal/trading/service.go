@@ -124,6 +124,10 @@ type Service struct {
 	// this one process, not a second process instance or a manual action
 	// taken directly against the broker outside this platform.
 	tradeLocks sync.Map // map[string]*sync.Mutex
+
+	// buildTiming paces build verification and the leftover chase; the zero
+	// value means production defaults.
+	buildTiming buildTiming
 }
 
 func NewService(store Store, clientID string) *Service {
@@ -481,6 +485,10 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 
 	case buildOutcome.HasVerifiedExposure():
 		trade.Status = "PARTIAL"
+		// Record what actually filled, not what was intended: an exit sized
+		// from the intended quantity bought a PE that had never been sold.
+		trade.CEQty = int(buildOutcome.Summary.VerifiedCE)
+		trade.PEQty = int(buildOutcome.Summary.VerifiedPE)
 
 	case buildOutcome.HasSubmittedOrders() ||
 		buildOutcome.SubmissionErrors > 0 ||
@@ -545,6 +553,7 @@ func (s *Service) executeBuild(
 	// trade-level verified-fill reconciliation introduced in Stage 4.
 	// This patch does not yet change existing execution behavior.
 	submittedBrokerOrderIDs := make(map[string]struct{})
+	var builtOrders []chaseOrder
 
 	for chunkIdx, chunk := range chunks {
 		ordersToProcess := append([]ExecOrder(nil), chunk...)
@@ -628,6 +637,13 @@ func (s *Service) executeBuild(
 				}
 
 				submittedBrokerOrderIDs[brokerOrderID] = struct{}{}
+				builtOrders = append(builtOrders, chaseOrder{
+					BrokerOrderID: brokerOrderID,
+					Token:         order.Token,
+					Leg:           order.OptionType,
+					Side:          order.Action,
+					Quantity:      int64(order.Quantity),
+				})
 
 				log.Printf(
 					"BUILD submitted trade=%s chunk=%d retry=%d leg=%s broker_order_id=%s status=%s fill_assumed=false",
@@ -689,11 +705,21 @@ func (s *Service) executeBuild(
 			trade.PEToken,
 			int64(trade.CEQty),
 			int64(trade.PEQty),
-			6,
-			800*time.Millisecond,
+			s.buildTiming.withDefaults().verifyAttempts,
+			s.buildTiming.withDefaults().verifyDelay,
 		)
 
 		outcome.Summary = summary
+
+		// Work the leftover quantity (re-price, then cancel if it will not
+		// fill) instead of stopping at PARTIAL with an order resting.
+		if summary.VerificationError == nil && !summary.Complete() && s.Snapshot != nil {
+			outcome.Summary = s.chaseUnfilledBuild(
+				ctx, executor, provider, trade, builtOrders,
+				submittedBrokerOrderIDs, summary, s.buildTiming,
+			)
+			summary = outcome.Summary
+		}
 
 		if err != nil {
 			if outcome.FirstError == nil {
@@ -1142,6 +1168,27 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 	if tr.CEToken <= 0 && tr.PEToken <= 0 {
 		return fmt.Errorf("cannot square off %s: missing CE/PE tokens", tradeUID)
 	}
+
+	// For a trade whose build did not finish cleanly the stored quantities
+	// are the INTENDED ones. Sizing the exit from them bought back a leg that
+	// had never been sold (2026-09-21: a NOV PE), leaving an unintended long
+	// position. Size it from what the orders actually filled instead.
+	if tr.Status == "PARTIAL" || tr.Status == "RECONCILIATION_REQUIRED" {
+		if p, ok := s.Store.(interface {
+			TradeOpenQuantities(ctx context.Context, tradeUID string) (int64, int64, error)
+		}); ok {
+			ce, pe, err := p.TradeOpenQuantities(context.Background(), tradeUID)
+			if err != nil {
+				return fmt.Errorf("cannot square off %s: unable to verify open quantities from orders: %w", tradeUID, err)
+			}
+			if int64(tr.CEQty) != ce || int64(tr.PEQty) != pe {
+				log.Printf("⚠️ SquareOff %s status=%s: stored quantity CE=%d PE=%d differs from filled orders CE=%d PE=%d -- using the filled orders",
+					tradeUID, tr.Status, tr.CEQty, tr.PEQty, ce, pe)
+			}
+			tr.CEQty, tr.PEQty = int(ce), int(pe)
+		}
+	}
+
 	if tr.CEQty <= 0 && tr.PEQty <= 0 {
 		return fmt.Errorf("cannot square off %s: no open CE/PE quantity found", tradeUID)
 	}

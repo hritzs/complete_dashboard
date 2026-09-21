@@ -57,7 +57,7 @@ BEGIN {
   isnoise = (line ~ /streaming_type=(HeartBeat|LicenseResponse|LoginResponse|Login)/)
   iserr = (!isnoise && probe ~ /ERROR|FATAL|panic|[Ff]ailed|❌|⚠|WARN|mismatch|refused|giving up|HEDGE_FAILED|no matching order|error=/)
 
-  iskey = (line ~ /\[RISK\]|_TRIGGER|HEDGE|Square-off|SQF reconciliation|BUILD (submitted|outcome|verification|submission)|\[GREEKSOFT ORDER\] (sending|submitted)|\[IRIS-WS\]|IRIS RX\] streaming_type=(Order|Trade)Response|DeployStraddle|Persisting SQF|PersistVerifiedFills done|login (successful|failed)|Greeksoft login|[Ll]istening|SYSTEM READY|MONITOR\].*action=(HEDGE|DELTA_BELOW|BELOW_MIN|NO_)/)
+  iskey = (line ~ /\[RISK\]|\[BUILD-CHASE\]|_TRIGGER|HEDGE|Square-off|SQF reconciliation|BUILD (submitted|outcome|verification|submission)|\[GREEKSOFT ORDER\] (sending|submitted)|\[IRIS-WS\]|IRIS RX\] streaming_type=(Order|Trade)Response|DeployStraddle|Persisting SQF|PersistVerifiedFills done|login (successful|failed)|Greeksoft login|[Ll]istening|SYSTEM READY|MONITOR\].*action=(HEDGE|DELTA_BELOW|BELOW_MIN|NO_)/)
 
   if (mode == "errors")      show = iserr
   else if (mode == "events") show = (iserr || iskey) && !isnoise
@@ -69,7 +69,7 @@ BEGIN {
 
   lc = ""
   if (iserr) lc = "31"
-  else if (line ~ /\[RISK\]|_TRIGGER|HEDGE_TRIGGERED|invoking trade-scoped hedge/) lc = "33"
+  else if (line ~ /\[RISK\]|\[BUILD-CHASE\]|_TRIGGER|HEDGE_TRIGGERED|invoking trade-scoped hedge/) lc = "33"
   else if (line ~ /\[IRIS-WS\]|IRIS RX\]/) lc = "36"
   else if (line ~ /✅|Square-off completed|HEDGE result|verified=|FILLED/) lc = "32"
 

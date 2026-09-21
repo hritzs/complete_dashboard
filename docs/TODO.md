@@ -1192,3 +1192,50 @@ clear what was executed.
 - [ ] The Ctrl+C in the live log view stops only the viewer; the services keep running.
       `stop_platform.sh` is stale (pkills `go run`/`main.go`, runs `docker compose down`) and does
       not reliably stop the Go binaries -- use `fuser -k <ports>` as documented in the README/chat.
+
+## Incident 2026-09-21 15:17: automated build sold NOV instead of the weekly expiry
+An automated build (Automation tab) sold NIFTY 23-NOV-26 23650 instead of the weekly 22-SEP-26.
+Only the CE leg filled; the PE rested unfilled; the trade sat PARTIAL with no monitor; the
+user cancelled the PE, squared off through the platform, and then had to sell a PE by hand.
+Real gross loss for the episode: -279.50 (CE -78.00, PE -201.50). Four separate defects:
+
+- [x] **Expiry was never asked.** The Automation tab had no expiry field; the request used the
+      Terminal tab's global `selectedExpiry`, which after a symbol change / page load is set from
+      whichever option-chain message the live feed sends first (arbitrary). Now: the Automation tab
+      has a required Expiry dropdown with no default (cleared on every symbol change, the start
+      button is disabled until one is chosen); `ConfigBuild` rejects a missing `target_expiry`
+      (400) and checks at schedule time that the market data really has that symbol+expiry
+      (and returns that same expiry -- a fallback chain is refused). The expiry is shown in the
+      schedule response, the pending-builds list and the scheduler log lines.
+- [x] **No retry / modify / chase for a build leg.** `executeBuild` ran a retry loop with
+      `maxChunkRetries := 1` (so never twice), retried only on broker REJECTION (an order that
+      was acknowledged but unfilled counted as success), then just watched fills for ~5s. The
+      limit was `chain LTP at deploy - 2` (408.50 for the PE) while the market had moved to 404.30,
+      and NOV options are illiquid, so the sell sat above the market. Now `chaseUnfilledBuild`:
+      for every build order short of its quantity it RE-PRICES THE SAME ORDER (modify, never a
+      second order, so a late fill cannot double the quantity) to live price - sell_buffer x round
+      (rounds 1..3, never more than 10% below live), verifying fills after each round. If it cannot
+      complete it CANCELS what still rests (also on any modify failure or missing live price) so
+      nothing works unmonitored, then reports the verified result. Log prefix `[BUILD-CHASE]`.
+      An executor without modify/cancel is left exactly as before. It never sends a new order.
+- [x] **A PARTIAL trade's square-off bought a leg that was never sold.** The stored CEQty/PEQty
+      were the INTENDED 65/65 although the PE never filled, and `SquareOff` sized its exit from
+      them: it bought 65 CE and 65 PE, leaving an unintended long PE. Now a build that ends PARTIAL
+      stores the VERIFIED quantities, and `SquareOff` for a PARTIAL or RECONCILIATION_REQUIRED trade
+      re-derives the open quantity from the orders' filled quantities (`TradeOpenQuantities`) and
+      fails closed if it cannot. Regression test reproduces the exact incident and was
+      mutation-checked.
+- [ ] **NOT verified against the live broker**: GreekSoft modify (`SmallModifyOrderRequest`) and
+      cancel (`DELETE /Order/<id>`) are implemented from the Postman docs and were exercised only
+      against fakes. Try them with a far-from-market limit order (explicit approval needed) before
+      relying on the chase; if a call fails the chase stops and logs `[BUILD-CHASE] ... FAILED`.
+- [ ] A PARTIAL trade still gets no monitor runtime (so its SL/TIME exit does not fire) even when
+      it later fills completely; only a build that reaches ACTIVE inside `DeployStraddle` starts one.
+- [ ] Orders placed OUTSIDE the platform (e.g. the manual PE sell, gorderid 2987) are ignored by the
+      reconciler ("no matching order row") and are absent from the portfolio and its PnL.
+- [x] The NOV trade was deleted from the database at the user's request; its rows are exported to
+      `~/Desktop/api_gs/backups/deleted-trades/20260921-152359-NOV23650/` (CSV per table + README).
+      The day's gross realized is now -325.00 over 8 trades (it would be -604.50 including the NOV
+      episode and its manual PE leg).
+- The gateway binary was rebuilt but the running process is the old one: after the close run
+  `./start_platform.sh fast-restart` (it now rebuilds the gateway itself) to pick all of this up.

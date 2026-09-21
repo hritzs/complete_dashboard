@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -171,4 +172,42 @@ func (s *PostgresBackedStore) TradeSummaries(ctx context.Context, from, to time.
 		out = append(out, sum)
 	}
 	return out, tradeRows.Err()
+}
+
+// openShortQuantities is sold minus bought (filled quantity) per option leg,
+// never negative. Unlike the PnL it does not need a price: any filled order
+// changes the position.
+func openShortQuantities(execs []OrderExecution) (ce, pe int64) {
+	net := map[string]int64{}
+	for _, e := range execs {
+		if e.FilledQty <= 0 {
+			continue
+		}
+		switch strings.ToUpper(e.Side) {
+		case "SELL":
+			net[e.Leg] += e.FilledQty
+		case "BUY":
+			net[e.Leg] -= e.FilledQty
+		}
+	}
+	return maxInt64(net["CE"], 0), maxInt64(net["PE"], 0)
+}
+
+// TradeOpenQuantities returns the short CE and PE quantity a trade really has
+// open, from its orders' filled quantities.
+func (s *PostgresBackedStore) TradeOpenQuantities(ctx context.Context, tradeUID string) (int64, int64, error) {
+	if s == nil || s.db == nil {
+		return 0, 0, fmt.Errorf("postgres store is unavailable")
+	}
+	rows, err := s.db.QueryContext(ctx, executionsSelect+` WHERE o.trade_uid = $1 ORDER BY o.created_at, o.id`, tradeUID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("query executions: %w", err)
+	}
+	defer rows.Close()
+	byTrade, err := scanExecutions(rows)
+	if err != nil {
+		return 0, 0, err
+	}
+	ce, pe := openShortQuantities(byTrade[tradeUID])
+	return ce, pe, nil
 }

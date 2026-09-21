@@ -273,6 +273,9 @@
     const [terminalSellQty, setTerminalSellQty] = createSignal(1);
     const [manualHedgeBusy, setManualHedgeBusy] = createSignal(false);
     const [scheduledBuilds, setScheduledBuilds] = createSignal([]);
+    // Deliberately NOT initialised from selectedExpiry(): an automated build must
+    // never inherit an expiry, it has to be chosen here every time.
+    const [automationExpiry, setAutomationExpiry] = createSignal('');
     const [portfolioTotals, setPortfolioTotals] = createSignal(null);
     const [manualHedgeError, setManualHedgeError] = createSignal('');
 
@@ -495,6 +498,7 @@
       const sym = e.target.value.toUpperCase();
       setSelectedSymbol(sym);
       setSelectedExpiry('');
+      setAutomationExpiry('');
       setSellStatus('');
       appendEventLog('info', `Symbol changed to ${sym}`);
 
@@ -1451,6 +1455,11 @@
     const handleAutomationBuild = async () => {
       const cfg = automationConfig();
 
+      if (!automationExpiry()) {
+        appendEventLog("error", "Automation build not scheduled: choose the expiry first");
+        return;
+      }
+
       const payload = {
         user_id: executionPrefs().user_id || 'U001',
         broker_name: executionPrefs().broker_name,
@@ -1475,12 +1484,12 @@
         hedge_start_time: cfg.hedge_start_time,
         roll_start_time: cfg.roll_start_time,
         order_lots_per_call: cfg.order_lots_per_call,
-        target_expiry: selectedExpiry() || optionChain().expiry
+        target_expiry: automationExpiry()
       };
 
       appendEventLog(
         "info",
-        `Automation build trigger via ${payload.broker_name} for ${payload.symbol}`
+        `Automation build trigger via ${payload.broker_name} for ${payload.symbol} ${payload.target_expiry}`
       );
 
       try {
@@ -1493,7 +1502,7 @@
         if (data.success) {
           appendEventLog(
             "success",
-            `Automation build scheduled for ${data.entry_time}: exit ${data.exit_time || "none"}, SL ${data.sl_bps || 0} bps. ${data.message}`
+            `Automation build scheduled for ${data.entry_time}: ${data.symbol} ${data.expiry}, exit ${data.exit_time || "none"}, SL ${data.sl_bps || 0} bps. ${data.message}`
           );
           if (Array.isArray(data.not_applied) && data.not_applied.length > 0) {
             appendEventLog(
@@ -2821,10 +2830,25 @@
                 <select
                   class="symbol-select"
                   value={automationConfig().symbol}
-                  onChange={(e) => setAutomationConfig((prev) => ({ ...prev, symbol: e.target.value }))}
+                  onChange={handleSymbolChange}
                 >
                   <For each={availableSymbols}>
                     {(sym) => <option value={sym}>{sym}</option>}
+                  </For>
+                </select>
+              </div>
+
+              <div class="control-block">
+                <label class="control-label">Expiry (required)</label>
+                <select
+                  class="symbol-select"
+                  value={automationExpiry()}
+                  onChange={(e) => setAutomationExpiry(e.target.value)}
+                  style={automationExpiry() ? undefined : { "border-color": "#f87171" }}
+                >
+                  <option value="">— choose expiry —</option>
+                  <For each={optionChain().available_expiries || []}>
+                    {(exp) => <option value={exp}>{exp}</option>}
                   </For>
                 </select>
               </div>
@@ -3093,7 +3117,12 @@
             </div>
 
             <div class="button-row" style={{ gap: '10px', 'flex-wrap': 'wrap' }}>
-              <button class="sell-btn" onClick={handleAutomationBuild} disabled={manualHedgeBusy()}>
+              <button
+                class="sell-btn"
+                onClick={handleAutomationBuild}
+                disabled={manualHedgeBusy() || !automationExpiry()}
+                title={automationExpiry() ? "" : "Choose the expiry first"}
+              >
                 START AUTOMATED BUILD
               </button>
             </div>
@@ -3109,7 +3138,7 @@
                 {(job) => (
                   <div class="log-line log-info">
                     <span class="log-ts">{new Date(job.run_at).toLocaleTimeString()}</span>
-                    <span class="log-lvl">{job.symbol} x{job.lots}</span>
+                    <span class="log-lvl">{job.symbol} {job.expiry} x{job.lots}</span>
                     <span class="log-msg">
                       {job.broker_name} {job.account_id} &middot; exit {job.exit_time || 'none'} &middot; SL {job.sl_bps || 0} bps
                       {' '}

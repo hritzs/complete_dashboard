@@ -755,3 +755,37 @@ func sortedScalarKeys(m map[string]interface{}) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+// ModifyOrderPrice re-prices a resting LIMIT order via GreekSoft's
+// SmallModifyOrderRequest, keeping its quantity.
+func (e *Executor) ModifyOrderPrice(ctx context.Context, brokerOrderID string, price float64, quantity int64, lotSize int) error {
+	if price <= 0 {
+		return fmt.Errorf("modify price must be positive, got %v", price)
+	}
+	lots := 1
+	if lotSize > 0 && quantity > 0 {
+		lots = int(quantity) / lotSize
+		if lots <= 0 {
+			lots = 1
+		}
+	}
+	_, err := e.Client.ModifyOrder(ctx, &gs.ModifyOrderRequest{
+		GOrderID:  strings.TrimSpace(brokerOrderID),
+		Price:     price,
+		Qty:       int(quantity),
+		Lot:       lots,
+		Validity:  "DAY",
+		OrderType: "LIMIT",
+	})
+	return err
+}
+
+// CancelOrder cancels a resting order via GreekSoft's DELETE /Order/<id>.
+func (e *Executor) CancelOrder(ctx context.Context, brokerOrderID string) error {
+	return e.Client.CancelOrder(ctx, strings.TrimSpace(brokerOrderID), nil)
+}
+
+var (
+	_ trading.OrderModifier  = (*Executor)(nil)
+	_ trading.OrderCanceller = (*Executor)(nil)
+)
