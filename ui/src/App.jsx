@@ -2847,7 +2847,7 @@
                   style={automationExpiry() ? undefined : { "border-color": "#f87171" }}
                 >
                   <option value="">— choose expiry —</option>
-                  <For each={optionChain().available_expiries || []}>
+                  <For each={(optionChain().available_expiries || []).length ? optionChain().available_expiries : [optionChain().expiry].filter(Boolean)}>
                     {(exp) => <option value={exp}>{exp}</option>}
                   </For>
                 </select>
