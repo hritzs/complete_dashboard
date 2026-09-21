@@ -994,3 +994,67 @@ reconciliation bug. That fix held: every trade went straight to `ACTIVE`
       (e.g. +58.50 / -52.00), so the trade-level figure the UI shows for
       closed trades is stale. Fix by summing leg realized PnL or by carrying
       the trade uid in a field the broker echoes back.
+
+## Hedge audit and fixes (2026-09-21, live-validated, real 1-lot NIFTY, GreekSoft 147)
+Prompted by the hedge bookkeeping gap above and the question "should the
+minute-end hedge be working and fixing delta?". Compared our trigger with the
+Python reference (`refernce_py_code/trading/monitors/hedge_monitor.py`,
+`snapshot_service.py`) and found several defects, fixed in commits 50abfdf and
+148574b:
+
+- [x] **Hedge orders were never booked** (`ManualHedge`). Now takes the
+      per-trade lock, requires ACTIVE, hedges on the trade's own CE/PE tokens
+      (a 1-lot CE + 1-lot PE opposite pair is a synthetic future, ~+/-1 lot of
+      delta at any strike), sends MARKET orders (it used to send LIMIT with a
+      nil price = 0.00), never retries a failed leg, verifies fills against the
+      broker order book, persists them, and books only verified quantities
+      into CEQty/PEQty. Live: hedge then autonomous TIME exit closed cleanly.
+- [x] **Wrong delta sign for every short position.** The monitor cycle
+      computed `CEDelta*CEQty + PEDelta*PEQty` (legs treated as long) while
+      `DeployStraddle` correctly negated them, so the snapshot delta sign was
+      inverted and every hedge went the wrong way (the first live forced hedge
+      sold a synthetic on a book that was already net short delta). Now
+      `shortLegGreeks` short-signs delta, gamma, theta and vega. Live check:
+      deploy net_delta -2.99 vs monitor -3.09 (was +3.47 vs -3.41), and the
+      forced hedge on delta -3.35 correctly BOUGHT the CE and SOLD the PE.
+- [x] **Hardcoded 19.5-point minimum.** The reference floors points_allowed at
+      `hedge_min_threshold_bps` (default 8) of LIVE spot; 19.5 was 8 bps of a
+      ~24,400 spot frozen into a constant (18.72 at today's 23,400).
+      `decideHedge` now uses `max(points_allowed, spot*bps/10000)`;
+      `hedge_min_threshold_bps` is settable via the modify API and the UI
+      modal; the UI no longer hardcodes 19.5.
+- [x] **Hedge sizing.** Autonomous hedges always traded 1 lot. Now
+      floor(|delta| / lot size) lots, capped at the trade's own lots and a
+      1800-qty per-order ceiling (`ManualHedgeLots`; `ManualHedge` stays the
+      1-lot wrapper for the manual button). Below one lot of delta nothing is
+      placed (`DELTA_BELOW_ONE_LOT`): a lot-granular synthetic would overshoot.
+      Consequence to know about: for a 1-lot trade the natural trigger can
+      essentially never place a hedge (needs |delta| >= 65 units); it needs
+      roughly 3+ lots to be reachable. The forced test flags still work.
+- [x] The autonomous trigger wrote back its cycle-start copy of the trade after
+      hedging (would have undone the booking) -- now reloads first; the forced
+      one-lot test is single-shot after ANY attempt so a failed attempt cannot
+      re-fire and double the hedge.
+- [x] TIME exit re-proven, including on a hedged trade (CE short 130 closed as
+      two 65 chunks, verified 130/130).
+- [ ] **Not yet live-tested: the natural hedge path placing a real multi-lot
+      hedge** (needs a multi-lot trade). Unit-tested (decision table, sizing,
+      booking, hedge-then-exit round trip) and live-verified up to
+      DELTA_BELOW_ONE_LOT.
+- [ ] **Every fill is stored twice.** Both the reconciler (Iris push, fill_id =
+      exchange trade id, e.g. `4122902`) and the gateway's
+      `persistVerifiedFill` (fill_id = `GREEKSOFT:<order id>`) write a fills
+      row for the same real fill, and `recomputeTradeLegFromPersistedFills`
+      sums both. Flat trades hide it (buys and sells both double), but
+      `trade_legs.current_quantity` and per-leg realized PnL are inflated 2x
+      (seen: CE -260 for a 130 short). SquareOff is unaffected (it reads the
+      trade record). Needs one owner for fill persistence or one shared
+      fill_id scheme.
+- [ ] `orders.phase` is stored as PRIMARY for HEDGE orders (intent.Phase is not
+      persisted), so hedge orders cannot be told apart from entry orders in SQL.
+- [ ] `computeVerifiedRealizedPnL` / `/api/debug/trade/reconciliation` match
+      fills by a strategy key our orders never carry -> trade-level
+      `realized_pnl` stays 0 and the debug reconciliation reads all zeros.
+- [ ] Modify-modal defaults are only "suggested" values: Save sends every
+      non-empty field, so a bare Save arms `sl_points_per_lot=30` (about 0.46
+      pts per straddle for 1 NIFTY lot -- very tight) and `sl_pnl_bps_of_spot=14`.
