@@ -1048,13 +1048,25 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 						hedgeReason,
 					)
 
-					if err := s.ManualHedge(context.Background(), tradeUID); err != nil {
+					hedgeErr := s.ManualHedge(context.Background(), tradeUID)
+					if hedgeErr != nil {
 						hedgeAction = "HEDGE_FAILED"
-						hedgeReason += " error=" + err.Error()
-					} else if forceOneLotTest {
-						trade.Config.HedgeTestExecuted = true
-						trade.LastUpdateTime = time.Now()
-						s.Store.UpdateTrade(trade)
+						hedgeReason += " error=" + hedgeErr.Error()
+					}
+
+					// The forced test is single-shot by design: mark it done after
+					// ANY attempt, even a failed one. A failure can be ambiguous (an
+					// order accepted but its fill not yet verifiable), and re-firing
+					// next minute could double the hedge.
+					if forceOneLotTest {
+						// Reload: ManualHedge just booked new CE/PE quantities, and
+						// writing back this cycle's stale copy would undo them.
+						if latest, ok := s.Store.LoadTrade(tradeUID); ok {
+							latest.Config.HedgeTestExecuted = true
+							latest.LastUpdateTime = time.Now()
+							s.Store.UpdateTrade(latest)
+							trade.Config.HedgeTestExecuted = true
+						}
 						hedgeReason += " test_hedge_marked_executed=true"
 					}
 				}
@@ -1766,33 +1778,72 @@ func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
 	return nil
 }
 
+// applyHedgeFill books one verified hedge fill into a leg quantity. The
+// single-strike trade model stores each leg as a short-side magnitude, so a
+// SELL grows it and a BUY shrinks it. A BUY larger than the open quantity
+// would mean a net-long leg, which the model (and SquareOff, which only
+// ever buys) cannot represent -- that is an error, never a silent clamp.
+func applyHedgeFill(qty int, side string, filled int64) (int, error) {
+	switch strings.ToUpper(strings.TrimSpace(side)) {
+	case "SELL":
+		return qty + int(filled), nil
+	case "BUY":
+		if int64(qty) < filled {
+			return qty, fmt.Errorf("hedge BUY of %d exceeds open short quantity %d", filled, qty)
+		}
+		return qty - int(filled), nil
+	}
+	return qty, fmt.Errorf("unknown hedge side %q", side)
+}
+
+// bookHedgeFills returns the CE/PE quantities after applying the broker-
+// verified hedge fills.
+func bookHedgeFills(ceQty, peQty int, ceSide, peSide string, filledCE, filledPE int64) (int, int, error) {
+	newCE, err := applyHedgeFill(ceQty, ceSide, filledCE)
+	if err != nil {
+		return ceQty, peQty, fmt.Errorf("CE: %w", err)
+	}
+	newPE, err := applyHedgeFill(peQty, peSide, filledPE)
+	if err != nil {
+		return ceQty, peQty, fmt.Errorf("PE: %w", err)
+	}
+	return newCE, newPE, nil
+}
+
+// ManualHedge places one synthetic-future hedge (1 lot CE + 1 lot PE in
+// opposite directions, ~+/-1 lot of delta at any strike) on the trade's OWN
+// CE/PE tokens, verifies the fills against the broker order book, persists
+// them, and books the verified quantities into the trade so a later
+// SquareOff closes exactly what is really open.
+//
+// It previously (a) traded whatever the current ATM row was, which the
+// single-strike trade model cannot represent once ATM moves off the trade's
+// strike, (b) sent LIMIT orders with no limit price (price 0.00), and
+// (c) never verified or booked the fills -- so a hedge followed by an exit
+// could leave a residual real position at the broker. Orders are MARKET,
+// like SquareOff's, and are never retried on error: an order that errored
+// may still have been accepted, and a retry could double it.
 func (s *Service) ManualHedge(ctx context.Context, tradeUID string) error {
+	defer s.lockTrade(tradeUID)()
+
 	tr, ok := s.Store.LoadTrade(tradeUID)
 	if !ok {
 		return fmt.Errorf("trade not found")
+	}
+	if tr.Status != "ACTIVE" {
+		return fmt.Errorf("hedge requires an ACTIVE trade, status=%s", tr.Status)
+	}
+	if tr.CEToken <= 0 || tr.PEToken <= 0 {
+		return fmt.Errorf("cannot hedge %s: missing CE/PE tokens", tradeUID)
 	}
 
 	snap, ok := s.Store.LoadSnapshot(tradeUID)
 	if !ok {
 		return fmt.Errorf("snapshot not found")
 	}
-	if math.Abs(snap.NetDelta) < 1 {
+	ceSide, peSide, needed := hedgeSidesFromSignedDelta(snap.NetDelta)
+	if !needed {
 		return nil
-	}
-
-	executor, err := s.BrokerFactory.GetExecutor(tr.UserID, tr.BrokerName, tr.AccountID)
-	if err != nil {
-		return err
-	}
-
-	chain, err := s.Snapshot.GetOptionChain(ctx, tr.Symbol, tr.Expiry)
-	if err != nil {
-		return err
-	}
-
-	atmRow, err := FindATMRow(*chain)
-	if err != nil {
-		return err
 	}
 
 	qty := tr.LotSize
@@ -1803,109 +1854,118 @@ func (s *Service) ManualHedge(ctx context.Context, tradeUID string) error {
 		return fmt.Errorf("invalid hedge quantity for symbol %s", tr.Symbol)
 	}
 
-	// Determine hedge direction
-	var ceSide, peSide string
-	if snap.NetDelta < 0 {
-		ceSide = "BUY"
-		peSide = "SELL"
-	} else {
-		ceSide = "SELL"
-		peSide = "BUY"
+	// Refuse before placing anything if the booked result is unrepresentable.
+	if _, _, err := bookHedgeFills(tr.CEQty, tr.PEQty, ceSide, peSide, int64(qty), int64(qty)); err != nil {
+		return fmt.Errorf("hedge refused, nothing placed: %w", err)
 	}
 
-	// Build legs for chunked execution
-	legs := []LegData{
-		{
-			Token:           atmRow.CEToken,
-			Symbol:          strings.TrimSpace(tr.Symbol),
-			OptionType:      "CE",
-			Action:          ceSide,
-			TotalLots:       1,
-			LotSize:         qty,
-			ExpectedPrice:   0,
-			ExchangeSegment: tr.ExchangeSegment,
-		},
-		{
-			Token:           atmRow.PEToken,
-			Symbol:          strings.TrimSpace(tr.Symbol),
-			OptionType:      "PE",
-			Action:          peSide,
-			TotalLots:       1,
-			LotSize:         qty,
-			ExpectedPrice:   0,
-			ExchangeSegment: tr.ExchangeSegment,
-		},
-	}
-
-	// Generate seven chunks
-	maxOrderQty := 1800
-	chunks, err := GenerateChunkedOrders(
-		fmt.Sprintf("HEDGE_%s", tradeUID),
-		legs,
-		1,
-		maxOrderQty,
-		0,
-	)
+	executor, err := s.BrokerFactory.GetExecutor(tr.UserID, tr.BrokerName, tr.AccountID)
 	if err != nil {
-		return fmt.Errorf("hedge chunk generation failed: %w", err)
+		return err
+	}
+	provider, ok := executor.(VerifiedFillsProvider)
+	if !ok {
+		return fmt.Errorf("hedge refused, nothing placed: broker executor cannot verify fills")
 	}
 
-	// Execute chunks with verification
-	for chunkIdx, chunk := range chunks {
-		ordersToProcess := append([]ExecOrder(nil), chunk...)
-		maxChunkRetries := 3
+	stamp := time.Now().UnixNano()
+	group := fmt.Sprintf("HDG_%d", stamp)
+	uidTail := tradeUID
+	if len(uidTail) > 14 {
+		uidTail = uidTail[len(uidTail)-14:]
+	}
 
-		for retryIter := 0; retryIter < maxChunkRetries && len(ordersToProcess) > 0; retryIter++ {
-			if retryIter > 0 {
-				time.Sleep(1 * time.Second)
-			}
+	type hedgeLeg struct {
+		legType string
+		token   int64
+		side    string
+	}
+	legs := []hedgeLeg{
+		{"CE", tr.CEToken, ceSide},
+		{"PE", tr.PEToken, peSide},
+	}
 
-			var nextRetry []ExecOrder
-			for i := range ordersToProcess {
-				order := ordersToProcess[i]
-				if order.Quantity <= 0 {
-					continue
-				}
+	submitted := map[string]struct{}{}
+	var requestedCE, requestedPE int64
+	var submitErrs []string
 
-				intent := OrderIntent{
-					IntentID:        order.UID,
-					TradeUID:        tradeUID,
-					Token:           order.Token,
-					Symbol:          order.Symbol,
-					Side:            order.Action,
-					Quantity:        int64(order.Quantity),
-					OrderType:       "LIMIT",
-					ProductType:     tr.ProductType,
-					ExchangeSegment: tr.ExchangeSegment,
-					LegType:         order.OptionType,
-					Phase:           "HEDGE",
-					OrderUID:        order.UID,
-					BrokerName:      tr.BrokerName,
-					AccountID:       tr.AccountID,
-				}
-
-				s.Store.AppendIntent(tradeUID, intent)
-
-				res, err := executor.ExecuteOrderIntent(ctx, intent)
-				if err != nil {
-					log.Printf("❌ HEDGE chunk=%d retry=%d leg=%s err=%v", chunkIdx+1, retryIter+1, order.OptionType, err)
-					nextRetry = append(nextRetry, order)
-					continue
-				}
-
-				if updater, ok := s.Store.(interface {
-					MarkOrderSubmitted(intentID string, brokerOrderID string, status string, rawResponse string)
-				}); ok {
-					updater.MarkOrderSubmitted(intent.IntentID, res.BrokerOrderID, res.Status, res.RawResponse)
-				}
-
-				if res.Status != "FILLED" && res.Status != "SUCCESS" && res.Status != "ACKED" && res.Status != "SUBMITTED" {
-					nextRetry = append(nextRetry, order)
-				}
-			}
-
-			ordersToProcess = nextRetry
+	for _, leg := range legs {
+		intentID := fmt.Sprintf("HDG%s_%s_%d", uidTail, leg.legType, stamp)
+		intent := OrderIntent{
+			IntentID:        intentID,
+			TradeUID:        tradeUID,
+			Token:           leg.token,
+			Symbol:          strings.TrimSpace(tr.Symbol),
+			ExchangeSegment: tr.ExchangeSegment,
+			Side:            leg.side,
+			Quantity:        int64(qty),
+			OrderType:       "MARKET",
+			ProductType:     tr.ProductType,
+			LegType:         leg.legType,
+			Phase:           "HEDGE",
+			HedgeGroupID:    group,
+			OrderUID:        intentID,
+			BrokerName:      tr.BrokerName,
+			AccountID:       tr.AccountID,
 		}
+
+		brokerOrderID, _, err := s.submitOrderIntent(ctx, executor, tradeUID, intent)
+		if err != nil {
+			log.Printf("❌ HEDGE leg=%s side=%s not placed: %v", leg.legType, leg.side, err)
+			submitErrs = append(submitErrs, fmt.Sprintf("%s: %v", leg.legType, err))
+			continue
+		}
+
+		submitted[brokerOrderID] = struct{}{}
+		if leg.legType == "CE" {
+			requestedCE = int64(qty)
+		} else {
+			requestedPE = int64(qty)
+		}
+	}
+
+	if len(submitted) == 0 {
+		return fmt.Errorf("hedge failed, no leg placed: %s", strings.Join(submitErrs, "; "))
+	}
+
+	summary, persistErr := s.verifyAndPersistTradeFills(
+		ctx, provider, tr.BrokerName, tr.AccountID,
+		submitted, tr.CEToken, tr.PEToken, requestedCE, requestedPE,
+		8, 500*time.Millisecond,
+	)
+	if persistErr != nil {
+		log.Printf("⚠️ HEDGE fill persistence failed for %s: %v", tradeUID, persistErr)
+	}
+
+	// Book from broker-verified fills only, on a freshly loaded trade.
+	var bookErr error
+	if latest, ok := s.Store.LoadTrade(tradeUID); ok {
+		newCE, newPE, err := bookHedgeFills(latest.CEQty, latest.PEQty, ceSide, peSide, summary.VerifiedCE, summary.VerifiedPE)
+		if err != nil {
+			bookErr = err
+		} else {
+			latest.CEQty, latest.PEQty = newCE, newPE
+			latest.LastUpdateTime = time.Now()
+			s.Store.UpdateTrade(latest)
+		}
+	} else {
+		bookErr = fmt.Errorf("trade vanished while booking hedge")
+	}
+
+	log.Printf(
+		"HEDGE result trade=%s ce=%s verified=%d/%d pe=%s verified=%d/%d submit_errors=%d book_err=%v persist_err=%v",
+		tradeUID, ceSide, summary.VerifiedCE, requestedCE, peSide, summary.VerifiedPE, requestedPE,
+		len(submitErrs), bookErr, persistErr,
+	)
+
+	switch {
+	case bookErr != nil:
+		return fmt.Errorf("hedge orders placed but booking failed (check broker position): %w", bookErr)
+	case len(submitErrs) > 0:
+		return fmt.Errorf("hedge partially placed, booked to verified fills only: %s", strings.Join(submitErrs, "; "))
+	case !summary.Complete():
+		return fmt.Errorf("hedge not fully filled, booked to verified fills only: ce=%d/%d pe=%d/%d",
+			summary.VerifiedCE, requestedCE, summary.VerifiedPE, requestedPE)
 	}
 
 	log.Printf("✅ Manual Hedge completed for Trade %s", tradeUID)
