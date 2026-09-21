@@ -197,6 +197,13 @@ type MonitorConfig struct {
 	HedgeTestExecuted            bool      `json:"hedge_test_executed,omitempty"`
 	ForceHedgeRegardlessOfPoints bool      `json:"force_hedge_regardless_of_points,omitempty"`
 
+	// Floor under points_allowed for the minute-end hedge trigger, in basis
+	// points of the live synthetic spot (the reference system's
+	// hedge_min_threshold_bps): a move smaller than this is never worth the
+	// transaction cost of a hedge. nil means "use defaultHedgeMinThresholdBps";
+	// an explicit 0 disables the floor.
+	HedgeMinThresholdBps *float64 `json:"hedge_min_threshold_bps,omitempty"`
+
 	// === ENTRY MODES (mutually exclusive: scheduled vs price-trigger vs manual) ===
 	// Scheduled entry: fire at this exact time (e.g., 09:20:00)
 	EntryScheduledTime time.Time `json:"entry_scheduled_time,omitempty"`

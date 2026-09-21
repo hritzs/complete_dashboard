@@ -810,10 +810,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 	pePNL := (peEntry - peRow.PELtp) * float64(trade.PEQty)
 	totalPNL := cePNL + pePNL
 
-	netDelta := ceRow.CEDelta*float64(trade.CEQty) + peRow.PEDelta*float64(trade.PEQty)
-	netGamma := ceRow.CEGamma*float64(trade.CEQty) + peRow.PEGamma*float64(trade.PEQty)
-	netTheta := ceRow.CETheta*float64(trade.CEQty) + peRow.PETheta*float64(trade.PEQty)
-	netVega := ceRow.CEVega*float64(trade.CEQty) + peRow.PEVega*float64(trade.PEQty)
+	netDelta, netGamma, netTheta, netVega := shortLegGreeks(ceRow, peRow, trade.CEQty, trade.PEQty)
 
 	// Calculate PointsOut and PointsAllowed
 	atmStraddle := ceRow.CELtp + peRow.PELtp
@@ -1009,29 +1006,34 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 			hedgeAction := "OK"
 			hedgeReason := ""
 
-			minimumHedgePoints := 19.5
 			forceOneLotTest := trade.Config.ForceOneLotHedgeTest
-
-			if forceOneLotTest {
-				minimumHedgePoints = trade.Config.HedgePointsFloor
-			}
-
-			pointsCrossed := pointsOut > pointsAllowed ||
-				trade.Config.ForceHedgeRegardlessOfPoints
-			minimumPointsReached := pointsOut >= minimumHedgePoints
+			decision := decideHedge(hedgeDecisionInput{
+				PointsOut:       pointsOut,
+				PointsAllowed:   pointsAllowed,
+				Spot:            spot,
+				NetDelta:        netDelta,
+				LotSize:         lotSize,
+				TradeLots:       int64(trade.Lots),
+				MinThresholdBps: resolveHedgeMinThresholdBps(trade.Config.HedgeMinThresholdBps),
+				ForceOneLotTest: forceOneLotTest,
+				TestPointsFloor: trade.Config.HedgePointsFloor,
+				ForceRegardless: trade.Config.ForceHedgeRegardlessOfPoints,
+			})
+			hedgeAction = decision.Action
+			pointsCrossed := pointsOut > decision.EffectiveAllowed || trade.Config.ForceHedgeRegardlessOfPoints
+			minimumPointsReached := pointsOut >= decision.Floor
 			deltaHasOneLot := math.Abs(netDelta) >= float64(lotSize)
+			minimumHedgePoints := decision.Floor
 
-			shouldHedge := pointsCrossed &&
-				minimumPointsReached &&
-				(deltaHasOneLot || forceOneLotTest)
-
-			if shouldHedge {
+			if decision.Hedge {
 				hedgeReason = fmt.Sprintf(
-					"points_out=%.2f points_allowed=%.2f net_delta=%.4f lot_size=%d force_one_lot_test=%t",
+					"points_out=%.2f points_allowed=%.2f effective_allowed=%.2f net_delta=%.4f lot_size=%d hedge_lots=%d force_one_lot_test=%t",
 					pointsOut,
 					pointsAllowed,
+					decision.EffectiveAllowed,
 					netDelta,
 					lotSize,
+					decision.Lots,
 					forceOneLotTest,
 				)
 
@@ -1048,7 +1050,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 						hedgeReason,
 					)
 
-					hedgeErr := s.ManualHedge(context.Background(), tradeUID)
+					hedgeErr := s.ManualHedgeLots(context.Background(), tradeUID, int(decision.Lots))
 					if hedgeErr != nil {
 						hedgeAction = "HEDGE_FAILED"
 						hedgeReason += " error=" + hedgeErr.Error()
@@ -1824,6 +1826,19 @@ func bookHedgeFills(ceQty, peQty int, ceSide, peSide string, filledCE, filledPE 
 // like SquareOff's, and are never retried on error: an order that errored
 // may still have been accepted, and a retry could double it.
 func (s *Service) ManualHedge(ctx context.Context, tradeUID string) error {
+	return s.ManualHedgeLots(ctx, tradeUID, 1)
+}
+
+// maxHedgeOrderQty is the per-order quantity ceiling a hedge leg is held to
+// (the same 1800 the chunker used for hedges); larger requests are trimmed
+// to whole lots under it rather than split.
+const maxHedgeOrderQty = 1800
+
+// ManualHedgeLots is ManualHedge for an explicit number of synthetic lots.
+func (s *Service) ManualHedgeLots(ctx context.Context, tradeUID string, lots int) error {
+	if lots <= 0 {
+		return fmt.Errorf("hedge lots must be positive, got %d", lots)
+	}
 	defer s.lockTrade(tradeUID)()
 
 	tr, ok := s.Store.LoadTrade(tradeUID)
@@ -1846,13 +1861,20 @@ func (s *Service) ManualHedge(ctx context.Context, tradeUID string) error {
 		return nil
 	}
 
-	qty := tr.LotSize
-	if qty <= 0 {
-		qty = GetFallbackLotSize(tr.Symbol)
+	lotSize := tr.LotSize
+	if lotSize <= 0 {
+		lotSize = GetFallbackLotSize(tr.Symbol)
 	}
-	if qty <= 0 {
+	if lotSize <= 0 {
 		return fmt.Errorf("invalid hedge quantity for symbol %s", tr.Symbol)
 	}
+	if maxLots := maxHedgeOrderQty / lotSize; lots > maxLots {
+		if maxLots <= 0 {
+			return fmt.Errorf("lot size %d exceeds the hedge order quantity ceiling", lotSize)
+		}
+		lots = maxLots
+	}
+	qty := lotSize * lots
 
 	// Refuse before placing anything if the booked result is unrepresentable.
 	if _, _, err := bookHedgeFills(tr.CEQty, tr.PEQty, ceSide, peSide, int64(qty), int64(qty)); err != nil {

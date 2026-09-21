@@ -195,7 +195,8 @@
     auto_risk_execution_enabled: true,
     straddle_div: "4",
     hedge_div: "57",
-    hedge_threshold_delta: ""
+    hedge_threshold_delta: "",
+    hedge_min_threshold_bps: "8"
   });
   const [modifyTradeSaving, setModifyTradeSaving] = createSignal(false);
   const [modifyTradeError, setModifyTradeError] = createSignal("");
@@ -1105,6 +1106,8 @@
 
         hedge_threshold_delta: cfg.hedge_threshold_delta ?? cfg.hedgeThresholdDelta ?? String(item.lotSize || ""),
 
+        hedge_min_threshold_bps: cfg.hedge_min_threshold_bps ?? "8",
+
         square_off_time: /^\d{2}:\d{2}:\d{2}$/.test(squareOffTime)
 
           ? squareOffTime
@@ -1158,7 +1161,9 @@
 
         "hedge_div",
 
-        "hedge_threshold_delta"
+        "hedge_threshold_delta",
+
+        "hedge_min_threshold_bps"
 
       ]) {
 
@@ -1911,6 +1916,18 @@
                 </label>
 
                 <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
+                  Min Hedge Threshold (bps of spot)
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={modifyTradeForm().hedge_min_threshold_bps}
+                    onInput={(event) => setModifyTradeForm((form) => ({ ...form, hedge_min_threshold_bps: event.currentTarget.value }))}
+                    style={{ padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                  />
+                </label>
+
+                <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
                   Hedge Divisor
                   <input
                     type="number"
@@ -2377,13 +2394,19 @@
                                         </div>
 
                                         <div class="monitor-row">
-                                          {/* 19.5 is execution-gateway's own hardcoded hedge-eligibility
-                                              floor (see runtime.go's minimumPointsReached check, also
-                                              used in the Risk Action formula below) -- a real platform
-                                              constant, not a per-trade config value, so it's fine to
-                                              display fixed here rather than reading it from item.config. */}
+                                          {/* Mirrors execution-gateway's decideHedge: the floor under
+                                              points_allowed is hedge_min_threshold_bps (default 8) of
+                                              the live spot, not a fixed number of points. */}
                                           <span>Minimum Hedge Points</span>
-                                          <strong>19.50</strong>
+                                          <strong>
+                                            {(() => {
+                                              const bps = Number(item.config?.hedge_min_threshold_bps ?? 8);
+                                              const spot = Number(live().underlying) || 0;
+                                              return spot > 0 && bps > 0
+                                                ? `${fmt((spot * bps) / 10000, 2)} (${bps} bps)`
+                                                : "—";
+                                            })()}
+                                          </strong>
                                         </div>
 
                                         <div class="monitor-row">
@@ -2399,14 +2422,15 @@
                                               const pointsAllowedValue = Number(pointsAllowed()) || 0;
                                               const absDelta = Math.abs(Number(netDelta()) || 0);
                                               const lotSize = Number(item.lotSize) || 1;
-                                              const dynamicRiskBreached =
-                                                pointsAllowedValue > 0 &&
-                                                pointsOutValue > pointsAllowedValue;
+                                              const bps = Number(item.config?.hedge_min_threshold_bps ?? 8);
+                                              const spot = Number(live().underlying) || 0;
+                                              const floor = spot > 0 && bps > 0 ? (spot * bps) / 10000 : 0;
+                                              const effectiveAllowed = Math.max(pointsAllowedValue, floor);
 
-                                              if (!dynamicRiskBreached) return "OK";
-                                              if (pointsOutValue < 19.5) return "BELOW 19.5 PTS";
+                                              if (pointsAllowedValue <= 0 || pointsOutValue <= pointsAllowedValue) return "OK";
+                                              if (pointsOutValue <= effectiveAllowed) return "BELOW MIN THRESHOLD";
                                               if (absDelta < lotSize) return "BELOW ONE LOT";
-                                              return "HEDGE ELIGIBLE";
+                                              return `HEDGE ELIGIBLE (${Math.floor(absDelta / lotSize)} lot)`;
                                             })()}
                                           </strong>
                                         </div>

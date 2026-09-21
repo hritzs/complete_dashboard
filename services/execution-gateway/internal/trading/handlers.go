@@ -536,6 +536,7 @@ type ModifyTradeRequest struct {
 	ForceOneLotHedgeTest         *bool    `json:"force_one_lot_hedge_test,omitempty"`
 	HedgePointsFloor             *float64 `json:"hedge_points_floor,omitempty"`
 	ForceHedgeRegardlessOfPoints *bool    `json:"force_hedge_regardless_of_points,omitempty"`
+	HedgeMinThresholdBps         *float64 `json:"hedge_min_threshold_bps,omitempty"`
 }
 
 func (h *Handlers) ModifyTrade(w http.ResponseWriter, r *http.Request) {
@@ -656,6 +657,15 @@ func (h *Handlers) ModifyTrade(w http.ResponseWriter, r *http.Request) {
 	if req.ForceHedgeRegardlessOfPoints != nil {
 		tr.Config.ForceHedgeRegardlessOfPoints = *req.ForceHedgeRegardlessOfPoints
 		tr.Config.HedgeTestExecuted = false
+	}
+
+	if req.HedgeMinThresholdBps != nil {
+		if *req.HedgeMinThresholdBps < 0 {
+			http.Error(w, "hedge_min_threshold_bps must be >= 0", http.StatusBadRequest)
+			return
+		}
+		v := *req.HedgeMinThresholdBps
+		tr.Config.HedgeMinThresholdBps = &v
 	}
 
 	if req.SquareOffHardTime != nil {
