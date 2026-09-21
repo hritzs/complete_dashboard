@@ -25,6 +25,7 @@ import (
 	"trading-platform/libs/broker-greeksoft/normalize"
 	broker "trading-platform/libs/go-broker"
 	"trading-platform/libs/go-common/events"
+	"trading-platform/services/reconciler/internal/irisstats"
 	"trading-platform/services/reconciler/internal/persistence"
 	"trading-platform/services/reconciler/internal/publish"
 	"trading-platform/services/reconciler/internal/recover"
@@ -68,12 +69,20 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	irisStats := irisstats.New(envOrDefault("GREEK_IRIS_WS_URL", ""), time.Now())
+
 	healthPort := envOrDefault("RECONCILER_HEALTH_PORT", "8021")
 	go func() {
 		mux := http.NewServeMux()
 		mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"status":"ok","service":"reconciler"}`))
+		})
+		// Live evidence of the Iris websocket feed: liveness, heartbeat and
+		// order/trade push counts, and how many pushes were matched.
+		mux.HandleFunc("/api/iris/status", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(irisStats.Snapshot(time.Now()))
 		})
 		if err := http.ListenAndServe(":"+healthPort, mux); err != nil {
 			log.Printf("[RECONCILER] health server exited: %v", err)
@@ -89,6 +98,9 @@ func main() {
 		log.Fatalf("ping postgres: %v", err)
 	}
 	store := persistence.NewStore(db)
+	if err := store.EnsureLatencyIndex(ctx); err != nil {
+		log.Printf("[RECONCILER] ensure latency index failed (latency samples will not be recorded): %v", err)
+	}
 
 	nc, err := events.Connect(logrus.New())
 	var publisher *publish.Publisher
@@ -118,16 +130,26 @@ func main() {
 
 	// handleApplied runs after a successful ApplyOrderUpdate, whether that
 	// happened on the first try or after retryUnmatched's backoff below.
-	handleApplied := func(result persistence.ApplyResult, update normalize.OrderUpdate) {
-		// Iris order-confirmation latency: time between execution-gateway
-		// creating the local order row (order submission) and this push
-		// being processed. Logged unconditionally (not just on fills) so
-		// it's visible on every status transition, including the initial
-		// ack.
-		log.Printf("[RECONCILER] latency broker_order_id=%s status=%s confirm_latency=%s",
-			update.BrokerOrderID, update.Status, result.ConfirmationLatency)
-		if err := store.RecordConfirmationLatencyIfFirst(ctx, result.OrderID, result.TradeUID, update.BrokerOrderID, result.ConfirmationLatency); err != nil {
+	handleApplied := func(result persistence.ApplyResult, update normalize.OrderUpdate, rxAt time.Time) {
+		irisStats.Applied()
+
+		// Iris confirmation latency = order creation -> the moment the push
+		// was RECEIVED. (result.ConfirmationLatency is measured when the
+		// update is processed, which after the retry backoff below adds
+		// ~300ms per retry and made every order look like ~310ms.)
+		latency := rxAt.Sub(result.OrderCreatedAt)
+		if latency < 0 {
+			latency = 0
+		}
+		log.Printf("[IRIS-WS] order=%s status=%s side=%s confirm_latency=%s (submit -> push received; recorded=%s)",
+			update.BrokerOrderID, update.Status, update.Side, latency, result.ConfirmationLatency)
+		if err := store.RecordLatency(ctx, persistence.StageIrisConfirmation, result.OrderID, result.TradeUID, update.BrokerOrderID, latency); err != nil {
 			log.Printf("[RECONCILER] record latency sample failed: %v", err)
+		}
+		if update.Status == normalize.StatusFilled {
+			if err := store.RecordLatency(ctx, persistence.StageIrisFill, result.OrderID, result.TradeUID, update.BrokerOrderID, latency); err != nil {
+				log.Printf("[RECONCILER] record fill latency sample failed: %v", err)
+			}
 		}
 
 		if publisher == nil {
@@ -159,7 +181,7 @@ func main() {
 	// pushes. Six attempts over 300ms each (~1.8s) comfortably covers
 	// the observed race window without duplicating the 30s recovery
 	// poller's job of handling much longer gaps.
-	retryUnmatched := func(update normalize.OrderUpdate, raw []byte) {
+	retryUnmatched := func(update normalize.OrderUpdate, raw []byte, rxAt time.Time) {
 		for attempt := 0; attempt < 6; attempt++ {
 			select {
 			case <-ctx.Done():
@@ -176,23 +198,24 @@ func main() {
 				return
 			}
 			log.Printf("[RECONCILER] matched broker_order_id=%s on retry attempt=%d", update.BrokerOrderID, attempt+1)
-			handleApplied(result, update)
+			handleApplied(result, update, rxAt)
 			return
 		}
+		irisStats.Unmatched()
 		log.Printf("[RECONCILER] no matching order row for broker_order_id=%s after retries -- giving up (recovery poller will catch it later)", update.BrokerOrderID)
 	}
 
-	applyAndPublish := func(update normalize.OrderUpdate, raw []byte) {
+	applyAndPublish := func(update normalize.OrderUpdate, raw []byte, rxAt time.Time) {
 		result, err := store.ApplyOrderUpdate(ctx, update, raw)
 		if err == persistence.ErrOrderNotFound {
-			go retryUnmatched(update, raw)
+			go retryUnmatched(update, raw, rxAt)
 			return
 		}
 		if err != nil {
 			log.Printf("[RECONCILER] persist broker_order_id=%s failed: %v", update.BrokerOrderID, err)
 			return
 		}
-		handleApplied(result, update)
+		handleApplied(result, update, rxAt)
 	}
 
 	// Recovery/catch-up path: reconciles orders stuck in a non-terminal
@@ -220,17 +243,28 @@ func main() {
 	log.Printf("[RECONCILER] running -- consuming Iris live order-push feed")
 
 	err = client.ReadLoopWithReconnect(ctx, db, accCfg, func(frame greeksoft.IrisFrame) {
+		rxAt := time.Now()
 		kind, orderPayload, tradePayload, err := ingest.Dispatch(frame)
 		if err != nil {
 			log.Printf("[RECONCILER] dispatch failed: %v raw=%s", err, string(frame.Raw))
 			return
 		}
 		switch kind {
+		case ingest.KindHeartBeat:
+			irisStats.Frame(irisstats.KindHeartbeat, rxAt)
+		case ingest.KindOrderResponse:
+			irisStats.Frame(irisstats.KindOrder, rxAt)
+		case ingest.KindTradeResponse:
+			irisStats.Frame(irisstats.KindTrade, rxAt)
+		default:
+			irisStats.Frame(irisstats.KindOther, rxAt)
+		}
+		switch kind {
 		case ingest.KindOrderResponse:
 			if orderPayload == nil {
 				return
 			}
-			applyAndPublish(normalize.Parse(orderPayload), frame.Raw)
+			applyAndPublish(normalize.Parse(orderPayload), frame.Raw, rxAt)
 		case ingest.KindTradeResponse:
 			if tradePayload == nil {
 				return
@@ -240,7 +274,7 @@ func main() {
 			// it is NOT a duplicate of OrderResponse and must be applied
 			// too, or fills silently never get recorded. See
 			// normalize.ParseTradeResponse's doc comment.
-			applyAndPublish(normalize.ParseTradeResponse(tradePayload), frame.Raw)
+			applyAndPublish(normalize.ParseTradeResponse(tradePayload), frame.Raw, rxAt)
 		}
 	})
 	if err != nil && ctx.Err() == nil {

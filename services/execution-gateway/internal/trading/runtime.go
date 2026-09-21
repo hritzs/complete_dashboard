@@ -60,6 +60,16 @@ func (s *Service) runMonitor(rt *RuntimeTrade) {
 			return
 		case <-ticker.C:
 			s.runMonitorCycle(rt.Trade.TradeUID)
+
+			// Stop once the trade is closed by ANY path. Only the autonomous
+			// exits used to tear their runtime down, so a manual square-off left
+			// this goroutine running for the life of the process, logging a
+			// stale status every minute for a position that no longer exists.
+			if latest, ok := s.Store.LoadTrade(rt.Trade.TradeUID); ok && isTerminalTradeStatus(latest.Status) {
+				s.Store.DeleteRuntime(rt.Trade.TradeUID)
+				return
+			}
+
 			if err := s.tickRuntime(rt); err != nil {
 				log.Printf("runtime tick error for %s: %v", rt.Trade.TradeUID, err)
 			}
@@ -169,4 +179,14 @@ func (s *Service) tickRuntime(rt *RuntimeTrade) error {
 // monitoring never silently stops just because the service was redeployed.
 func (s *Service) ResumeRuntime(trade StoredTrade) {
 	s.startRuntime(trade)
+}
+
+// isTerminalTradeStatus reports whether a trade has finished and nothing
+// should be monitoring it any more.
+func isTerminalTradeStatus(status string) bool {
+	switch status {
+	case "CLOSED", "CLOSEDSQF", "CLOSED_SQF", "CLOSED_SL", "CLOSED_TP", "CLOSED_TIME", "CLOSED_MANUAL", "FAILED":
+		return true
+	}
+	return false
 }

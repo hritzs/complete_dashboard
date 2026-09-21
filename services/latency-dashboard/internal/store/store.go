@@ -11,7 +11,10 @@ import (
 	"time"
 )
 
-const stageIrisConfirmation = "iris_confirmation"
+const (
+	stageIrisConfirmation = "iris_confirmation"
+	stageIrisFill         = "iris_fill"
+)
 
 type Sample struct {
 	ID            int64     `json:"id"`
@@ -80,6 +83,12 @@ func (s *Store) Recent(ctx context.Context, limit int) ([]Sample, error) {
 // Stats aggregates iris_confirmation samples recorded within the last
 // window (e.g. 5*time.Minute).
 func (s *Store) Stats(ctx context.Context, window time.Duration) (Stats, error) {
+	return s.StatsForStage(ctx, stageIrisConfirmation, window)
+}
+
+// StatsForStage is Stats for one latency stage ("iris_confirmation" or
+// "iris_fill").
+func (s *Store) StatsForStage(ctx context.Context, stage string, window time.Duration) (Stats, error) {
 	var stats Stats
 	var avg, p50, p95, p99 sql.NullFloat64
 	var maxUS sql.NullInt64
@@ -95,7 +104,7 @@ func (s *Store) Stats(ctx context.Context, window time.Duration) (Stats, error) 
 		FROM latency_samples
 		WHERE stage = $1
 		  AND recorded_at > NOW() - $2::interval
-	`, stageIrisConfirmation, fmt.Sprintf("%d seconds", int64(window.Seconds()))).Scan(
+	`, stage, fmt.Sprintf("%d seconds", int64(window.Seconds()))).Scan(
 		&stats.Count, &avg, &p50, &p95, &p99, &maxUS,
 	)
 	if err != nil {
@@ -108,4 +117,83 @@ func (s *Store) Stats(ctx context.Context, window time.Duration) (Stats, error) 
 	stats.P99US = p99.Float64
 	stats.MaxUS = maxUS.Int64
 	return stats, nil
+}
+
+// OrderEvidence is one GreekSoft order with the proof of HOW its state
+// reached us: how many of its recorded events were Iris websocket pushes
+// (raw frames carry a streaming_type) versus REST recovery reads.
+type OrderEvidence struct {
+	OrderID       int64     `json:"order_id"`
+	TradeUID      string    `json:"trade_uid"`
+	BrokerOrderID string    `json:"broker_order_id"`
+	Side          string    `json:"side"`
+	Quantity      int64     `json:"quantity"`
+	Phase         string    `json:"phase"`
+	Status        string    `json:"status"`
+	CreatedAt     time.Time `json:"created_at"`
+	AckUS         *int64    `json:"ack_us"`
+	FillUS        *int64    `json:"fill_us"`
+	IrisEvents    int64     `json:"iris_events"`
+	TotalEvents   int64     `json:"total_events"`
+	// Source is IRIS_WS when at least one event came from the websocket,
+	// REST_ONLY when events exist but none did, NONE when nothing was
+	// recorded for the order at all.
+	Source string `json:"source"`
+}
+
+func classifySource(iris, total int64) string {
+	switch {
+	case iris > 0:
+		return "IRIS_WS"
+	case total > 0:
+		return "REST_ONLY"
+	default:
+		return "NONE"
+	}
+}
+
+// Orders returns GreekSoft orders created within window, newest first.
+func (s *Store) Orders(ctx context.Context, window time.Duration, limit int) ([]OrderEvidence, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT o.id,
+		       COALESCE(o.trade_uid, ''),
+		       COALESCE(o.broker_order_id, ''),
+		       o.side, o.quantity, COALESCE(o.phase, ''), o.status, o.created_at,
+		       (SELECT latency_us FROM latency_samples l WHERE l.order_id = o.id AND l.stage = $3),
+		       (SELECT latency_us FROM latency_samples l WHERE l.order_id = o.id AND l.stage = $4),
+		       (SELECT COUNT(*) FROM order_events e
+		         WHERE e.order_id = o.id AND e.raw_broker_response::text LIKE '%streaming_type%'),
+		       (SELECT COUNT(*) FROM order_events e WHERE e.order_id = o.id)
+		FROM orders o
+		WHERE o.broker_name = 'GREEKSOFT'
+		  AND o.created_at > NOW() - $1::interval
+		ORDER BY o.created_at DESC
+		LIMIT $2
+	`, fmt.Sprintf("%d seconds", int64(window.Seconds())), limit, stageIrisConfirmation, stageIrisFill)
+	if err != nil {
+		return nil, fmt.Errorf("query order evidence: %w", err)
+	}
+	defer rows.Close()
+
+	out := []OrderEvidence{}
+	for rows.Next() {
+		var o OrderEvidence
+		var ack, fill sql.NullInt64
+		if err := rows.Scan(&o.OrderID, &o.TradeUID, &o.BrokerOrderID, &o.Side, &o.Quantity,
+			&o.Phase, &o.Status, &o.CreatedAt, &ack, &fill, &o.IrisEvents, &o.TotalEvents); err != nil {
+			return nil, fmt.Errorf("scan order evidence: %w", err)
+		}
+		if ack.Valid {
+			o.AckUS = &ack.Int64
+		}
+		if fill.Valid {
+			o.FillUS = &fill.Int64
+		}
+		o.Source = classifySource(o.IrisEvents, o.TotalEvents)
+		out = append(out, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate order evidence: %w", err)
+	}
+	return out, nil
 }

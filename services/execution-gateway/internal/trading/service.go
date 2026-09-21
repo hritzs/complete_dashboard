@@ -773,8 +773,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 	if !ok {
 		return
 	}
-	switch trade.Status {
-	case "CLOSED", "CLOSEDSQF", "CLOSED_SQF", "CLOSED_SL", "CLOSED_TP", "CLOSED_TIME", "CLOSED_MANUAL", "FAILED":
+	if isTerminalTradeStatus(trade.Status) {
 		return
 	}
 

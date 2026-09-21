@@ -55,7 +55,8 @@ func main() {
 	}
 
 	dataStore := store.NewStore(db)
-	handlers := httpapi.NewHandlers(dataStore)
+	handlers := httpapi.NewHandlers(dataStore).
+		WithReconcilerURL("http://127.0.0.1:" + envOrDefault("RECONCILER_HEALTH_PORT", "8021"))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {

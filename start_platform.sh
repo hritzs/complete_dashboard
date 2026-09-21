@@ -317,7 +317,10 @@ echo "UI: ${HTTP_PROTO}://localhost:3000"
 echo
 
 if compgen -G "$LOG_DIR/*.log" > /dev/null; then
-  tail -f "$LOG_DIR"/*.log
+  # Readable, colour-coded merged view (key events by default). Other views:
+  #   scripts/watch_logs.sh --all | --errors | --trade <text> | --help
+  echo "Live log view: key events (scripts/watch_logs.sh --all for everything, --errors for problems only)"
+  "$BASE_DIR/scripts/watch_logs.sh"
 else
   echo "No log files found in $LOG_DIR"
   echo "Use: ls -la $LOG_DIR"

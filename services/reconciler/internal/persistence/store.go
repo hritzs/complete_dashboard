@@ -47,11 +47,14 @@ type ApplyResult struct {
 	TradeUID string
 	OrderID  int64
 	Fill     *PersistedFill // nil if this update didn't represent a new fill
-	// ConfirmationLatency is the time between when execution-gateway
-	// created the local order row (order submission) and this Iris push
-	// being processed -- i.e. GreekSoft's real end-to-end order
-	// confirmation latency, not a synthetic estimate.
+	// ConfirmationLatency is time.Since(OrderCreatedAt) at the moment the
+	// update was PROCESSED. That includes any retry backoff, so it is NOT
+	// the push arrival latency -- callers measuring Iris latency must use
+	// the push's receive time minus OrderCreatedAt instead.
 	ConfirmationLatency time.Duration
+	// OrderCreatedAt is when execution-gateway created the local order row
+	// (i.e. just before submitting the order).
+	OrderCreatedAt time.Time
 }
 
 type PersistedFill struct {
@@ -107,6 +110,7 @@ func (s *Store) ApplyOrderUpdate(ctx context.Context, update normalize.OrderUpda
 		TradeUID:            tradeUID.String,
 		OrderID:             orderID,
 		ConfirmationLatency: time.Since(orderCreatedAt),
+		OrderCreatedAt:      orderCreatedAt,
 	}
 
 	exchangeOrderIDArg := interface{}(nil)
