@@ -1114,3 +1114,44 @@ Python reference (`refernce_py_code/trading/monitors/hedge_monitor.py`,
       material OUTSIDE this repo (old tarballs, `trading-platform*` copies, stray
       `.py`/`.docx` files) that a cleanup of "the complete repository" may or may not
       include -- needs a decision.
+
+## Build paths audit: manual, custom and automated (2026-09-21 ~12:50-13:01 IST)
+Asked "are the minute-end monitors, the automated UI straddle and the manual build working?"
+
+- [x] **Minute-end monitors: working.** One `[MONITOR] minute=` evaluation per minute per
+      trade (a 4-minute trade logged 4), with real decisions (`OK`, `DELTA_BELOW_ONE_LOT`,
+      `HEDGE_TRIGGERED`) and the bps-of-spot floor (18.73 at spot 23,405).
+- [x] **Manual build: working.** The UI's Sell Straddle / Sell Custom Straddle both POST
+      `/api/trade/straddle`. Verified live by posting the exact UI payload (ATM strike and
+      tokens from the live chain, `delta_neutral: true`, NRML): ACTIVE, 65/65, monitor
+      running, clean square-off, 0 monitor lines after close. (Custom sell uses the same
+      endpoint with distinct CE/PE strikes; not separately exercised live.)
+- [x] **Automated build: was NOT working properly, now fixed and verified live.**
+      `ConfigBuild` read only entry_time, lots, symbol and expiry. The form's exit_time,
+      sl_bps, divisors and buffers were accepted and silently discarded, so the built trade
+      had no exit time and no SL (a fresh trade has none armed) -- an unprotected entry -- and
+      the path forced product MIS (GreekSoft product 0, intraday) where a manual build gets
+      NRML. Now: `BuildRiskConfig` (exit_time -> SquareOffHardTime, sl_bps -> SLPnLBpsOfSpot,
+      buffers, divisors) is validated at schedule time (bad exit, or exit not after entry ->
+      400 before any order) and applied to the trade before it is persisted or any order is
+      sent; MIS is no longer forced.
+      **Live**: scheduled 12:56:39 for 12:57:54 with exit 13:00:24 and sl_bps 14 -> the
+      scheduler entered at exactly 12:57:54, the trade was ACTIVE with product NRML,
+      sl_bps=14 and exit=13:00:24 on it, `TIME_TRIGGER` fired at exactly 13:00:24, verified
+      65/65 exit, `CLOSED_TIME`.
+- [x] Scheduler operability: `GET /api/trade/straddle/scheduled`, `POST
+      /api/trade/straddle/scheduled/cancel {job_id}`, jobs leave the pending set when they
+      start (success or failure -- they used to linger after a failure), and the Automation tab
+      lists pending builds with a Cancel button.
+- [ ] **Pending scheduled builds are in memory only**: a gateway restart drops them silently.
+      The API response and the UI say so; persist them if scheduled entries must survive
+      restarts.
+- [ ] **Accepted by the form but NOT implemented** (the API now reports them in
+      `not_applied`, the UI logs a warning): `idv`, `idv_divisor`, `straddle_filter`,
+      `roll_straddle_div`, `sl_start_time`, `hedge_start_time`, `roll_start_time`. The Go
+      monitors have no start-time gates and no entry filters, and no roll.
+- [ ] Note the new behaviour: the Automation form defaults `sl_bps` to 14, so an automated
+      build is now armed with a 14 bps-of-spot SL (about 33 pts per straddle at 23,400) by
+      default. `DeltaNeutral` is hard-set true for config builds.
+- Platform fact (see memory): this environment's session runs to 15:40, so the 15:37 default
+  exit is intentional -- an earlier note here that 15:37 was "after close" was wrong.
