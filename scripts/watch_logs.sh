@@ -4,6 +4,7 @@
 #   scripts/watch_logs.sh                    key events only (orders, fills, hedges, SL/TP/TIME, Iris pushes, warnings)
 #   scripts/watch_logs.sh --all              everything except heartbeats and raw market ticks
 #   scripts/watch_logs.sh --errors           warnings and errors only
+#   scripts/watch_logs.sh --monitor          only the once-a-minute trade monitor lines (every minute, incl. action=OK)
 #   scripts/watch_logs.sh --trade 122431     only lines mentioning this text (e.g. the tail of a trade uid)
 #   options: --feed (include feed-decoder ticks)  --history N (lines of history, default 40)
 #            --width N  --no-color
@@ -22,13 +23,14 @@ while [ $# -gt 0 ]; do
     --events) MODE=events ;;
     --all) MODE=all ;;
     --errors) MODE=errors ;;
+    --monitor) MODE=monitor ;;
     --trade) TRADE="${2:-}"; shift ;;
     --history) HISTORY="${2:-40}"; shift ;;
     --width) WIDTH="${2:-220}"; shift ;;
     --feed) FEED=1 ;;
     --no-color) COLOR=0 ;;
     --color) COLOR=1 ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
     *) echo "unknown option: $1 (try --help)" >&2; exit 1 ;;
   esac
   shift
@@ -36,6 +38,10 @@ done
 
 read -r -d '' AWK_PROG <<'AWK'
 function paint(code, s) { return color ? "\033[" code "m" s "\033[0m" : s }
+function field(str, key,    m) {
+  if (match(str, key "=[^ ]*")) { m = substr(str, RSTART + length(key) + 1, RLENGTH - length(key) - 1); return m }
+  return ""
+}
 BEGIN {
   tagcolor["EXEC"] = "34"; tagcolor["RECON"] = "35"; tagcolor["LAT"] = "90"
   tagcolor["SNAP"] = "90"; tagcolor["FEED"] = "90"; tagcolor["CONTRACT"] = "90"
@@ -43,6 +49,7 @@ BEGIN {
 }
 {
   line = $0
+  lc0 = ""
   ts = "        "
   if (match(line, /^[0-9]+\/[0-9]+\/[0-9]+ [0-9:]+ /)) {
     ts = substr(line, 12, 8)
@@ -59,15 +66,30 @@ BEGIN {
 
   iskey = (line ~ /\[RISK\]|\[BUILD-CHASE\]|_TRIGGER|HEDGE|Square-off|SQF reconciliation|BUILD (submitted|outcome|verification|submission)|\[GREEKSOFT ORDER\] (sending|submitted)|\[IRIS-WS\]|IRIS RX\] streaming_type=(Order|Trade)Response|DeployStraddle|Persisting SQF|PersistVerifiedFills done|login (successful|failed)|Greeksoft login|[Ll]istening|SYSTEM READY|MONITOR\].*action=(HEDGE|DELTA_BELOW|BELOW_MIN|NO_)/)
 
-  if (mode == "errors")      show = iserr
+  if (mode == "monitor")     show = (line ~ /\[MONITOR\]\[TRD|MINUTE-CHECK\]/)
+  else if (mode == "errors") show = iserr
   else if (mode == "events") show = (iserr || iskey) && !isnoise
   else                       show = !isnoise && (tag != "FEED" || feed || iserr)
   if (!show) next
   if (trade != "" && index(line, trade) == 0) next
 
+  # monitor mode: one compact, aligned line per evaluation
+  if (mode == "monitor" && match(line, /\[MONITOR\]\[[^]]*\]/)) {
+    uid = substr(line, RSTART + 10, RLENGTH - 11)
+    rest = substr(line, RSTART + RLENGTH + 1)
+    act = field(rest, "action")
+    if (act != "") {
+      line = sprintf("%s  min %s  %-22s  out %6.2f / allowed %6.2f  floor %5.2f  delta %+8.3f",
+                     substr(uid, length(uid) - 13), field(rest, "minute"), act,
+                     field(rest, "points_out") + 0, field(rest, "points_allowed") + 0,
+                     field(rest, "min_points") + 0, field(rest, "net_delta") + 0)
+      if (act != "OK") lc0 = "33"
+    }
+  }
+
   if (length(line) > width - 16) line = substr(line, 1, width - 17) "…"
 
-  lc = ""
+  lc = lc0
   if (iserr) lc = "31"
   else if (line ~ /\[RISK\]|\[BUILD-CHASE\]|_TRIGGER|HEDGE_TRIGGERED|invoking trade-scoped hedge/) lc = "33"
   else if (line ~ /\[IRIS-WS\]|IRIS RX\]/) lc = "36"
