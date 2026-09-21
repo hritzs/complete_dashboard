@@ -1058,3 +1058,59 @@ Python reference (`refernce_py_code/trading/monitors/hedge_monitor.py`,
 - [ ] Modify-modal defaults are only "suggested" values: Save sends every
       non-empty field, so a bare Save arms `sl_points_per_lot=30` (about 0.46
       pts per straddle for 1 NIFTY lot -- very tight) and `sl_pnl_bps_of_spot=14`.
+
+## Latency, websocket proof, readable logs, backup (2026-09-21 ~12:30-12:50 IST)
+- [x] **Backup before cleanup**: `/home/ubuntu/Desktop/api_gs/backups/backup-20260921-1229/`
+      (`repo.bundle` full history, `working-tree.tar.gz` incl. the UNTRACKED
+      `refernce_py_code/`, `trading-db.dump`, `env.backup` (secrets, mode 600),
+      `logs.tar.gz`, `SHA256SUMS`, `MANIFEST.txt`). Verified: bundle OK, checksums OK,
+      DB test-restored into a scratch database with identical row counts. Git tag
+      `backup-20260921-1229` pushed.
+- [x] **Latency tab was empty for two independent reasons, both fixed**
+      (services/reconciler, services/latency-dashboard, ui/src/LatencyDashboard.jsx):
+      1. The recorder only inserted when an order had exactly one `order_events`
+         row. An ack and its fill arrive milliseconds apart and both go through the
+         retry path, so that never held -- `latency_samples` had 0 rows ever.
+      2. The value was wrong: "now - order created" was taken AFTER the 300ms retry
+         backoff, so every order read ~310-335ms whatever the websocket did.
+      Now latency = push-received time - order creation, upserted per (order, stage)
+      keeping the minimum (`iris_confirmation`, `iris_fill`), with a unique partial
+      index (migration 0007; the reconciler also creates it idempotently on start).
+      **Measured live (4 orders): ack 7-11ms, fill 9-17ms, except the first order
+      after a restart at 355ms/363ms (cold connection).** The old figure for the same
+      orders was 309-671ms.
+- [x] **Proof trades come over the websocket**: reconciler `/api/iris/status` (live
+      liveness, heartbeat and order/trade push counts, matched / unmatched-gave-up),
+      relayed at `/api/latency/iris`; `/api/latency/orders` labels each order
+      IRIS_WS / REST_ONLY from whether its recorded events are websocket frames
+      (all 20 of the 20 GreekSoft orders earlier today were IRIS_WS); a `[IRIS-WS]`
+      log line per applied push. Every order shows ACKED + FILLED from Iris, plus a
+      third FILLED event from the gateway's own REST order-book read.
+- [x] **Readable terminal logs**: `scripts/watch_logs.sh` (merged, colour-coded;
+      default key events; `--all`, `--errors`, `--trade <text>`, `--feed`) and
+      `scripts/trade_timeline.sh <part of trade uid>|--last` (orders, how each state
+      reached us, latencies, legs, key log lines, monitor health). `start_platform.sh`
+      now ends with the viewer instead of a raw `tail -f`.
+      Gotcha fixed while building it: mawk buffers non-interactive input, so live lines
+      were held back until `-W interactive` (and a line-buffered tail) were used.
+- [x] **Leaked monitor found by the timeline tool**: a manually squared-off trade kept
+      its monitor goroutine for the life of the process, logging `[MINUTE-CHECK]
+      status=SQUARING_OFF` every minute (16+ lines for one trade). Only the
+      autonomous exits tore their runtime down. `runMonitor` now stops and drops its
+      runtime once the trade's authoritative status is terminal. Verified live: 0
+      minute-checks after close.
+- [ ] **Recurring non-fatal issues shown by `watch_logs.sh --errors`** (not fixed):
+      - reconciler: `NATS connect failed ... lookup nats` -- `.env` has
+        `NATS_URL=nats://nats:4222` (a docker hostname) but no NATS runs locally, so
+        order/fill events are never published;
+      - login: `getFlagValues failed status=400` (falls back to jloginNew's websocket
+        fields, works);
+      - deploy: `FALLBACK BLOCKED | NIFTY has no safe hardcoded fallback` -- some path
+        still asks for a fallback lot size (the real one comes from the chain);
+      - feed-decoder: `[BSE] Unknown token` spam;
+      - `computeVerifiedRealizedPnL: no fills found matching strategy` (see above).
+- [ ] Next, as agreed: clean the whole repository, then write the complete docs of
+      everything executed. NOTE the parent `~/Desktop/api_gs/` holds a lot of legacy
+      material OUTSIDE this repo (old tarballs, `trading-platform*` copies, stray
+      `.py`/`.docx` files) that a cleanup of "the complete repository" may or may not
+      include -- needs a decision.

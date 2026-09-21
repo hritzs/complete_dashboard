@@ -36,7 +36,7 @@ q -c "select o.created_at::time(3) as at, o.phase, o.side, o.quantity as qty, o.
 
 echo "--- how each order's state reached us ---"
 q -c "select o.broker_order_id as broker_id, e.event_timestamp::time(3) as at, e.status,
-      case when e.raw_broker_response::text like '%streaming_type%' then 'IRIS websocket' else 'REST recovery' end as source
+      case when e.raw_broker_response::text like '%streaming_type%' then 'IRIS websocket' else 'REST order book' end as source
       from order_events e join orders o on o.id=e.order_id
       where o.trade_uid='$UID_' order by e.event_timestamp, e.id"
 
