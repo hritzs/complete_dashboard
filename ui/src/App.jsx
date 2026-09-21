@@ -273,6 +273,7 @@
     const [terminalSellQty, setTerminalSellQty] = createSignal(1);
     const [manualHedgeBusy, setManualHedgeBusy] = createSignal(false);
     const [scheduledBuilds, setScheduledBuilds] = createSignal([]);
+    const [portfolioTotals, setPortfolioTotals] = createSignal(null);
     const [manualHedgeError, setManualHedgeError] = createSignal('');
 
     const [optionChain, setOptionChain] = createSignal({
@@ -805,7 +806,63 @@
           })
           .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 
-        if (!rows.length) {
+        // Today's trades with what actually executed and their realized PnL.
+        // /api/straddles returns only sparse rows for closed trades (no
+        // legs, no lots), so the filter above dropped every trade the moment
+        // it was squared off. This endpoint is the source for closed trades.
+        let todaySummaries = [];
+        try {
+          const today = await safeFetchJson("/api/portfolio/today");
+          todaySummaries = (Array.isArray(today?.trades) ? today.trades : []).filter((t) => {
+            const account = String(t.account_id || "").trim().toUpperCase();
+            const broker = String(t.broker_name || "").trim().toUpperCase();
+            return (!currentAccount || account === currentAccount) && (!currentBroker || broker === currentBroker);
+          });
+          setPortfolioTotals(today?.totals ? { ...today.totals, date: today.date } : null);
+        } catch (err) {
+          appendEventLog("warn", `Could not load today's executed trades: ${err.message}`);
+        }
+        const summaryByUid = Object.fromEntries(todaySummaries.map((t) => [t.trade_uid, t]));
+        const isClosedStatus = (status) => String(status || "").trim().toUpperCase().startsWith("CLOSED");
+
+        const closedItems = todaySummaries
+          .filter((t) => isClosedStatus(t.status))
+          .map((t) => ({
+            id: t.trade_uid,
+            symbol: t.symbol || "—",
+            expiry: t.expiry || "",
+            strike: t.strike || 0,
+            lots: t.lots || 0,
+            status: t.status,
+            createdAt: t.created_at ? new Date(t.created_at).toLocaleTimeString() : "",
+            tradeUid: t.trade_uid,
+            brokerName: t.broker_name || "—",
+            accountId: t.account_id || "—",
+            exchangeSegment: "",
+            lotSize: t.lot_size || 0,
+            ceToken: 0,
+            peToken: 0,
+            ceQty: 0,
+            peQty: 0,
+            // For a closed trade the "LTP" columns show the average exit price.
+            ceEntry: t.ce?.sold_avg ?? 0,
+            ceLtp: t.ce?.bought_avg ?? 0,
+            peEntry: t.pe?.sold_avg ?? 0,
+            peLtp: t.pe?.bought_avg ?? 0,
+            netDelta: 0,
+            realizedPnl: t.realized_pnl ?? 0,
+            unrealizedPnl: 0,
+            totalPnl: t.realized_pnl ?? 0,
+            config: {},
+            points_allowed: 0,
+            closeReason: t.close_reason || "",
+            closedAt: t.closed_at || "",
+            executions: t.executions || [],
+            ceLeg: t.ce || null,
+            peLeg: t.pe || null
+          }));
+
+        if (!rows.length && !closedItems.length) {
           // A successful fetch that confirms zero trades is authoritative,
           // not the same as a failed fetch (handled in the catch block
           // below, which intentionally keeps showing cached data as a
@@ -843,7 +900,8 @@
           peEntry: tr.pe_entry_price ?? 0,
           peLtp: tr.pe_ltp ?? 0,
           netDelta: tr.net_delta ?? 0,
-          realizedPnl: tr.realized_pnl ?? 0,
+          realizedPnl: summaryByUid[tr.trade_uid]?.realized_pnl ?? tr.realized_pnl ?? 0,
+          executions: summaryByUid[tr.trade_uid]?.executions || [],
           unrealizedPnl: tr.unrealized_pnl ?? 0,
           totalPnl: tr.total_pnl ?? tr.live_pnl ?? 0,
           config: tr.config || {},
@@ -853,8 +911,12 @@
           points_allowed: tr.points_allowed ?? 0
         }));
 
-        setPortfolioItemsPersisted(() => dedupePortfolio(mapped));
-        appendEventLog("info", `Loaded ${mapped.length} saved trades from backend`);
+        const activeMapped = mapped.filter((it) => !isClosedStatus(it.status));
+        const merged = [...activeMapped, ...closedItems].sort(
+          (a, b) => (summaryByUid[b.tradeUid]?.created_at || "").localeCompare(summaryByUid[a.tradeUid]?.created_at || "")
+        );
+        setPortfolioItemsPersisted(() => dedupePortfolio(merged));
+        appendEventLog("info", `Loaded ${activeMapped.length} open and ${closedItems.length} closed trades from backend`);
       } catch (err) {
         appendEventLog("warn", `Could not load saved trades: ${err.message}`);
       }
@@ -2047,8 +2109,24 @@
           <section class="tab-panel">
             <div class="panel-header">
               <div class="panel-title">Portfolio / Active Trades</div>
-              <div class="panel-subtitle">Combined view of stored trades and live metrics. Click a row to expand details and actions.</div>
+              <div class="panel-subtitle">Today's open and closed trades with realized PnL. Click a row to see what executed.</div>
             </div>
+
+            <Show when={portfolioTotals()}>
+              <div style={{ display: "flex", gap: "18px", "flex-wrap": "wrap", "align-items": "baseline", margin: "0 0 14px" }}>
+                <span>{portfolioTotals().date}</span>
+                <span>{portfolioTotals().trades} trades</span>
+                <span>{portfolioTotals().open} open</span>
+                <span>{portfolioTotals().closed} closed</span>
+                <span>
+                  Realized{" "}
+                  <strong class={Number(portfolioTotals().realized_pnl) >= 0 ? "positive" : "negative"}>
+                    ₹{fmt(portfolioTotals().realized_pnl, 2)}
+                  </strong>{" "}
+                  <span style={{ opacity: "0.6", "font-size": "12px" }}>(gross of brokerage and charges)</span>
+                </span>
+              </div>
+            </Show>
 
             <Show
               when={portfolioItems().length > 0}
@@ -2527,6 +2605,71 @@
                                         </div>
                                       </section>
 
+                                      <Show when={(item.executions || []).length > 0}>
+                                        <section class="trade-card position-details-card">
+                                          <div class="trade-card-title">
+                                            Executions
+                                            <Show when={item.closeReason}>
+                                              {" "}&mdash; {item.closeReason}
+                                              <Show when={item.closedAt}> at {new Date(item.closedAt).toLocaleTimeString()}</Show>
+                                            </Show>
+                                          </div>
+                                          <div class="position-table-wrap">
+                                            <table class="trade-position-table">
+                                              <thead>
+                                                <tr>
+                                                  <th>Time</th>
+                                                  <th>Type</th>
+                                                  <th>Leg</th>
+                                                  <th>Side</th>
+                                                  <th>Qty</th>
+                                                  <th>Price</th>
+                                                  <th>Status</th>
+                                                  <th>Order</th>
+                                                </tr>
+                                              </thead>
+                                              <tbody>
+                                                <For each={item.executions}>
+                                                  {(e) => (
+                                                    <tr>
+                                                      <td>{new Date(e.time).toLocaleTimeString()}</td>
+                                                      <td>{e.kind}</td>
+                                                      <td>{e.leg || "—"}{e.strike ? ` ${e.strike}` : ""}</td>
+                                                      <td class={String(e.side).toUpperCase() === "BUY" ? "positive" : "negative"}>{e.side}</td>
+                                                      <td>{e.filled_qty}{e.filled_qty !== e.quantity ? ` / ${e.quantity}` : ""}</td>
+                                                      <td>{e.avg_price > 0 ? `₹${fmt(e.avg_price, 2)}` : "—"}</td>
+                                                      <td>{e.status}</td>
+                                                      <td>{e.broker_order_id || "—"}</td>
+                                                    </tr>
+                                                  )}
+                                                </For>
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                          <Show when={item.ceLeg || item.peLeg}>
+                                            <div class="trade-metric-row">
+                                              <span>CE sold / bought avg</span>
+                                              <strong>
+                                                {item.ceLeg ? `₹${fmt(item.ceLeg.sold_avg, 2)} / ₹${fmt(item.ceLeg.bought_avg, 2)} → ₹${fmt(item.ceLeg.realized_pnl, 2)}` : "—"}
+                                              </strong>
+                                            </div>
+                                            <div class="trade-metric-row">
+                                              <span>PE sold / bought avg</span>
+                                              <strong>
+                                                {item.peLeg ? `₹${fmt(item.peLeg.sold_avg, 2)} / ₹${fmt(item.peLeg.bought_avg, 2)} → ₹${fmt(item.peLeg.realized_pnl, 2)}` : "—"}
+                                              </strong>
+                                            </div>
+                                          </Show>
+                                          <div class="trade-metric-row">
+                                            <span>Realized PnL (gross)</span>
+                                            <strong class={Number(item.realizedPnl) >= 0 ? "positive" : "negative"}>
+                                              ₹{fmt(item.realizedPnl, 2)}
+                                            </strong>
+                                          </div>
+                                        </section>
+                                      </Show>
+
+                                      <Show when={!isClosed()}>
                                       <section class="trade-card manual-actions-card">
                                         <div class="trade-card-title">Manual Actions</div>
 
@@ -2582,6 +2725,7 @@
                                           </button>
                                         </div>
                                       </section>
+                                      </Show>
 
                                     </div>
                                   </div>

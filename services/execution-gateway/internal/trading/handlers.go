@@ -938,3 +938,66 @@ func ManualOrder(w http.ResponseWriter, r *http.Request) {
 		"qty":     req.Qty,
 	})
 }
+
+// PortfolioToday lists the day's trades (open and closed) with what executed
+// and each trade's realized PnL. GET /api/portfolio/today[?date=YYYY-MM-DD],
+// dates in IST.
+func (h *Handlers) PortfolioToday(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+
+	pg, ok := h.Store.(*PostgresBackedStore)
+	if !ok {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "postgres-backed store is unavailable"})
+		return
+	}
+
+	loc, err := time.LoadLocation("Asia/Kolkata")
+	if err != nil {
+		loc = time.Local
+	}
+	day := time.Now().In(loc)
+	if raw := strings.TrimSpace(r.URL.Query().Get("date")); raw != "" {
+		parsed, perr := time.ParseInLocation("2006-01-02", raw, loc)
+		if perr != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "date must be YYYY-MM-DD"})
+			return
+		}
+		day = parsed
+	}
+	from := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc)
+
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	trades, err := pg.TradeSummaries(ctx, from, from.Add(24*time.Hour))
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
+		return
+	}
+
+	var realized float64
+	open, closed := 0, 0
+	for _, t := range trades {
+		realized += t.RealizedPnL
+		if closeReasonForStatus(t.Status) != "" {
+			closed++
+		} else {
+			open++
+		}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"date":    from.Format("2006-01-02"),
+		"totals": map[string]interface{}{
+			"trades":       len(trades),
+			"open":         open,
+			"closed":       closed,
+			"realized_pnl": round2(realized),
+			"note":         "realized PnL is gross of brokerage and charges",
+		},
+		"trades": trades,
+	})
+}

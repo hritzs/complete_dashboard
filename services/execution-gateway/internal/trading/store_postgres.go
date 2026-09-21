@@ -218,6 +218,11 @@ func (s *PostgresBackedStore) upsertTrade(tr StoredTrade) {
 		createdAt = time.Now()
 	}
 
+	var closedAtArg interface{}
+	if tr.ClosedAt.Year() > 2000 {
+		closedAtArg = tr.ClosedAt
+	}
+
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO trades (
 			trade_uid,
@@ -227,16 +232,23 @@ func (s *PostgresBackedStore) upsertTrade(tr StoredTrade) {
 			symbol,
 			status,
 			config,
-			created_at
+			created_at,
+			realized_pnl,
+			closed_at
 		)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		ON CONFLICT (trade_uid) DO UPDATE SET
 			user_id = EXCLUDED.user_id,
 			broker_name = EXCLUDED.broker_name,
 			account_id = EXCLUDED.account_id,
 			symbol = EXCLUDED.symbol,
 			status = EXCLUDED.status,
-			config = EXCLUDED.config
+			config = EXCLUDED.config,
+			-- Neither column was ever written before, so realized_pnl stayed 0
+			-- and closed_at stayed NULL for every trade. A stale in-memory copy
+			-- of a trade must not wipe a value that was already stored.
+			realized_pnl = CASE WHEN EXCLUDED.realized_pnl <> 0 THEN EXCLUDED.realized_pnl ELSE trades.realized_pnl END,
+			closed_at = COALESCE(EXCLUDED.closed_at, trades.closed_at)
 	`,
 		tr.TradeUID,
 		tr.UserID,
@@ -246,6 +258,8 @@ func (s *PostgresBackedStore) upsertTrade(tr StoredTrade) {
 		tr.Status,
 		string(raw),
 		createdAt,
+		tr.RealizedPnL,
+		closedAtArg,
 	)
 
 	if err != nil {
@@ -364,10 +378,13 @@ func (s *PostgresBackedStore) insertOrderIntent(tradeUID string, intent OrderInt
 			limit_price,
 			status,
 			raw_broker_request,
+			phase,
+			hedge_group_id,
 			created_at,
 			updated_at
 		)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW(),NOW())
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
+		        COALESCE(NULLIF($14, ''), 'PRIMARY'), NULLIF($15, ''), NOW(), NOW())
 		ON CONFLICT (intent_id) DO NOTHING
 	`,
 		tradeID,
@@ -383,6 +400,8 @@ func (s *PostgresBackedStore) insertOrderIntent(tradeUID string, intent OrderInt
 		limitPrice,
 		"CREATED",
 		string(raw),
+		intent.Phase,
+		intent.HedgeGroupID,
 	)
 
 	if err != nil {

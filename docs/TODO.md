@@ -1155,3 +1155,40 @@ Asked "are the minute-end monitors, the automated UI straddle and the manual bui
       default. `DeltaNeutral` is hard-set true for config builds.
 - Platform fact (see memory): this environment's session runs to 15:40, so the 15:37 default
   exit is intentional -- an earlier note here that 15:37 was "after close" was wrong.
+
+## Portfolio shows the day's closed trades with real realized PnL (2026-09-21)
+Asked: after square-off, keep today's trades in the Portfolio with proper realized PnL so it is
+clear what was executed.
+
+- [x] **Why closed trades vanished**: the UI loader keeps a row only if it has legs or an
+      active-like status, and `/api/straddles` (via `AllTrades()`) returns only 7 sparse columns
+      -- a closed trade had zero lots, tokens and quantities and a non-active status, so it was
+      dropped the moment it was squared off.
+- [x] **Why realized PnL was always 0**: `upsertTrade` never wrote the `realized_pnl` or
+      `closed_at` columns, and `LoadTrade` treats the (never-written) column as authoritative;
+      `computeVerifiedRealizedPnL` also matched fills on a strategy key our orders never carry.
+      Now `upsertTrade` writes both (a stale copy can never wipe a stored non-zero value),
+      `SquareOff` stores the PnL computed from the trade's own orders, and the same computation
+      is used on read so trades closed before this fix are also correct without a DB rewrite.
+- [x] **Realized PnL is computed from the ORDERS table** (average cost, matched quantity, gross of
+      brokerage/charges) -- not from `fills`, which double-counts (see the double-write item
+      above). Checked by hand against today's trades: -19.50, +3.25, -260.00, -61.75, -16.25,
+      -19.50, +22.75 = -351.00 gross for the day.
+- [x] `GET /api/portfolio/today[?date=YYYY-MM-DD]`: the day's trades (open and closed) with close
+      reason, closed_at, per-leg sold/bought averages and every execution (ENTRY / HEDGE / EXIT,
+      leg, side, filled qty, price, status, broker order id). The Portfolio tab merges these in,
+      shows a day summary strip (trades / open / closed / realized) and an Executions card per
+      trade; action buttons are hidden on closed trades.
+- [x] `orders.phase` and `hedge_group_id` are now persisted (BUILD / HEDGE / SQF / PSQF); older
+      rows have the PRIMARY default so the intent id is used to classify them.
+- [x] The changed `trades` upsert and `orders` insert SQL were exercised against the live database
+      inside rolled-back transactions before deploying (a mistake there would silently stop
+      trades being saved).
+- [x] `start_platform.sh` now rebuilds `build/execution-gateway` on `normal` and `fast-restart`
+      (it used to run whatever binary was last built by hand, i.e. potentially stale code) and
+      refuses to start if the build fails.
+- [ ] Not yet verified in a real browser (no browser available to the agent): the JSX compiles and
+      the endpoint payload was checked through the dev-server proxy.
+- [ ] The Ctrl+C in the live log view stops only the viewer; the services keep running.
+      `stop_platform.sh` is stale (pkills `go run`/`main.go`, runs `docker compose down`) and does
+      not reliably stop the Go binaries -- use `fuser -k <ports>` as documented in the README/chat.

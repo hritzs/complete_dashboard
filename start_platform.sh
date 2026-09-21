@@ -163,6 +163,17 @@ fi
 
 echo "DB ready"
 
+# The gateway runs from a prebuilt binary, so a source change is NOT picked up
+# unless it is rebuilt here. Skipped in `fast` mode, which leaves running
+# processes alone.
+if [ "$MODE" != "fast" ]; then
+  echo "Building execution-gateway (Go)"
+  if ! (cd "$BASE_DIR/services/execution-gateway" && go build -o "$BUILD_DIR/execution-gateway" .); then
+    echo "ERROR: execution-gateway build failed; refusing to start a stale binary." >&2
+    exit 1
+  fi
+fi
+
 if [ "$BUILD_CPP" = "1" ]; then
   echo "Building C++ services"
   cmake -B "$BUILD_DIR" "$BASE_DIR"

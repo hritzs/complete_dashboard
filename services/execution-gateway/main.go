@@ -336,6 +336,7 @@ func startHTTPServer(cfg *Config, handlers *trading.Handlers) {
 	mux.HandleFunc("/api/trade/straddle/scheduled/cancel", handlers.CancelScheduledBuild)
 	mux.HandleFunc("/api/trade/straddle/custom", handlers.CustomSell)
 
+	mux.HandleFunc("/api/portfolio/today", handlers.PortfolioToday)
 	mux.HandleFunc("/api/straddles", handlers.GetStraddles)
 	mux.HandleFunc("/api/straddles/active", handlers.GetActiveStraddles)
 	mux.HandleFunc("/api/snapshots/", handlers.GetSnapshot)

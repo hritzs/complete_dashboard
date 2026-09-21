@@ -1429,7 +1429,20 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 
 	s.Store.UpdateTrade(tr)
 
-	if realizedPnL, ok := s.computeVerifiedRealizedPnL(context.Background(), tr); ok {
+	// Realized PnL from the trade's own order fills. The broker-fill path
+	// below matched on a strategy key our orders never carry, so it always
+	// found nothing and every trade stored 0.
+	if calc, ok := s.Store.(interface {
+		TradeRealizedPnL(ctx context.Context, tradeUID string) (float64, error)
+	}); ok {
+		if v, err := calc.TradeRealizedPnL(context.Background(), tradeUID); err != nil {
+			log.Printf("⚠️ realized PnL for %s not stored: %v", tradeUID, err)
+		} else {
+			tr.RealizedPnL = v
+			s.Store.UpdateTrade(tr)
+			log.Printf("realized PnL stored trade=%s status=%s realized=%.2f (gross, from order fills)", tradeUID, tr.Status, v)
+		}
+	} else if realizedPnL, ok := s.computeVerifiedRealizedPnL(context.Background(), tr); ok {
 		tr.RealizedPnL = realizedPnL
 		s.Store.UpdateTrade(tr)
 	}
