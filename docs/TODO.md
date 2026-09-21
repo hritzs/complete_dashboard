@@ -953,3 +953,44 @@ used these instead of `SpotStopLossBps`.
         after the bug above blocked their automatic path). The
         synthetic-hedge autonomous trigger test (`force_one_lot_hedge_test`)
         was not attempted today -- ran out of market hours.
+
+## Live validation, round 2 (2026-09-21 ~12:00-12:05 IST, real 1-lot NIFTY, GreekSoft 147)
+Re-ran the tests that were blocked on 2026-09-17 by the stale-`broker_order_id`
+reconciliation bug. That fix held: every trade went straight to `ACTIVE`
+(`fully_verified=true`, `[MONITOR]` loop ticking within a second), never
+`PARTIAL`.
+
+- [x] **SL, autonomous, PASSED**: `sl_pnl_bps_of_spot=0.05` armed on a live
+      trade; `[RISK] SL_TRIGGER source=bps_of_spot pnl_per_straddle=-0.15
+      threshold=-0.12` fired on its own, both legs bought back and verified
+      65/65, DB `CLOSED_SL`, legs at 0 with exit prices recorded, no
+      persistence warnings.
+- [x] **TIME, autonomous, PASSED**: `square_off_hard_time` set ~90s out with
+      no SL/TP; `[RISK] TIME_TRIGGER` fired at exactly the configured second,
+      verified 65/65 exit, DB `CLOSED_TIME`.
+- [x] TP had already passed on 2026-09-17. SL, TP and TIME are now all
+      proven live through the real autonomous path.
+- [x] Corrected an earlier claim: a freshly deployed trade has NO SL armed
+      (backend `sl_points_per_lot=0`, bps fields unset). The Modify modal's
+      prefilled 30 / 14 only take effect when Save is pressed, because it
+      sends every non-empty field -- clear any field you do not want armed.
+      `sl_points_per_lot` is compared against total PnL in rupees, so the
+      modal's default of 30 is a very tight ~0.46 pts/straddle for 1 NIFTY lot.
+- [ ] **Hedge test deliberately NOT run -- found a bookkeeping gap first.**
+      `ManualHedge` (service.go) places real orders (1 lot ATM CE + 1 lot ATM
+      PE, opposite sides, and is a no-op when |net delta| < 1) but never
+      books them into the trade's CEQty/PEQty/legs: it only calls
+      `AppendIntent`/`MarkOrderSubmitted`. `SquareOff` then works from the
+      stale original quantities, so a hedge followed by an exit can leave a
+      residual real position at the broker (or count a hedge fill toward the
+      exit's verification). `/api/manual/order` is still a stub
+      ("Wire ExecuteGreeksoftOrder() call here"), so there is no manual route
+      to flatten a stray leg. This is the roadmap's "hedge-fix" item and
+      should be done before any live hedge test.
+- [ ] Trade-level `trades.realized_pnl` stays 0.00 after every autonomous or
+      manual exit: `computeVerifiedRealizedPnL` filters fills by a strategy
+      key (last 10 chars of trade uid) that our orders never carry (we send
+      `strategyName: "STOCK"`). Per-leg `trade_legs.realized_pnl` IS correct
+      (e.g. +58.50 / -52.00), so the trade-level figure the UI shows for
+      closed trades is stale. Fix by summing leg realized PnL or by carrying
+      the trade uid in a field the broker echoes back.
