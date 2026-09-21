@@ -25,6 +25,7 @@ type FinalBuildRequest struct {
 	Lots             int
 	OrderLotsPerCall int
 	DeltaNeutral     bool
+	Risk             *BuildRiskConfig
 }
 
 func (s *Service) ExecuteFinalBuild(
@@ -47,21 +48,20 @@ func (s *Service) ExecuteFinalBuild(
 		return nil, fmt.Errorf("final build account_id is required")
 	}
 
-	productType := req.ProductType
-	if productType == "" {
-		productType = "MIS"
-	}
-
 	return s.DeployStraddle(ctx, DeployStraddleRequest{
-		UserID:           req.UserID,
-		BrokerName:       req.BrokerName,
-		AccountID:        req.AccountID,
-		ExchangeSegment:  req.ExchangeSegment,
-		ProductType:      productType,
+		UserID:          req.UserID,
+		BrokerName:      req.BrokerName,
+		AccountID:       req.AccountID,
+		ExchangeSegment: req.ExchangeSegment,
+		// Empty lets DeployStraddle apply its per-broker default (NRML for
+		// GreekSoft) -- the same one a manual build gets. This used to force
+		// MIS, which GreekSoft maps to intraday product 0.
+		ProductType:      req.ProductType,
 		Symbol:           req.Symbol,
 		Lots:             req.Lots,
 		TargetExpiry:     req.TargetExpiry,
 		OrderLotsPerCall: req.OrderLotsPerCall,
 		DeltaNeutral:     req.DeltaNeutral,
+		Risk:             req.Risk,
 	})
 }

@@ -131,6 +131,24 @@ func (h *Handlers) ConfigBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	risk := &BuildRiskConfig{
+		ExitTime:    req.ExitTime,
+		SlBps:       req.SlBps,
+		BuyBuffer:   req.BuyBuffer,
+		SellBuffer:  req.SellBuffer,
+		HedgeDiv:    req.HedgeDiv,
+		StraddleDiv: req.StraddleDiv,
+	}
+	// Reject a bad exit time now, while no order exists, not at entry time.
+	if err := risk.Validate(runAt); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
 	dReq := DeployStraddleRequest{
 		UserID:           req.UserID,
 		BrokerName:       req.BrokerName,
@@ -142,6 +160,7 @@ func (h *Handlers) ConfigBuild(w http.ResponseWriter, r *http.Request) {
 		DeltaNeutral:     true,
 		TargetExpiry:     req.TargetExpiry,
 		OrderLotsPerCall: req.OrderLotsPerCall,
+		Risk:             risk,
 	}
 
 	if dReq.Lots == 0 {
@@ -176,8 +195,73 @@ func (h *Handlers) ConfigBuild(w http.ResponseWriter, r *http.Request) {
 		"lots":         dReq.Lots,
 		"entry_time":   job.RunAt.Format("15:04:05"),
 		"scheduled_at": job.RunAt.Format(time.RFC3339),
-		"message":      "Config build scheduled; no broker order has been sent yet",
+		"exit_time":    strings.TrimSpace(req.ExitTime),
+		"sl_bps":       req.SlBps,
+		"not_applied":  notAppliedBuildFields(req),
+		"message": "Config build scheduled; no broker order has been sent yet. " +
+			"Pending builds are kept in memory and are lost if the gateway restarts.",
 	})
+}
+
+// ListScheduledBuilds returns the pending scheduled builds.
+func (h *Handlers) ListScheduledBuilds(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	jobs := []map[string]interface{}{}
+	if h.Scheduler != nil {
+		for _, j := range h.Scheduler.List() {
+			jobs = append(jobs, map[string]interface{}{
+				"job_id":       j.ID,
+				"source":       j.Source,
+				"symbol":       j.Request.Symbol,
+				"lots":         j.Request.Lots,
+				"broker_name":  j.Request.BrokerName,
+				"account_id":   j.Request.AccountID,
+				"run_at":       j.RunAt.Format(time.RFC3339),
+				"exit_time":    riskExitTime(j.Request.Risk),
+				"sl_bps":       riskSlBps(j.Request.Risk),
+				"scheduled_at": j.CreatedAt.Format(time.RFC3339),
+			})
+		}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "count": len(jobs), "jobs": jobs})
+}
+
+// CancelScheduledBuild cancels a pending build: POST {"job_id": "..."}.
+func (h *Handlers) CancelScheduledBuild(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "method not allowed"})
+		return
+	}
+	var body struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.JobID) == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "job_id is required"})
+		return
+	}
+	if h.Scheduler == nil || !h.Scheduler.Cancel(strings.TrimSpace(body.JobID)) {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "no pending build with that job_id (unknown, already ran, or gateway restarted)"})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "job_id": body.JobID, "status": "CANCELLED"})
+}
+
+func riskExitTime(r *BuildRiskConfig) string {
+	if r == nil {
+		return ""
+	}
+	return r.ExitTime
+}
+
+func riskSlBps(r *BuildRiskConfig) float64 {
+	if r == nil {
+		return 0
+	}
+	return r.SlBps
 }
 func (h *Handlers) CustomSell(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

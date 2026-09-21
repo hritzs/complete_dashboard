@@ -368,6 +368,11 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 			HedgeDiv:            57.0, // Default: Spot * IV / 57
 		},
 	}
+	// Abort before anything is persisted or sent if the requested risk config
+	// is invalid.
+	if err := applyBuildRiskConfig(&trade.Config, req.Risk, now); err != nil {
+		return nil, err
+	}
 	s.Store.SaveTrade(trade)
 
 	// Initialize trade legs in trade_legs for proper PnL tracking

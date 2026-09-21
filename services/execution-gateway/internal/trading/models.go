@@ -52,6 +52,10 @@ type DeployStraddleRequest struct {
 	CEStrikePrice    int    `json:"ce_strike_price,omitempty"`
 	PEStrikePrice    int    `json:"pe_strike_price,omitempty"`
 	OrderLotsPerCall int    `json:"order_lots_per_call,omitempty"`
+
+	// Risk is applied to the new trade's monitor config before any order is
+	// sent. Set only by the automated/config build path.
+	Risk *BuildRiskConfig `json:"-"`
 }
 
 type CustomStraddleRequest struct {

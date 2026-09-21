@@ -272,6 +272,7 @@
     const [manualHedgeExecutions, setManualHedgeExecutions] = createSignal([]);
     const [terminalSellQty, setTerminalSellQty] = createSignal(1);
     const [manualHedgeBusy, setManualHedgeBusy] = createSignal(false);
+    const [scheduledBuilds, setScheduledBuilds] = createSignal([]);
     const [manualHedgeError, setManualHedgeError] = createSignal('');
 
     const [optionChain, setOptionChain] = createSignal({
@@ -445,6 +446,7 @@
 
     let portfolioSnapshotTimer;
     let portfolioResyncTimer;
+    let scheduledBuildsTimer;
 
     onMount(() => {
       connectSocket();
@@ -471,6 +473,9 @@
         loadPortfolioFromBackend();
       }, 20000);
 
+      loadScheduledBuilds();
+      scheduledBuildsTimer = setInterval(loadScheduledBuilds, 5000);
+
       heartbeatTimer = setInterval(() => {
         appendEventLog('info', `Heartbeat • ${selectedSymbol()} • ${selectedExpiry() || 'no-expiry'}`);
       }, 10000);
@@ -482,6 +487,7 @@
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       if (portfolioSnapshotTimer) clearInterval(portfolioSnapshotTimer);
       if (portfolioResyncTimer) clearInterval(portfolioResyncTimer);
+      if (scheduledBuildsTimer) clearInterval(scheduledBuildsTimer);
     });
 
     const handleSymbolChange = (e) => {
@@ -1388,6 +1394,7 @@
         broker_name: executionPrefs().broker_name,
         account_id: executionPrefs().account_id,
         exchange_segment: executionPrefs().exchange_segment,
+        product_type: executionPrefs().product_type || 'NRML',
         symbol: cfg.symbol,
         size: cfg.size,
         lots: cfg.size,
@@ -1422,7 +1429,17 @@
         });
 
         if (data.success) {
-          appendEventLog("success", `Automation build scheduled: ${data.message}`);
+          appendEventLog(
+            "success",
+            `Automation build scheduled for ${data.entry_time}: exit ${data.exit_time || "none"}, SL ${data.sl_bps || 0} bps. ${data.message}`
+          );
+          if (Array.isArray(data.not_applied) && data.not_applied.length > 0) {
+            appendEventLog(
+              "warn",
+              `Accepted but NOT implemented yet (no effect): ${data.not_applied.join(", ")}`
+            );
+          }
+          loadScheduledBuilds();
         } else {
           appendEventLog("error", `Automation build failed: ${data.error || "Unknown error"}`);
         }
@@ -1431,6 +1448,29 @@
       }
     };
 
+
+    const loadScheduledBuilds = async () => {
+      try {
+        const data = await safeFetchJson("/api/trade/straddle/scheduled");
+        setScheduledBuilds(Array.isArray(data?.jobs) ? data.jobs : []);
+      } catch (err) {
+        // Non-fatal: the list is informational.
+      }
+    };
+
+    const cancelScheduledBuild = async (jobId) => {
+      try {
+        const data = await safeFetchJson("/api/trade/straddle/scheduled/cancel", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ job_id: jobId })
+        });
+        appendEventLog(data.success ? "success" : "error", data.success ? `Cancelled scheduled build ${jobId}` : `Cancel failed: ${data.error}`);
+      } catch (err) {
+        appendEventLog("error", `Cancel failed: ${err.message}`);
+      }
+      loadScheduledBuilds();
+    };
 
     const buildManualHedgePayload = () => {
       const mh = manualHedgeConfig();
@@ -2912,6 +2952,33 @@
               <button class="sell-btn" onClick={handleAutomationBuild} disabled={manualHedgeBusy()}>
                 START AUTOMATED BUILD
               </button>
+            </div>
+
+            <div class="panel-header" style={{ 'margin-top': '18px' }}>
+              <div class="panel-title">Scheduled builds</div>
+              <div class="panel-subtitle">
+                Pending entries (kept in memory: a gateway restart drops them)
+              </div>
+            </div>
+            <div class="log-container">
+              <For each={scheduledBuilds()}>
+                {(job) => (
+                  <div class="log-line log-info">
+                    <span class="log-ts">{new Date(job.run_at).toLocaleTimeString()}</span>
+                    <span class="log-lvl">{job.symbol} x{job.lots}</span>
+                    <span class="log-msg">
+                      {job.broker_name} {job.account_id} &middot; exit {job.exit_time || 'none'} &middot; SL {job.sl_bps || 0} bps
+                      {' '}
+                      <button class="action-btn" onClick={() => cancelScheduledBuild(job.job_id)}>
+                        Cancel
+                      </button>
+                    </span>
+                  </div>
+                )}
+              </For>
+              <Show when={scheduledBuilds().length === 0}>
+                <div class="empty-state">No pending scheduled builds.</div>
+              </Show>
             </div>
           </section>
         </Show>

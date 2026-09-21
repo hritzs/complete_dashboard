@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"sync"
 	"time"
 )
@@ -24,17 +25,49 @@ type ScheduledBuild struct {
 	CreatedAt time.Time
 }
 
+// BuildScheduler holds pending scheduled entries IN MEMORY ONLY: a gateway
+// restart drops every pending build, so List is how to see what is still
+// waiting.
 type BuildScheduler struct {
 	mu        sync.Mutex
 	scheduled map[string]ScheduledBuild
+	cancels   map[string]chan struct{}
 	service   *Service
 }
 
 func NewBuildScheduler(service *Service) *BuildScheduler {
 	return &BuildScheduler{
 		scheduled: make(map[string]ScheduledBuild),
+		cancels:   make(map[string]chan struct{}),
 		service:   service,
 	}
+}
+
+// List returns the pending builds, soonest first.
+func (s *BuildScheduler) List() []ScheduledBuild {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]ScheduledBuild, 0, len(s.scheduled))
+	for _, job := range s.scheduled {
+		out = append(out, job)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].RunAt.Before(out[j].RunAt) })
+	return out
+}
+
+// Cancel stops a pending build before it fires. It reports false if the job
+// is unknown or has already started.
+func (s *BuildScheduler) Cancel(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ch, ok := s.cancels[id]
+	if !ok {
+		return false
+	}
+	close(ch)
+	delete(s.cancels, id)
+	delete(s.scheduled, id)
+	return true
 }
 
 func ParseTodayIST(value string, now time.Time) (time.Time, error) {
@@ -91,28 +124,40 @@ func (s *BuildScheduler) Schedule(
 		CreatedAt: time.Now(),
 	}
 
+	cancelCh := make(chan struct{})
 	s.mu.Lock()
 	s.scheduled[id] = job
+	s.cancels[id] = cancelCh
 	s.mu.Unlock()
 
 	delay := time.Until(runAt)
+	log.Printf("[BUILD SCHEDULER] scheduled id=%s source=%s symbol=%s lots=%d run_at=%s", id, source, req.Symbol, req.Lots, runAt.Format(time.RFC3339))
 
 	go func() {
 		timer := time.NewTimer(delay)
 		defer timer.Stop()
 
-		<-timer.C
+		select {
+		case <-cancelCh:
+			log.Printf("[BUILD SCHEDULER] cancelled id=%s before it ran", job.ID)
+			return
+		case <-timer.C:
+		}
+
+		// The job is running now: no longer cancellable, and removed from the
+		// pending list whether it succeeds or fails (it used to linger after a
+		// failure).
+		s.mu.Lock()
+		delete(s.cancels, job.ID)
+		delete(s.scheduled, job.ID)
+		s.mu.Unlock()
 
 		log.Printf(
 			"[BUILD SCHEDULER] executing id=%s source=%s symbol=%s lots=%d run_at=%s",
-			job.ID,
-			job.Source,
-			job.Request.Symbol,
-			job.Request.Lots,
-			job.RunAt.Format(time.RFC3339),
+			job.ID, job.Source, job.Request.Symbol, job.Request.Lots, job.RunAt.Format(time.RFC3339),
 		)
 
-		_, err := s.service.ExecuteFinalBuild(
+		resp, err := s.service.ExecuteFinalBuild(
 			context.Background(),
 			FinalBuildRequest{
 				Mode:             BuildMode(job.Source),
@@ -126,27 +171,15 @@ func (s *BuildScheduler) Schedule(
 				Lots:             job.Request.Lots,
 				OrderLotsPerCall: job.Request.OrderLotsPerCall,
 				DeltaNeutral:     job.Request.DeltaNeutral,
+				Risk:             job.Request.Risk,
 			},
 		)
 		if err != nil {
-			log.Printf(
-				"[BUILD SCHEDULER] failed id=%s source=%s err=%v",
-				job.ID,
-				job.Source,
-				err,
-			)
+			log.Printf("[BUILD SCHEDULER] failed id=%s source=%s err=%v", job.ID, job.Source, err)
 			return
 		}
 
-		log.Printf(
-			"[BUILD SCHEDULER] completed id=%s source=%s",
-			job.ID,
-			job.Source,
-		)
-
-		s.mu.Lock()
-		delete(s.scheduled, job.ID)
-		s.mu.Unlock()
+		log.Printf("[BUILD SCHEDULER] completed id=%s source=%s trade=%s status=%s", job.ID, job.Source, resp.TradeUID, resp.Status)
 	}()
 
 	return job, nil

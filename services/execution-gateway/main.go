@@ -332,6 +332,8 @@ func startHTTPServer(cfg *Config, handlers *trading.Handlers) {
 	mux.HandleFunc("/api/trade/straddle", handlers.DeployStraddle)
 	mux.HandleFunc("/api/straddle/sell", handlers.DeployStraddle)
 	mux.HandleFunc("/api/trade/straddle/automated", handlers.ConfigBuild)
+	mux.HandleFunc("/api/trade/straddle/scheduled", handlers.ListScheduledBuilds)
+	mux.HandleFunc("/api/trade/straddle/scheduled/cancel", handlers.CancelScheduledBuild)
 	mux.HandleFunc("/api/trade/straddle/custom", handlers.CustomSell)
 
 	mux.HandleFunc("/api/straddles", handlers.GetStraddles)
