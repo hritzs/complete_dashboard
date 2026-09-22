@@ -2830,6 +2830,8 @@
             </div>
 
             <div class="automation-grid">
+              <div class="section-title">Entry</div>
+
               <div class="control-block">
                 <label class="control-label">Symbol</label>
                 <select
@@ -2875,6 +2877,7 @@
                   </For>
                 </select>
               </div>
+
               <div class="control-block">
                 <label class="control-label">Account</label>
                 <select
@@ -2892,7 +2895,6 @@
                   </For>
                 </select>
               </div>
-
 
               <div class="control-block">
                 <label class="control-label">How many lots do you want to sell?</label>
@@ -2913,6 +2915,11 @@
                   onInput={(e) => setAutomationConfig((prev) => ({ ...prev, entry_time: e.target.value }))}
                 />
               </div>
+              <div class="field-note">
+                A past entry time fires immediately instead of being skipped (e.g. "09:21:00" requested at "09:21:30" starts right away).
+              </div>
+
+              <div class="section-title">Risk &amp; Exit — real, verified exits</div>
 
               <div class="control-block">
                 <label class="control-label">Exit Time</label>
@@ -2923,6 +2930,18 @@
                   onInput={(e) => setAutomationConfig((prev) => ({ ...prev, exit_time: e.target.value }))}
                 />
               </div>
+
+              <div class="control-block">
+                <label class="control-label">SL (bps of spot)</label>
+                <input
+                  class="symbol-select"
+                  type="number"
+                  value={automationConfig().sl_bps}
+                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, sl_bps: Number(e.target.value) || 0 }))}
+                />
+              </div>
+
+              <div class="section-title">Hedge &amp; Sizing</div>
 
               <div class="control-block">
                 <label class="control-label">Hedge Divisor</label>
@@ -2941,121 +2960,6 @@
                   type="number"
                   value={automationConfig().straddle_div}
                   onInput={(e) => setAutomationConfig((prev) => ({ ...prev, straddle_div: Number(e.target.value) || 0 }))}
-                />
-              </div>
-
-              <div class="control-block">
-                <label class="control-label">Roll Straddle Divisor</label>
-                <input
-                  class="symbol-select"
-                  type="number"
-                  value={automationConfig().roll_straddle_div}
-                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, roll_straddle_div: Number(e.target.value) || 0 }))}
-                />
-              </div>
-
-              <div class="control-block">
-                <label class="control-label">SL (bps)</label>
-                <input
-                  class="symbol-select"
-                  type="number"
-                  value={automationConfig().sl_bps}
-                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, sl_bps: Number(e.target.value) || 0 }))}
-                />
-              </div>
-
-              <div class="control-block">
-                <label class="control-label">IDV</label>
-                <input
-                  class="symbol-select"
-                  type="number"
-                  step="0.1"
-                  value={automationConfig().idv}
-                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, idv: Number(e.target.value) || 0 }))}
-                />
-              </div>
-
-              <div class="control-block">
-                <label class="control-label">IDV Divisor</label>
-                <input
-                  class="symbol-select"
-                  type="number"
-                  step="0.1"
-                  value={automationConfig().idv_divisor}
-                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, idv_divisor: Number(e.target.value) || 0 }))}
-                />
-              </div>
-
-              <div class="control-block">
-                <label class="control-label">Straddle Price Filter</label>
-                <input
-                  class="symbol-select"
-                  type="number"
-                  value={automationConfig().straddle_filter}
-                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, straddle_filter: Number(e.target.value) || 0 }))}
-                />
-              </div>
-
-              <div class="control-block">
-                <label class="control-label">SL Interval (s)</label>
-                <input
-                  class="symbol-select"
-                  type="number"
-                  value={automationConfig().sl_monitor_interval}
-                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, sl_monitor_interval: Number(e.target.value) || 60 }))}
-                />
-              </div>
-
-              <div class="control-block">
-                <label class="control-label">Hedge Interval (s)</label>
-                <input
-                  class="symbol-select"
-                  type="number"
-                  value={automationConfig().hedge_monitor_interval}
-                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, hedge_monitor_interval: Number(e.target.value) || 60 }))}
-                />
-              </div>
-
-              <div class="control-block">
-                <label class="control-label">Roll Interval (s)</label>
-                <input
-                  class="symbol-select"
-                  type="number"
-                  value={automationConfig().roll_monitor_interval}
-                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, roll_monitor_interval: Number(e.target.value) || 60 }))}
-                />
-              </div>
-
-              <div class="control-block">
-                <label class="control-label">SL Start Time</label>
-                <input
-                  class="symbol-select"
-                  type="text"
-                  placeholder="HH:MM:SS"
-                  value={automationConfig().sl_start_time}
-                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, sl_start_time: e.target.value }))}
-                />
-              </div>
-
-              <div class="control-block">
-                <label class="control-label">Hedge Start Time</label>
-                <input
-                  class="symbol-select"
-                  type="text"
-                  placeholder="HH:MM:SS"
-                  value={automationConfig().hedge_start_time}
-                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, hedge_start_time: e.target.value }))}
-                />
-              </div>
-
-              <div class="control-block">
-                <label class="control-label">Roll Start Time</label>
-                <input
-                  class="symbol-select"
-                  type="text"
-                  placeholder="HH:MM:SS"
-                  value={automationConfig().roll_start_time}
-                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, roll_start_time: e.target.value }))}
                 />
               </div>
 
@@ -3088,38 +2992,117 @@
                   onInput={(e) => setAutomationConfig((prev) => ({ ...prev, order_lots_per_call: Number(e.target.value) || 1 }))}
                 />
               </div>
-
-              <div class="control-block">
-                <label class="control-label">Manual Net Delta</label>
-                <input
-                  class="symbol-select"
-                  type="number"
-                  step="0.01"
-                  value={manualHedgeConfig().net_delta}
-                  onInput={(e) => setManualHedgeConfig((prev) => ({ ...prev, net_delta: Number(e.target.value) || 0 }))}
-                />
-              </div>
-
-              <div class="control-block">
-                <label class="control-label">Manual Lot Size</label>
-                <input
-                  class="symbol-select"
-                  type="number"
-                  value={manualHedgeConfig().lot_size}
-                  onInput={(e) => setManualHedgeConfig((prev) => ({ ...prev, lot_size: Number(e.target.value) || 0 }))}
-                />
-              </div>
-
-              <div class="control-block">
-                <label class="control-label">Qty to Hedge/Sell</label>
-                <input
-                  class="symbol-select"
-                  type="number"
-                  value={manualHedgeConfig().quantity}
-                  onInput={(e) => setManualHedgeConfig((prev) => ({ ...prev, quantity: Number(e.target.value) || 0 }))}
-                />
-              </div>
             </div>
+
+            <details class="advanced-details">
+              <summary>Accepted but not implemented yet (no effect on the build) — idv, roll, and the *_start_time / *_monitor_interval fields</summary>
+              <div class="automation-grid">
+                <div class="control-block">
+                  <label class="control-label">Roll Straddle Divisor</label>
+                  <input
+                    class="symbol-select"
+                    type="number"
+                    value={automationConfig().roll_straddle_div}
+                    onInput={(e) => setAutomationConfig((prev) => ({ ...prev, roll_straddle_div: Number(e.target.value) || 0 }))}
+                  />
+                </div>
+
+                <div class="control-block">
+                  <label class="control-label">IDV</label>
+                  <input
+                    class="symbol-select"
+                    type="number"
+                    step="0.1"
+                    value={automationConfig().idv}
+                    onInput={(e) => setAutomationConfig((prev) => ({ ...prev, idv: Number(e.target.value) || 0 }))}
+                  />
+                </div>
+
+                <div class="control-block">
+                  <label class="control-label">IDV Divisor</label>
+                  <input
+                    class="symbol-select"
+                    type="number"
+                    step="0.1"
+                    value={automationConfig().idv_divisor}
+                    onInput={(e) => setAutomationConfig((prev) => ({ ...prev, idv_divisor: Number(e.target.value) || 0 }))}
+                  />
+                </div>
+
+                <div class="control-block">
+                  <label class="control-label">Straddle Price Filter</label>
+                  <input
+                    class="symbol-select"
+                    type="number"
+                    value={automationConfig().straddle_filter}
+                    onInput={(e) => setAutomationConfig((prev) => ({ ...prev, straddle_filter: Number(e.target.value) || 0 }))}
+                  />
+                </div>
+
+                <div class="control-block">
+                  <label class="control-label">SL Interval (s)</label>
+                  <input
+                    class="symbol-select"
+                    type="number"
+                    value={automationConfig().sl_monitor_interval}
+                    onInput={(e) => setAutomationConfig((prev) => ({ ...prev, sl_monitor_interval: Number(e.target.value) || 60 }))}
+                  />
+                </div>
+
+                <div class="control-block">
+                  <label class="control-label">Hedge Interval (s)</label>
+                  <input
+                    class="symbol-select"
+                    type="number"
+                    value={automationConfig().hedge_monitor_interval}
+                    onInput={(e) => setAutomationConfig((prev) => ({ ...prev, hedge_monitor_interval: Number(e.target.value) || 60 }))}
+                  />
+                </div>
+
+                <div class="control-block">
+                  <label class="control-label">Roll Interval (s)</label>
+                  <input
+                    class="symbol-select"
+                    type="number"
+                    value={automationConfig().roll_monitor_interval}
+                    onInput={(e) => setAutomationConfig((prev) => ({ ...prev, roll_monitor_interval: Number(e.target.value) || 60 }))}
+                  />
+                </div>
+
+                <div class="control-block">
+                  <label class="control-label">SL Start Time</label>
+                  <input
+                    class="symbol-select"
+                    type="text"
+                    placeholder="HH:MM:SS"
+                    value={automationConfig().sl_start_time}
+                    onInput={(e) => setAutomationConfig((prev) => ({ ...prev, sl_start_time: e.target.value }))}
+                  />
+                </div>
+
+                <div class="control-block">
+                  <label class="control-label">Hedge Start Time</label>
+                  <input
+                    class="symbol-select"
+                    type="text"
+                    placeholder="HH:MM:SS"
+                    value={automationConfig().hedge_start_time}
+                    onInput={(e) => setAutomationConfig((prev) => ({ ...prev, hedge_start_time: e.target.value }))}
+                  />
+                </div>
+
+                <div class="control-block">
+                  <label class="control-label">Roll Start Time</label>
+                  <input
+                    class="symbol-select"
+                    type="text"
+                    placeholder="HH:MM:SS"
+                    value={automationConfig().roll_start_time}
+                    onInput={(e) => setAutomationConfig((prev) => ({ ...prev, roll_start_time: e.target.value }))}
+                  />
+                </div>
+              </div>
+            </details>
 
             <div class="button-row" style={{ gap: '10px', 'flex-wrap': 'wrap' }}>
               <button
@@ -3169,6 +3152,41 @@
             </div>
 
             <div class="automation-grid">
+              <div class="section-title">Manual hedge inputs</div>
+
+              <div class="control-block">
+                <label class="control-label">Net Delta</label>
+                <input
+                  class="symbol-select"
+                  type="number"
+                  step="0.01"
+                  value={manualHedgeConfig().net_delta}
+                  onInput={(e) => setManualHedgeConfig((prev) => ({ ...prev, net_delta: Number(e.target.value) || 0 }))}
+                />
+              </div>
+
+              <div class="control-block">
+                <label class="control-label">Lot Size</label>
+                <input
+                  class="symbol-select"
+                  type="number"
+                  value={manualHedgeConfig().lot_size}
+                  onInput={(e) => setManualHedgeConfig((prev) => ({ ...prev, lot_size: Number(e.target.value) || 0 }))}
+                />
+              </div>
+
+              <div class="control-block">
+                <label class="control-label">Qty to Hedge/Sell</label>
+                <input
+                  class="symbol-select"
+                  type="number"
+                  value={manualHedgeConfig().quantity}
+                  onInput={(e) => setManualHedgeConfig((prev) => ({ ...prev, quantity: Number(e.target.value) || 0 }))}
+                />
+              </div>
+
+              <div class="section-title">Actions</div>
+
               <button class="buy-btn" onClick={handleManualHedgePreview} disabled={manualHedgeBusy()}>
                 {manualHedgeBusy() ? 'WORKING...' : 'PREVIEW HEDGE'}
               </button>
@@ -3180,9 +3198,14 @@
               >
                 EXECUTE HEDGE
               </button>
+            </div>
 
+            <div class="panel-header" style={{ 'margin-top': '18px' }}>
+              <div class="panel-title">Direct manual order</div>
+              <div class="panel-subtitle">Sells the live ATM leg directly (bypasses hedge preview above)</div>
+            </div>
 
-
+            <div class="automation-grid">
               <div
                 style={{
                   display: 'grid',
