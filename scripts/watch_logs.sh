@@ -84,10 +84,27 @@ BEGIN {
   if (match(line, /\[MONITOR\]\[[^]]*\]/)) {
     uid = substr(line, RSTART + 10, RLENGTH - 11)
     rest = substr(line, RSTART + RLENGTH + 1)
+    shortuid = substr(uid, length(uid) - 13)
+    minute = field(rest, "minute")
+    chk = field(rest, "check")
     act = field(rest, "action")
-    if (act != "") {
+    if (chk == "SL" || chk == "TP") {
+      st = field(rest, "status")
+      line = sprintf("%-6s %-14s  min %s  %-14s  pnl/straddle %+9.2f  vs threshold %+9.2f",
+                     chk, shortuid, minute, st, field(rest, "pnl_per_straddle") + 0, field(rest, "threshold") + 0)
+      if (st == "BREACHED") lc0 = "33"
+    } else if (chk == "TIME") {
+      st = field(rest, "status")
+      line = sprintf("TIME   %-14s  min %s  %-14s  target %s  remaining %s",
+                     shortuid, minute, st, field(rest, "target"), field(rest, "remaining"))
+      if (st == "BREACHED") lc0 = "33"
+    } else if (line ~ /\] minute=[0-9:]+ snapshot /) {
+      line = sprintf("SNAP   %-14s  min %s  spot %9.2f  total %+9.2f  d=%+8.3f g=%+9.6f t=%+8.2f v=%+8.2f",
+                     shortuid, minute, field(rest, "spot") + 0, field(rest, "total_pnl") + 0,
+                     field(rest, "delta") + 0, field(rest, "gamma") + 0, field(rest, "theta") + 0, field(rest, "vega") + 0)
+    } else if (act != "") {
       line = sprintf("HEDGE  %-14s  min %s  %-22s  out %6.2f / allowed %6.2f  floor %5.2f  delta %+8.3f",
-                     substr(uid, length(uid) - 13), field(rest, "minute"), act,
+                     shortuid, minute, act,
                      field(rest, "points_out") + 0, field(rest, "points_allowed") + 0,
                      field(rest, "min_points") + 0, field(rest, "net_delta") + 0)
       if (act != "OK") lc0 = "33"

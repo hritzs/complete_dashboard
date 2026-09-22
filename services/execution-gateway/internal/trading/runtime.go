@@ -2,7 +2,6 @@ package trading
 
 import (
 	"log"
-	"math"
 	"time"
 )
 
@@ -77,100 +76,26 @@ func (s *Service) runMonitor(rt *RuntimeTrade) {
 	}
 }
 
-// tickRuntime applies runtime rules such as delta hedge thresholds using the latest snapshot.
+// tickRuntime used to run its own once-a-minute hedge-eligibility log and
+// three legacy alert-only checks (SLPnLLimit/TPPnLTarget/SquareOffTime --
+// rupee-based fields nothing that builds a trade today ever sets). It shared
+// rt.LastMinuteCheck with runMonitorCycle's own once-a-minute gate on the
+// exact same *RuntimeTrade, and runMonitorCycle always runs first each tick
+// (see runMonitor below), so it always "claimed" the minute first and this
+// function's per-minute block silently never ran -- confirmed live
+// 2026-09-22: zero [MINUTE-CHECK] lines were ever written despite trades
+// running for several minutes. The real, currently-armed SL/TP/TIME checks
+// (SLPnLBpsOfSpot/TPPnLBpsOfSpot/SquareOffHardTime) already run every tick in
+// runMonitorCycle, which also now logs an unconditional once-a-minute status
+// line for each of them plus a PnL/Greeks snapshot, in the same function that
+// has the real thresholds in scope, rather than fixing this one's copy.
+// Nothing else in this function had any effect (rt.Snapshot was written but
+// never read elsewhere) so it is kept only as the loop's tick hook.
 func (s *Service) tickRuntime(rt *RuntimeTrade) error {
-	snap, ok := s.Store.LoadSnapshot(rt.Trade.TradeUID)
+	_, ok := s.Store.LoadSnapshot(rt.Trade.TradeUID)
 	if !ok {
 		return nil
 	}
-
-	rt.Snapshot = snap
-	cfg := rt.Trade.Config
-
-	// Perform point-risk hedge eligibility once per clock minute.
-	// SL, TP, and time exits below continue on every monitor tick.
-	now := time.Now()
-	currentMinute := now.Truncate(time.Minute)
-
-	if rt.LastMinuteCheck.IsZero() || !rt.LastMinuteCheck.Equal(currentMinute) {
-		rt.LastMinuteCheck = currentMinute
-
-		lotSize := rt.Trade.LotSize
-		if lotSize <= 0 {
-			lotSize = 1
-		}
-
-		const minimumHedgePoints = 19.5
-
-		absDelta := math.Abs(snap.NetDelta)
-		dynamicRiskBreached := snap.PointsAllowed > 0 && snap.PointsOut > snap.PointsAllowed
-		minimumPointsReached := snap.PointsOut >= minimumHedgePoints
-
-		action := "OK"
-		switch {
-		case dynamicRiskBreached && !minimumPointsReached:
-			action = "HEDGE_SKIPPED_BELOW_19_5"
-		case dynamicRiskBreached && minimumPointsReached && absDelta < float64(lotSize):
-			action = "HEDGE_SKIPPED_BELOW_LOT"
-		case dynamicRiskBreached && minimumPointsReached:
-			action = "HEDGE_ELIGIBLE"
-		}
-
-		log.Printf(
-			"[MINUTE-CHECK] trade=%s status=%s pnl=%.2f (r=%.2f,u=%.2f) delta=%.4f abs_delta=%.4f lot_size=%d gamma=%.6f risk=%.2f/%.2f min_points=%.2f action=%s",
-			rt.Trade.TradeUID,
-			snap.Status,
-			snap.TotalPNL,
-			snap.RealizedPNL,
-			snap.UnrealizedPNL,
-			snap.NetDelta,
-			absDelta,
-			lotSize,
-			snap.NetGamma,
-			snap.PointsOut,
-			snap.PointsAllowed,
-			minimumHedgePoints,
-			action,
-		)
-	}
-
-	// ── Delta hedge threshold logic ──────────────────────────────────────────
-	// Hedge qualification is assessed only in the minute block above.
-	// It requires both a point-risk breach and absolute delta >= one lot.
-	// Actual broker execution remains disabled until explicitly enabled.
-
-	// ── Risk monitors: alert-only, never submit broker orders ───────────────
-	// These alerts intentionally do NOT call SquareOff, ExecuteOrderIntent,
-	// ManualHedge, or any broker-mutating path. They are safe for monitor tests.
-	totalPNL := snap.UnrealizedPNL + snap.RealizedPNL
-
-	if cfg.SLPnLLimit < 0 && totalPNL <= cfg.SLPnLLimit {
-		log.Printf(
-			"[RISK][SL_ALERT] trade=%s total_pnl=%.2f limit=%.2f broker_orders_sent=0",
-			rt.Trade.TradeUID,
-			totalPNL,
-			cfg.SLPnLLimit,
-		)
-	}
-
-	if cfg.TPPnLTarget > 0 && totalPNL >= cfg.TPPnLTarget {
-		log.Printf(
-			"[RISK][TP_ALERT] trade=%s total_pnl=%.2f target=%.2f broker_orders_sent=0",
-			rt.Trade.TradeUID,
-			totalPNL,
-			cfg.TPPnLTarget,
-		)
-	}
-
-	if !cfg.SquareOffTime.IsZero() && !time.Now().Before(cfg.SquareOffTime) {
-		log.Printf(
-			"[RISK][EXIT_TIME_ALERT] trade=%s now=%s target=%s broker_orders_sent=0",
-			rt.Trade.TradeUID,
-			time.Now().Format(time.RFC3339),
-			cfg.SquareOffTime.Format(time.RFC3339),
-		)
-	}
-
 	return nil
 }
 

@@ -1122,6 +1122,70 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 				trade.Config.HedgeTestExecuted,
 				hedgeReason,
 			)
+
+			// SL/TP/TIME are actually checked every tick, above -- but until
+			// now they only ever logged when they BREACHED, so an operator
+			// watching the logs had no way to tell "monitoring is running and
+			// everything is fine" from "monitoring silently stopped". These
+			// mirror the reference system's per-minute "SL Check OK" /
+			// "TP DISABLED" cadence. slBreached/slThreshold/slSource and the
+			// TP threshold are the exact values the trigger check above this
+			// block already used this same tick -- reused here, not
+			// recomputed, so the status line can never drift from what
+			// actually decided whether to exit.
+			//
+			// This was previously attempted in tickRuntime (runtime.go), but
+			// that function shared this exact rt.LastMinuteCheck gate with
+			// this one: whichever ran first each tick "claimed" the minute,
+			// so tickRuntime's own per-minute block (and its alert log
+			// lines, which checked different, effectively-dead legacy
+			// config fields -- SLPnLLimit/TPPnLTarget/SquareOffTime, never
+			// set by anything that builds a trade today) never actually ran.
+			// Consolidated here instead of fixed in place, since this is the
+			// one function that already has the real thresholds in scope.
+			slStatus := "NOT_CONFIGURED"
+			if slBreached {
+				slStatus = "BREACHED"
+			} else if trade.Config.SLPointsPerLot > 0 || trade.Config.SLPnLBpsOfSpot > 0 {
+				slStatus = "OK"
+			}
+			log.Printf(
+				"[MONITOR][%s] minute=%s check=SL status=%s source=%q pnl=%.2f pnl_per_straddle=%.2f threshold=%.2f",
+				tradeUID, currentMinute.Format("15:04"), slStatus, slSource, totalPNL, pnlPerStraddle, slThreshold,
+			)
+
+			tpStatus, tpThreshold := "DISABLED", 0.0
+			if trade.Config.TPPnLBpsOfSpot > 0 {
+				tpThreshold = bpsOfSpotThreshold(spot, trade.Config.TPPnLBpsOfSpot)
+				tpStatus = "OK"
+				if pnlPerStraddle >= tpThreshold {
+					tpStatus = "BREACHED"
+				}
+			}
+			log.Printf(
+				"[MONITOR][%s] minute=%s check=TP status=%s pnl_per_straddle=%.2f threshold=%.2f bps=%.2f",
+				tradeUID, currentMinute.Format("15:04"), tpStatus, pnlPerStraddle, tpThreshold, trade.Config.TPPnLBpsOfSpot,
+			)
+
+			timeStatus, remaining := "NOT_CONFIGURED", time.Duration(0)
+			if !trade.Config.SquareOffHardTime.IsZero() {
+				remaining = time.Until(trade.Config.SquareOffHardTime)
+				timeStatus = "OK"
+				if remaining <= 0 {
+					timeStatus = "BREACHED"
+				}
+			}
+			log.Printf(
+				"[MONITOR][%s] minute=%s check=TIME status=%s target=%s remaining=%s",
+				tradeUID, currentMinute.Format("15:04"), timeStatus,
+				trade.Config.SquareOffHardTime.Format("15:04:05"), remaining.Round(time.Second),
+			)
+
+			log.Printf(
+				"[MONITOR][%s] minute=%s snapshot spot=%.2f total_pnl=%.2f pnl_per_straddle=%.2f delta=%.4f gamma=%.6f theta=%.2f vega=%.2f ce_ltp=%.2f pe_ltp=%.2f",
+				tradeUID, currentMinute.Format("15:04"), spot, totalPNL, pnlPerStraddle,
+				netDelta, netGamma, netTheta, netVega, ceRow.CELtp, peRow.PELtp,
+			)
 		}
 	}
 

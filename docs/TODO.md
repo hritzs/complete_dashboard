@@ -1276,3 +1276,44 @@ pure code/log-tooling session, no broker calls made.
 - [ ] `[MINUTE-CHECK]`'s hedge floor is still the old hardcoded 19.5 points, independent of
       `decideHedge`'s live-spot-bps floor used by `[MONITOR]` -- the two per-minute lines can
       disagree on whether a breach is "big enough". Pre-existing, not touched here.
+
+## Scheduler fires immediately on a past entry time; per-minute SL/TP/TIME status logging (2026-09-22)
+- [x] **Scheduler no longer discards a past entry_time.** `ConfigBuild`/`BuildScheduler.Schedule`
+      both rejected `entry_time` if it was not strictly in the future -- if the request was
+      processed even one second late (e.g. requested 09:21:00, processed 09:21:30), the build
+      was silently discarded. `EffectiveRunAt(requested, now)` now returns `now` (fires as close
+      to immediately as the scheduler's timer allows) instead of an error whenever the requested
+      time has passed; the response reports `fired_immediately`/`requested_entry_time` and the
+      message says so. `Schedule()` re-resolves this itself too (time passes between a caller's
+      own check and the timer being armed). Test: `TestEffectiveRunAt`,
+      `TestScheduler_ListCancelAndCleanup` updated for the new behavior.
+- [x] **Root cause found for "why do I only ever see HEDGE lines, never SL/TP":** `runtime.go`'s
+      `tickRuntime` had its OWN once-a-minute block (`[MINUTE-CHECK]`) gated by
+      `rt.LastMinuteCheck` on the trade's `*RuntimeTrade` -- the EXACT SAME field, on the EXACT
+      SAME struct instance, that `runMonitorCycle`'s hedge block (service.go) also gates on.
+      `runMonitorCycle` always runs first each tick, so it always claimed the minute first;
+      `tickRuntime`'s block never ran. Confirmed live: zero `[MINUTE-CHECK]` lines were ever
+      written despite trades running for several minutes. Its three "alert" checks
+      (SLPnLLimit/TPPnLTarget/SquareOffTime) were also dead in practice -- legacy rupee-based
+      fields nothing that builds a trade today ever sets, unlike the real
+      SLPnLBpsOfSpot/TPPnLBpsOfSpot/SquareOffHardTime mechanisms.
+- [x] **Fixed by consolidating, not patching the gate.** `runMonitorCycle` now logs an
+      unconditional once-a-minute status line for each of SL, TP and TIME (`check=SL status=OK|
+      BREACHED|NOT_CONFIGURED`, etc.) plus a PnL/Greeks snapshot line (spot, total pnl,
+      pnl/straddle, delta, gamma, theta, vega), reusing the exact `slBreached`/`slThreshold`/TP
+      threshold values the trigger check earlier in the same function already computed --
+      matching the Python reference's per-minute "SL Check OK" / "TP DISABLED" cadence, and
+      unable to drift from what actually decides an exit since it's the same values, not a
+      recomputation. `tickRuntime` is now a near-no-op (its only remaining read was already
+      unused elsewhere). Tests: `TestRunMonitorCycle_LogsSLTPTIMEStatusEveryMinuteEvenWhenNotBreached`
+      (mutation-checked -- removing the new block makes it fail) and
+      `TestRunMonitorCycle_LogsNotConfiguredWhenNothingArmed`.
+- [x] `scripts/watch_logs.sh` renders the new SL/TP/TIME/snapshot lines as compact aligned rows
+      (`SL`, `TP`, `TIME`, `SNAP`) alongside the existing `HEDGE` line, in every mode that shows
+      per-minute lines (default/all/--monitor).
+- [ ] Not yet observed on a real live trade (none was open while this was built/tested against
+      fakes and a rolled-back-nothing-touched real Postgres check) -- worth a quick look at
+      `scripts/watch_logs.sh --monitor` on the next live trade to confirm the real cadence looks
+      like the sample above.
+- [ ] Still not implemented (unlike the Python reference): a ROLL check/mechanism does not exist
+      in the Go system at all, so there is no "ROLL check" line to add.

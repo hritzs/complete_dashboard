@@ -108,8 +108,30 @@ func TestScheduler_ListCancelAndCleanup(t *testing.T) {
 	sched := NewBuildScheduler(&Service{Store: NewMemoryStore(), BrokerFactory: failingBrokerFactory{}})
 	req := DeployStraddleRequest{Symbol: "NIFTY", Lots: 1, BrokerName: "GREEKSOFT", AccountID: "147"}
 
-	if _, err := sched.Schedule(BuildSourceConfig, time.Now().Add(-time.Second), req); err == nil {
-		t.Fatal("a time in the past must be rejected")
+	// A time already in the past fires almost immediately instead of being
+	// rejected/discarded -- e.g. requested 09:21:00 but processed at
+	// 09:21:30. It still gets a job id and is briefly listed as pending.
+	pastJob, err := sched.Schedule(BuildSourceConfig, time.Now().Add(-time.Second), req)
+	if err != nil {
+		t.Fatalf("a past time must fire immediately, not be rejected: %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	stillPending := true
+	for time.Now().Before(deadline) {
+		found := false
+		for _, j := range sched.List() {
+			if j.ID == pastJob.ID {
+				found = true
+			}
+		}
+		if !found {
+			stillPending = false
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if stillPending {
+		t.Fatal("a past-time job never fired (stayed pending)")
 	}
 
 	job, err := sched.Schedule(BuildSourceConfig, time.Now().Add(time.Hour), req)
@@ -133,9 +155,9 @@ func TestScheduler_ListCancelAndCleanup(t *testing.T) {
 	if _, err := sched.Schedule(BuildSourceConfig, time.Now().Add(150*time.Millisecond), req); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline2 := time.Now().Add(3 * time.Second)
 	for len(sched.List()) != 0 {
-		if time.Now().After(deadline) {
+		if time.Now().After(deadline2) {
 			t.Fatal("a failed job stayed in the pending list")
 		}
 		time.Sleep(20 * time.Millisecond)

@@ -97,16 +97,32 @@ func ParseTodayIST(value string, now time.Time) (time.Time, error) {
 	), nil
 }
 
+// EffectiveRunAt resolves a requested entry time against now: if it is still
+// in the future it is returned unchanged; if it has already passed -- even by
+// a second, e.g. requested 09:21:00 but the request is only processed at
+// 09:21:30 -- it fires as close to immediately as the scheduler's own timer
+// granularity allows, rather than being rejected and the entry silently
+// never happening. adjusted reports whether that happened, so a caller can
+// log or surface it.
+func EffectiveRunAt(requested time.Time, now time.Time) (runAt time.Time, adjusted bool) {
+	if requested.After(now) {
+		return requested, false
+	}
+	return now, true
+}
+
 func (s *BuildScheduler) Schedule(
 	source BuildSource,
 	runAt time.Time,
 	req DeployStraddleRequest,
 ) (ScheduledBuild, error) {
-	if !runAt.After(time.Now()) {
-		return ScheduledBuild{}, fmt.Errorf(
-			"scheduled time %s is not in the future",
-			runAt.Format(time.RFC3339),
-		)
+	// Callers are expected to have already resolved runAt via EffectiveRunAt,
+	// but this is the actual point of execution, so re-resolve here too: time
+	// keeps passing between a caller's own check (e.g. HTTP request
+	// validation) and this call.
+	runAt, wasAdjusted := EffectiveRunAt(runAt, time.Now())
+	if wasAdjusted {
+		log.Printf("[BUILD SCHEDULER] requested time already passed for source=%s symbol=%s -- firing immediately instead of discarding it", source, req.Symbol)
 	}
 
 	id := fmt.Sprintf(

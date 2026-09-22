@@ -117,18 +117,13 @@ func (h *Handlers) ConfigBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A past entry_time fires immediately instead of being discarded -- e.g.
+	// requested 09:21:00 but this request is only processed at 09:21:30.
 	now := time.Now().In(runAt.Location())
-	if !runAt.After(now) {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": false,
-			"error": fmt.Sprintf(
-				"entry_time %s has passed; current local time is %s",
-				entryTime,
-				now.Format("15:04:05"),
-			),
-		})
-		return
+	requestedRunAt := runAt
+	runAt, timeAlreadyPassed := EffectiveRunAt(runAt, now)
+	if timeAlreadyPassed {
+		log.Printf("[BUILD SCHEDULER] entry_time %s already passed (now %s) -- firing immediately for symbol=%s", entryTime, now.Format("15:04:05"), req.Symbol)
 	}
 
 	// The expiry must be chosen explicitly. It used to be inherited silently
@@ -227,21 +222,31 @@ func (h *Handlers) ConfigBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	message := "Config build scheduled; no broker order has been sent yet. " +
+		"Pending builds are kept in memory and are lost if the gateway restarts."
+	if timeAlreadyPassed {
+		message = fmt.Sprintf(
+			"Requested entry_time %s had already passed (it is now %s); firing immediately instead of discarding it. ",
+			requestedRunAt.Format("15:04:05"), now.Format("15:04:05"),
+		) + message
+	}
+
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":      true,
-		"status":       "SCHEDULED",
-		"job_id":       job.ID,
-		"source":       job.Source,
-		"symbol":       dReq.Symbol,
-		"lots":         dReq.Lots,
-		"entry_time":   job.RunAt.Format("15:04:05"),
-		"scheduled_at": job.RunAt.Format(time.RFC3339),
-		"expiry":       targetExpiry,
-		"exit_time":    strings.TrimSpace(req.ExitTime),
-		"sl_bps":       req.SlBps,
-		"not_applied":  notAppliedBuildFields(req),
-		"message": "Config build scheduled; no broker order has been sent yet. " +
-			"Pending builds are kept in memory and are lost if the gateway restarts.",
+		"success":              true,
+		"status":               "SCHEDULED",
+		"job_id":               job.ID,
+		"source":               job.Source,
+		"symbol":               dReq.Symbol,
+		"lots":                 dReq.Lots,
+		"entry_time":           job.RunAt.Format("15:04:05"),
+		"requested_entry_time": requestedRunAt.Format("15:04:05"),
+		"fired_immediately":    timeAlreadyPassed,
+		"scheduled_at":         job.RunAt.Format(time.RFC3339),
+		"expiry":               targetExpiry,
+		"exit_time":            strings.TrimSpace(req.ExitTime),
+		"sl_bps":               req.SlBps,
+		"not_applied":          notAppliedBuildFields(req),
+		"message":              message,
 	})
 }
 
