@@ -91,9 +91,25 @@ start_if_needed() {
   fi
 
   echo "Starting $NAME"
-  (
-    eval "$CMD"
-  ) > "$LOG_FILE" 2>&1 &
+  # setsid puts this service in its OWN process group, detached from the
+  # terminal. Without it, a plain `cmd &` stays in the SAME process group as
+  # this script, so the terminal's own Ctrl+C -- which the kernel delivers to
+  # the whole foreground process group, not just the process you meant to
+  # interrupt -- kills every service too, not just scripts/watch_logs.sh at
+  # the end of this file. Confirmed live on 2026-09-21: pressing Ctrl+C to
+  # stop watching the logs took down execution-gateway, the reconciler, the
+  # feed bridge and the latency dashboard in the same second, silently
+  # ending SL/TP/hedge monitoring on any open position. `< /dev/null` closes
+  # stdin so a detached process never blocks trying to read from a terminal
+  # it no longer has.
+  if command -v setsid >/dev/null 2>&1; then
+    setsid bash -c "$CMD" > "$LOG_FILE" 2>&1 < /dev/null &
+  else
+    echo "WARNING: setsid not found -- $NAME will NOT survive Ctrl+C on this viewer" >&2
+    (
+      eval "$CMD"
+    ) > "$LOG_FILE" 2>&1 &
+  fi
 }
 
 safe_curl() {
@@ -282,13 +298,23 @@ if is_port_open 3000; then
   echo "UI already running on port 3000"
 else
   echo "Starting UI"
-  (
-    cd "$BASE_DIR/ui"
-    if [ ! -d "node_modules" ]; then
-      npm install
-    fi
-    npm run dev -- --host
-  ) > "$LOG_DIR/8_ui.log" 2>&1 &
+  # See start_if_needed's comment: setsid keeps this out of the terminal's
+  # foreground process group so Ctrl+C on the log viewer doesn't kill it too.
+  if command -v setsid >/dev/null 2>&1; then
+    setsid bash -c '
+      cd "'"$BASE_DIR"'/ui"
+      if [ ! -d node_modules ]; then npm install; fi
+      npm run dev -- --host
+    ' > "$LOG_DIR/8_ui.log" 2>&1 < /dev/null &
+  else
+    (
+      cd "$BASE_DIR/ui"
+      if [ ! -d "node_modules" ]; then
+        npm install
+      fi
+      npm run dev -- --host
+    ) > "$LOG_DIR/8_ui.log" 2>&1 &
+  fi
 fi
 
 sleep 5

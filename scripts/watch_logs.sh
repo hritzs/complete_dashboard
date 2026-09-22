@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 # Readable, merged, colour-coded live view of every service log.
 #
-#   scripts/watch_logs.sh                    key events only (orders, fills, hedges, SL/TP/TIME, Iris pushes, warnings)
+#   scripts/watch_logs.sh                    key events + once-a-minute live monitor/PnL lines for every open trade
 #   scripts/watch_logs.sh --all              everything except heartbeats and raw market ticks
 #   scripts/watch_logs.sh --errors           warnings and errors only
-#   scripts/watch_logs.sh --monitor          only the once-a-minute trade monitor lines (every minute, incl. action=OK)
+#   scripts/watch_logs.sh --monitor          ONLY the once-a-minute monitor/PnL lines (no orders/fills/etc.)
 #   scripts/watch_logs.sh --trade 122431     only lines mentioning this text (e.g. the tail of a trade uid)
 #   options: --feed (include feed-decoder ticks)  --history N (lines of history, default 40)
 #            --width N  --no-color
-# Ctrl+C only stops this viewer; the services keep running.
+# Ctrl+C only stops this viewer; the services keep running -- true as long as
+# they were started by start_platform.sh, which launches each one with setsid
+# so it survives Ctrl+C here (see its start_if_needed comment). A service you
+# started some other way (a bare `cmd &`) shares this terminal's process
+# group and WILL die with this viewer.
 
 set -u
 BASE_DIR=$(cd "$(dirname "$0")/.." && pwd)
@@ -64,7 +68,7 @@ BEGIN {
   isnoise = (line ~ /streaming_type=(HeartBeat|LicenseResponse|LoginResponse|Login)/)
   iserr = (!isnoise && probe ~ /ERROR|FATAL|panic|[Ff]ailed|❌|⚠|WARN|mismatch|refused|giving up|HEDGE_FAILED|no matching order|error=/)
 
-  iskey = (line ~ /\[RISK\]|\[BUILD-CHASE\]|_TRIGGER|HEDGE|Square-off|SQF reconciliation|BUILD (submitted|outcome|verification|submission)|\[GREEKSOFT ORDER\] (sending|submitted)|\[IRIS-WS\]|IRIS RX\] streaming_type=(Order|Trade)Response|DeployStraddle|Persisting SQF|PersistVerifiedFills done|login (successful|failed)|Greeksoft login|[Ll]istening|SYSTEM READY|MONITOR\].*action=(HEDGE|DELTA_BELOW|BELOW_MIN|NO_)/)
+  iskey = (line ~ /\[RISK\]|\[BUILD-CHASE\]|_TRIGGER|HEDGE|Square-off|SQF reconciliation|BUILD (submitted|outcome|verification|submission)|\[GREEKSOFT ORDER\] (sending|submitted)|\[IRIS-WS\]|IRIS RX\] streaming_type=(Order|Trade)Response|DeployStraddle|Persisting SQF|PersistVerifiedFills done|login (successful|failed)|Greeksoft login|[Ll]istening|SYSTEM READY|\[MONITOR\]\[TRD|MINUTE-CHECK\]/)
 
   if (mode == "monitor")     show = (line ~ /\[MONITOR\]\[TRD|MINUTE-CHECK\]/)
   else if (mode == "errors") show = iserr
@@ -73,18 +77,36 @@ BEGIN {
   if (!show) next
   if (trade != "" && index(line, trade) == 0) next
 
-  # monitor mode: one compact, aligned line per evaluation
-  if (mode == "monitor" && match(line, /\[MONITOR\]\[[^]]*\]/)) {
+  # Live per-minute monitor/PnL lines: always shown as one compact, aligned
+  # line (in every mode that lets them through -- events/all/monitor), not
+  # buried in raw JSON-ish log text. Two independent per-minute lines exist
+  # per trade: [MONITOR] (hedge decision) and [MINUTE-CHECK] (PnL/greeks).
+  if (match(line, /\[MONITOR\]\[[^]]*\]/)) {
     uid = substr(line, RSTART + 10, RLENGTH - 11)
     rest = substr(line, RSTART + RLENGTH + 1)
     act = field(rest, "action")
     if (act != "") {
-      line = sprintf("%s  min %s  %-22s  out %6.2f / allowed %6.2f  floor %5.2f  delta %+8.3f",
+      line = sprintf("HEDGE  %-14s  min %s  %-22s  out %6.2f / allowed %6.2f  floor %5.2f  delta %+8.3f",
                      substr(uid, length(uid) - 13), field(rest, "minute"), act,
                      field(rest, "points_out") + 0, field(rest, "points_allowed") + 0,
                      field(rest, "min_points") + 0, field(rest, "net_delta") + 0)
       if (act != "OK") lc0 = "33"
     }
+  } else if (match(line, /\[MINUTE-CHECK\] trade=[^ ]*/)) {
+    uid = substr(line, RSTART + 21, RLENGTH - 21)
+    rest = substr(line, RSTART + RLENGTH + 1)
+    act = field(rest, "action")
+    rval = ""; uval = ""
+    if (match(rest, /\(r=-?[0-9.]+,u=-?[0-9.]+\)/)) {
+      paren = substr(rest, RSTART, RLENGTH)
+      if (match(paren, /r=-?[0-9.]+/)) rval = substr(paren, RSTART + 2, RLENGTH - 2)
+      if (match(paren, /u=-?[0-9.]+/)) uval = substr(paren, RSTART + 2, RLENGTH - 2)
+    }
+    line = sprintf("PNL    %-14s  %-6s  total %+9.2f (r %+9.2f / u %+9.2f)  delta %+8.3f  gamma %+9.6f  %s",
+                   substr(uid, length(uid) - 13), field(rest, "status"),
+                   field(rest, "pnl") + 0, rval + 0, uval + 0,
+                   field(rest, "delta") + 0, field(rest, "gamma") + 0, act)
+    if (act != "OK" && act != "") lc0 = "33"
   }
 
   if (length(line) > width - 16) line = substr(line, 1, width - 17) "…"

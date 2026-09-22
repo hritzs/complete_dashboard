@@ -1239,3 +1239,40 @@ Real gross loss for the episode: -279.50 (CE -78.00, PE -201.50). Four separate 
       episode and its manual PE leg).
 - The gateway binary was rebuilt but the running process is the old one: after the close run
   `./start_platform.sh fast-restart` (it now rebuilds the gateway itself) to pick all of this up.
+
+## Fixed: Ctrl+C on the log viewer was killing every service (2026-09-21/22)
+Checked the DB for open positions on 2026-09-22 morning: none (0 rows, no trades at all
+today) -- nothing to clear. All services were down (only Postgres up), so this was a
+pure code/log-tooling session, no broker calls made.
+
+- [x] **Root cause found from yesterday's own logs**: at 15:36:14 on 2026-09-21,
+      execution-gateway, the reconciler, the GreekSoft feed bridge, the latency dashboard
+      and contract-master all logged a shutdown in the SAME second -- exactly when the user
+      pressed Ctrl+C to stop watching the logs. `start_platform.sh` launched every service
+      with a plain `cmd &`, which keeps it in the SAME process group as the script itself
+      (a non-interactive script has job control off, so `&` does not get its own group).
+      A terminal's Ctrl+C sends SIGINT to the whole foreground process group, so it killed
+      every service, not just `scripts/watch_logs.sh` as the script's own comment claimed.
+      Live impact: any open position's SL/TP/hedge monitor dies silently the moment someone
+      stops watching the logs.
+- [x] **Fix**: `start_if_needed` (and the UI's dev-server launch) now start each service
+      with `setsid ... < /dev/null &`, putting it in its own session/process group, detached
+      from the terminal. Verified in an isolated sandbox (no real services touched): a plain
+      `cmd &` shares the parent script's PGID (confirmed via `ps -o pgid=`); a `setsid`
+      launch gets a new PGID. End-to-end: two dummy background loops started exactly like
+      `start_if_needed` kept incrementing their tick counters for several seconds after
+      SIGINT was sent to the whole parent process group (the same signal a terminal's
+      Ctrl+C delivers) -- the real services would have died at that same signal before this
+      fix. Falls back to the old behavior (with a loud warning) if `setsid` is unavailable.
+- [x] **Log tooling**: `[MONITOR]` (hedge decision) and `[MINUTE-CHECK]` (PnL/greeks: total,
+      realized, unrealized, delta, gamma, points out/allowed) now render as compact aligned
+      lines (`HEDGE ...` / `PNL ...`) in the DEFAULT view, not just behind `--monitor` --
+      "add live params to the main terminal logs" from 2026-09-21 was not actually done in
+      that session (a stray "No response requested" ended the turn); done now.
+- [ ] Not yet observed live (no trade was open to test against): confirm on the next live
+      trade that a fresh Ctrl+C during `start_platform.sh`'s log view really leaves
+      execution-gateway (and its monitor) running, e.g. `curl localhost:8005/api/health`
+      right after.
+- [ ] `[MINUTE-CHECK]`'s hedge floor is still the old hardcoded 19.5 points, independent of
+      `decideHedge`'s live-spot-bps floor used by `[MONITOR]` -- the two per-minute lines can
+      disagree on whether a breach is "big enough". Pre-existing, not touched here.
