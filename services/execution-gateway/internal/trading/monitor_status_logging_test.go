@@ -70,7 +70,8 @@ func TestRunMonitorCycle_LogsSLTPTIMEStatusEveryMinuteEvenWhenNotBreached(t *tes
 		"check=SL status=OK",
 		"check=TP status=OK",
 		"check=TIME status=OK",
-		"minute=" + time.Now().Format("15:04") + " snapshot",
+		"tick=" + time.Now().Format("15:04") + ":",
+		" snapshot",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("log output missing %q\n--- full output ---\n%s", want, out)
@@ -105,4 +106,33 @@ func TestRunMonitorCycle_LogsNotConfiguredWhenNothingArmed(t *testing.T) {
 		}
 	}
 	_ = context.Background()
+}
+
+// The per-tick snapshot must fire on every runMonitorCycle call -- unlike
+// SL/TP/TIME/HEDGE, which stay throttled to once a minute (rt.LastMinuteCheck)
+// to avoid duplicate hedge signals. Requested live 2026-09-22 after the
+// operator only ever saw one snapshot per minute, matching the reference
+// system's per-tick snapshot cadence.
+func TestRunMonitorCycle_LogsSnapshotEveryTickEvenWithinTheSameMinute(t *testing.T) {
+	store := NewMemoryStore()
+	tr := newTestSquareOffTrade("TRD_MONITOR_TICK_SNAPSHOT")
+	tr.Lots = 1
+	tr.CELtp, tr.PELtp = 100, 90
+	store.SaveTrade(tr)
+	rt := &RuntimeTrade{Trade: tr, StopCh: make(chan struct{}), DoneCh: make(chan struct{})}
+	// Simulate this tick's minute having already been claimed by an
+	// earlier tick within the same minute.
+	rt.LastMinuteCheck = time.Now().Truncate(time.Minute)
+	store.SaveRuntime(rt)
+
+	svc := &Service{Store: store, Snapshot: fakeChainSnapshot{}, BrokerFactory: &fakeBrokerFactory{executor: &fakeSLExecutor{}}}
+
+	out := captureLog(t, func() { svc.runMonitorCycle(tr.TradeUID) })
+
+	if !strings.Contains(out, " snapshot ") {
+		t.Fatalf("snapshot line missing even though this tick's minute was already claimed\n--- full output ---\n%s", out)
+	}
+	if strings.Contains(out, "check=SL") {
+		t.Fatalf("SL/TP/TIME/HEDGE status lines should stay throttled to once a minute, but printed again\n--- full output ---\n%s", out)
+	}
 }

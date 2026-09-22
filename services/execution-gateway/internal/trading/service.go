@@ -1019,9 +1019,21 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 		s.executeAutoExit(tradeUID, "TIME", "CLOSED_TIME")
 	}
 
+	// Per-tick snapshot: unlike the once-a-minute HEDGE/SL/TP/TIME status
+	// lines below (throttled by rt.LastMinuteCheck to avoid duplicate hedge
+	// signals), this prints on every runMonitorCycle call -- i.e. every
+	// PollIntervalSec -- so PnL/greeks/LTP movement is visible between
+	// minute boundaries too, matching the reference system's per-tick
+	// snapshot cadence.
+	now := time.Now()
+	log.Printf(
+		"[MONITOR][%s] tick=%s snapshot spot=%.2f total_pnl=%.2f pnl_per_straddle=%.2f delta=%.4f gamma=%.6f theta=%.2f vega=%.2f ce_ltp=%.2f pe_ltp=%.2f",
+		tradeUID, now.Format("15:04:05"), spot, totalPNL, pnlPerStraddle,
+		netDelta, netGamma, netTheta, netVega, ceRow.CELtp, peRow.PELtp,
+	)
+
 	// Minute-end hedge eligibility check
 	// Evaluate hedge only at minute boundaries to avoid duplicate signals
-	now := time.Now()
 	currentMinute := now.Truncate(time.Minute)
 
 	if rt, ok := s.Store.LoadRuntime(tradeUID); ok {
@@ -1179,12 +1191,6 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 				"[MONITOR][%s] minute=%s check=TIME status=%s target=%s remaining=%s",
 				tradeUID, currentMinute.Format("15:04"), timeStatus,
 				trade.Config.SquareOffHardTime.Format("15:04:05"), remaining.Round(time.Second),
-			)
-
-			log.Printf(
-				"[MONITOR][%s] minute=%s snapshot spot=%.2f total_pnl=%.2f pnl_per_straddle=%.2f delta=%.4f gamma=%.6f theta=%.2f vega=%.2f ce_ltp=%.2f pe_ltp=%.2f",
-				tradeUID, currentMinute.Format("15:04"), spot, totalPNL, pnlPerStraddle,
-				netDelta, netGamma, netTheta, netVega, ceRow.CELtp, peRow.PELtp,
 			)
 		}
 	}

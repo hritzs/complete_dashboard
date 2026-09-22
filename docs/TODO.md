@@ -1379,3 +1379,39 @@ pure code/log-tooling session, no broker calls made.
       race detector clean.
 - [ ] **Not live-tested.** Needs explicit approval before trying with a real broker order, same
       as every other feature this session -- and the gateway needs restarting first regardless.
+
+## Per-tick SNAP; SL/TP genuinely unarmed on a live trade (2026-09-22)
+- [x] **Not a bug: a live trade's Monitor Status showed SL Points/Lot=0, SL/TP
+      (bps of spot)="--", Delta Threshold="--".** Confirmed against the live
+      per-minute log for that exact trade (`check=SL status=NOT_CONFIGURED`,
+      `check=TP status=DISABLED`) and its stored config (`sl_points_per_lot:0`,
+      no `sl_pnl_bps_of_spot`/`tp_pnl_bps_of_spot` keys at all) -- the build
+      that deployed it genuinely didn't arm SL/TP/hedge-threshold. The UI is
+      reporting reality; arm SL/TP for an open trade via the Modify Config
+      panel, or fill those fields in the Automation form before the next build.
+- [x] **"Hard Square-Off: 05:53:28 am" reappeared after the restart** -- the
+      fix (guard on year, not just NaN, for the Go zero-value date) was
+      already live in the vite dev server's source; the browser tab was just
+      stale (open from before the dev server restarted and lost its HMR
+      connection). A hard refresh showed "Not configured" correctly. Not a
+      code change.
+- [x] **Added a real per-tick snapshot**, requested after watching the live
+      per-minute logs: `runMonitorCycle`'s PnL/greeks snapshot line
+      (`service.go`) only ever printed once a minute, inside the same
+      `rt.LastMinuteCheck` gate as the HEDGE/SL/TP/TIME status lines. Pulled
+      it out to print unconditionally on every call -- i.e. every
+      `PollIntervalSec` tick (1s by default) -- while HEDGE/SL/TP/TIME stay
+      throttled to once a minute (unchanged, still avoids duplicate hedge
+      signals). Field renamed `minute=HH:MM` -> `tick=HH:MM:SS` on this one
+      line only, to make the two cadences visually distinct in the logs.
+      `watch_logs.sh`'s SNAP formatter and default "key events" filter
+      updated to match: the per-tick SNAP line shows under `--monitor`/`--all`
+      but is excluded from the default `events` view (too frequent to mix
+      with real triggers/once-a-minute status).
+- [x] New test `TestRunMonitorCycle_LogsSnapshotEveryTickEvenWithinTheSameMinute`
+      (a runtime whose `LastMinuteCheck` already claims the current minute
+      must still get a snapshot line, but no HEDGE/SL/TP/TIME lines).
+      Mutation-checked: reverting the fix reproduces the exact original
+      symptom (snapshot line missing). Existing snapshot-line tests updated
+      for the `tick=` field name. Full build/vet/test -race clean.
+- [ ] **Not yet deployed.** Needs `execution-gateway` restarted to take effect.

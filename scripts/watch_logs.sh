@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Readable, merged, colour-coded live view of every service log.
 #
-#   scripts/watch_logs.sh                    key events + once-a-minute live monitor/PnL lines for every open trade
+#   scripts/watch_logs.sh                    key events + once-a-minute HEDGE/SL/TP/TIME lines for every open trade
+#                                             (the per-tick SNAP line is too frequent for this view -- use --monitor/--all)
 #   scripts/watch_logs.sh --all              everything except heartbeats and raw market ticks
 #   scripts/watch_logs.sh --errors           warnings and errors only
-#   scripts/watch_logs.sh --monitor          ONLY the once-a-minute monitor/PnL lines (no orders/fills/etc.)
+#   scripts/watch_logs.sh --monitor          ONLY the monitor/PnL lines: once-a-minute HEDGE/SL/TP/TIME, plus a
+#                                             SNAP line every tick (every PollIntervalSec, default 1s)
 #   scripts/watch_logs.sh --trade 122431     only lines mentioning this text (e.g. the tail of a trade uid)
 #   options: --feed (include feed-decoder ticks)  --history N (lines of history, default 40)
 #            --width N  --no-color
@@ -72,7 +74,12 @@ BEGIN {
   isbenign = (line ~ /NATS connect failed, continuing without event publishing/)
   iserr = (!isnoise && !isbenign && probe ~ /ERROR|FATAL|panic|[Ff]ailed|❌|⚠|WARN|mismatch|refused|giving up|HEDGE_FAILED|no matching order|error=/)
 
-  iskey = (line ~ /\[RISK\]|\[BUILD-CHASE\]|_TRIGGER|HEDGE|Square-off|SQF reconciliation|BUILD (submitted|outcome|verification|submission)|\[GREEKSOFT ORDER\] (sending|submitted)|\[IRIS-WS\]|IRIS RX\] streaming_type=(Order|Trade)Response|DeployStraddle|Persisting SQF|PersistVerifiedFills done|login (successful|failed)|Greeksoft login|[Ll]istening|SYSTEM READY|\[MONITOR\]\[TRD|MINUTE-CHECK\]/)
+  # The per-tick snapshot line (tick=...) fires every PollIntervalSec --
+  # too frequent for the default "key events" view. It still shows up in
+  # --monitor and --all, just not folded into "events" alongside the
+  # once-a-minute HEDGE/SL/TP/TIME lines and real triggers.
+  isticksnap = (line ~ /\[MONITOR\]\[[^]]*\] tick=/)
+  iskey = !isticksnap && (line ~ /\[RISK\]|\[BUILD-CHASE\]|_TRIGGER|HEDGE|Square-off|SQF reconciliation|BUILD (submitted|outcome|verification|submission)|\[GREEKSOFT ORDER\] (sending|submitted)|\[IRIS-WS\]|IRIS RX\] streaming_type=(Order|Trade)Response|DeployStraddle|Persisting SQF|PersistVerifiedFills done|login (successful|failed)|Greeksoft login|[Ll]istening|SYSTEM READY|\[MONITOR\]\[TRD|MINUTE-CHECK\]/)
 
   if (mode == "monitor")     show = (line ~ /\[MONITOR\]\[TRD|MINUTE-CHECK\]/)
   else if (mode == "errors") show = iserr
@@ -102,9 +109,9 @@ BEGIN {
       line = sprintf("TIME   %-14s  min %s  %-14s  target %s  remaining %s",
                      shortuid, minute, st, field(rest, "target"), field(rest, "remaining"))
       if (st == "BREACHED") lc0 = "33"
-    } else if (line ~ /\] minute=[0-9:]+ snapshot /) {
-      line = sprintf("SNAP   %-14s  min %s  spot %9.2f  total %+9.2f  d=%+8.3f g=%+9.6f t=%+8.2f v=%+8.2f",
-                     shortuid, minute, field(rest, "spot") + 0, field(rest, "total_pnl") + 0,
+    } else if (line ~ /\] tick=[0-9:]+ snapshot /) {
+      line = sprintf("SNAP   %-14s  tick %s  spot %9.2f  total %+9.2f  d=%+8.3f g=%+9.6f t=%+8.2f v=%+8.2f",
+                     shortuid, field(rest, "tick"), field(rest, "spot") + 0, field(rest, "total_pnl") + 0,
                      field(rest, "delta") + 0, field(rest, "gamma") + 0, field(rest, "theta") + 0, field(rest, "vega") + 0)
     } else if (act != "") {
       line = sprintf("HEDGE  %-14s  min %s  %-22s  out %6.2f / allowed %6.2f  floor %5.2f  delta %+8.3f",
