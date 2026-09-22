@@ -48,6 +48,9 @@ func TestBuildRiskConfig_Validate(t *testing.T) {
 	if err := (&BuildRiskConfig{SlBps: -1}).Validate(entry); err == nil {
 		t.Fatal("negative sl_bps must be rejected")
 	}
+	if err := (&BuildRiskConfig{TpBps: -1}).Validate(entry); err == nil {
+		t.Fatal("negative tp_bps must be rejected")
+	}
 }
 
 func TestApplyBuildRiskConfig(t *testing.T) {
@@ -55,14 +58,14 @@ func TestApplyBuildRiskConfig(t *testing.T) {
 
 	cfg := base
 	if err := applyBuildRiskConfig(&cfg, &BuildRiskConfig{
-		ExitTime: "15:15", SlBps: 14, BuyBuffer: 6, SellBuffer: 7, HedgeDiv: 50, StraddleDiv: 3,
+		ExitTime: "15:15", SlBps: 14, TpBps: 14, BuyBuffer: 6, SellBuffer: 7, HedgeDiv: 50, StraddleDiv: 3,
 	}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if cfg.SquareOffHardTime.Hour() != 15 || cfg.SquareOffHardTime.Minute() != 15 {
 		t.Fatalf("exit time not applied: %v", cfg.SquareOffHardTime)
 	}
-	if cfg.SLPnLBpsOfSpot != 14 || cfg.BuyBuffer != 6 || cfg.SellBuffer != 7 || cfg.HedgeDiv != 50 || cfg.StraddleDiv != 3 {
+	if cfg.SLPnLBpsOfSpot != 14 || cfg.TPPnLBpsOfSpot != 14 || cfg.BuyBuffer != 6 || cfg.SellBuffer != 7 || cfg.HedgeDiv != 50 || cfg.StraddleDiv != 3 {
 		t.Fatalf("settings not applied: %+v", cfg)
 	}
 

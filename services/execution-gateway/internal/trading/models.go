@@ -90,6 +90,7 @@ type ConfigBuildRequest struct {
 	IdvDivisor       float64 `json:"idv_divisor"`
 	StraddleFilter   float64 `json:"straddle_filter"`
 	SlBps            float64 `json:"sl_bps"`
+	TpBps            float64 `json:"tp_bps"`
 	BuyBuffer        float64 `json:"buy_buffer"`
 	SellBuffer       float64 `json:"sell_buffer"`
 	HedgeDiv         float64 `json:"hedge_div"`

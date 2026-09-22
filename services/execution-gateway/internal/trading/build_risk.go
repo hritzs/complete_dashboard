@@ -17,6 +17,7 @@ import (
 type BuildRiskConfig struct {
 	ExitTime    string  // HH:MM or HH:MM:SS, IST today -> SquareOffHardTime (real, verified TIME exit)
 	SlBps       float64 // -> SLPnLBpsOfSpot (real, verified SL exit); 0 leaves SL unset
+	TpBps       float64 // -> TPPnLBpsOfSpot (real, verified TP exit); 0 leaves TP unset
 	BuyBuffer   float64
 	SellBuffer  float64
 	HedgeDiv    float64
@@ -60,7 +61,7 @@ func (r *BuildRiskConfig) Validate(entryAt time.Time) error {
 		}
 	}
 	for name, v := range map[string]float64{
-		"sl_bps": r.SlBps, "buy_buffer": r.BuyBuffer, "sell_buffer": r.SellBuffer,
+		"sl_bps": r.SlBps, "tp_bps": r.TpBps, "buy_buffer": r.BuyBuffer, "sell_buffer": r.SellBuffer,
 		"hedge_div": r.HedgeDiv, "straddle_div": r.StraddleDiv,
 	} {
 		if v < 0 {
@@ -85,6 +86,9 @@ func applyBuildRiskConfig(cfg *MonitorConfig, r *BuildRiskConfig, now time.Time)
 	}
 	if r.SlBps > 0 {
 		cfg.SLPnLBpsOfSpot = r.SlBps
+	}
+	if r.TpBps > 0 {
+		cfg.TPPnLBpsOfSpot = r.TpBps
 	}
 	if r.BuyBuffer > 0 {
 		cfg.BuyBuffer = r.BuyBuffer

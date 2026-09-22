@@ -170,6 +170,7 @@ func (h *Handlers) ConfigBuild(w http.ResponseWriter, r *http.Request) {
 	risk := &BuildRiskConfig{
 		ExitTime:    req.ExitTime,
 		SlBps:       req.SlBps,
+		TpBps:       req.TpBps,
 		BuyBuffer:   req.BuyBuffer,
 		SellBuffer:  req.SellBuffer,
 		HedgeDiv:    req.HedgeDiv,
@@ -245,6 +246,7 @@ func (h *Handlers) ConfigBuild(w http.ResponseWriter, r *http.Request) {
 		"expiry":               targetExpiry,
 		"exit_time":            strings.TrimSpace(req.ExitTime),
 		"sl_bps":               req.SlBps,
+		"tp_bps":               req.TpBps,
 		"not_applied":          notAppliedBuildFields(req),
 		"message":              message,
 	})
@@ -267,6 +269,7 @@ func (h *Handlers) ListScheduledBuilds(w http.ResponseWriter, r *http.Request) {
 				"run_at":       j.RunAt.Format(time.RFC3339),
 				"exit_time":    riskExitTime(j.Request.Risk),
 				"sl_bps":       riskSlBps(j.Request.Risk),
+				"tp_bps":       riskTpBps(j.Request.Risk),
 				"scheduled_at": j.CreatedAt.Format(time.RFC3339),
 			})
 		}
@@ -310,6 +313,13 @@ func riskSlBps(r *BuildRiskConfig) float64 {
 		return 0
 	}
 	return r.SlBps
+}
+
+func riskTpBps(r *BuildRiskConfig) float64 {
+	if r == nil {
+		return 0
+	}
+	return r.TpBps
 }
 func (h *Handlers) CustomSell(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

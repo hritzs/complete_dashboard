@@ -297,12 +297,13 @@
       symbol: 'NIFTY',
       size: 1,
       entry_time: '',
-      exit_time: '',
+      exit_time: '15:37:00',
       hedge_div: 57,
       straddle_div: 4,
       roll_straddle_div: 0.2,
       hedge_frac: 1.0,
       sl_bps: 14,
+      tp_bps: 14,
       buy_buffer: 2,
       sell_buffer: 2,
       order_lots_per_call: 1,
@@ -1528,6 +1529,7 @@
         idv_divisor: cfg.idv_divisor,
         straddle_filter: cfg.straddle_filter,
         sl_bps: cfg.sl_bps,
+        tp_bps: cfg.tp_bps,
         buy_buffer: cfg.buy_buffer,
         sell_buffer: cfg.sell_buffer,
         hedge_div: cfg.hedge_div,
@@ -1555,7 +1557,7 @@
         if (data.success) {
           appendEventLog(
             "success",
-            `Automation build scheduled for ${data.entry_time}: ${data.symbol} ${data.expiry}, exit ${data.exit_time || "none"}, SL ${data.sl_bps || 0} bps. ${data.message}`
+            `Automation build scheduled for ${data.entry_time}: ${data.symbol} ${data.expiry}, exit ${data.exit_time || "none"}, SL ${data.sl_bps || 0} bps, TP ${data.tp_bps || 0} bps. ${data.message}`
           );
           if (Array.isArray(data.not_applied) && data.not_applied.length > 0) {
             appendEventLog(
@@ -2994,6 +2996,16 @@
                 />
               </div>
 
+              <div class="control-block">
+                <label class="control-label">TP (bps of spot)</label>
+                <input
+                  class="symbol-select"
+                  type="number"
+                  value={automationConfig().tp_bps}
+                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, tp_bps: Number(e.target.value) || 0 }))}
+                />
+              </div>
+
               <div class="section-title">Hedge &amp; Sizing</div>
 
               <div class="control-block">
@@ -3181,7 +3193,7 @@
                     <span class="log-ts">{new Date(job.run_at).toLocaleTimeString()}</span>
                     <span class="log-lvl">{job.symbol} {job.expiry} x{job.lots}</span>
                     <span class="log-msg">
-                      {job.broker_name} {job.account_id} &middot; exit {job.exit_time || 'none'} &middot; SL {job.sl_bps || 0} bps
+                      {job.broker_name} {job.account_id} &middot; exit {job.exit_time || 'none'} &middot; SL {job.sl_bps || 0} bps &middot; TP {job.tp_bps || 0} bps
                       {' '}
                       <button class="action-btn" onClick={() => cancelScheduledBuild(job.job_id)}>
                         Cancel

@@ -1415,3 +1415,29 @@ pure code/log-tooling session, no broker calls made.
       symptom (snapshot line missing). Existing snapshot-line tests updated
       for the `tick=` field name. Full build/vet/test -race clean.
 - [ ] **Not yet deployed.** Needs `execution-gateway` restarted to take effect.
+
+## Automation defaults: SL/TP 14bps of spot, exit 15:37:00; TP now settable at build time (2026-09-22)
+- [x] **TP bps could not be set at build time at all.** The Automation
+      form's request (`ConfigBuild`/`BuildRiskConfig`) had `SlBps` and
+      `ExitTime` but no TP field -- TP could only be armed after the
+      fact via the separate Modify Config endpoint. Added `TpBps` through
+      the same path as `SlBps`: `ConfigBuildRequest.TpBps` (`tp_bps` JSON
+      field) -> `BuildRiskConfig.TpBps` -> `applyBuildRiskConfig` ->
+      `MonitorConfig.TPPnLBpsOfSpot`, validated (`>= 0`) before any order
+      is sent, same as SL. Also returned in the schedule response and the
+      scheduled-builds list (`riskTpBps`, mirroring `riskSlBps`).
+- [x] Automation tab now defaults to **SL 14 bps, TP 14 bps, exit
+      15:37:00** baked into the form's initial state (not only set by
+      the on-mount reset), plus a new TP input field next to the
+      existing SL one. Every new automated build will have all three
+      armed unless explicitly cleared.
+- [x] Confirmed live 2026-09-22 that the CE/PE interleaving fix
+      (`GenerateExplicitClips`) holds in production: a 20-lot build's
+      order log shows strict CE, PE, CE, PE... alternation across all 20
+      orders, and the square-off afterward alternated the same way.
+- [x] New/updated tests: `TestBuildRiskConfig_Validate` and
+      `TestApplyBuildRiskConfig` extended to cover `TpBps` (negative
+      rejected; applied into `TPPnLBpsOfSpot`). Mutation-checked.
+- [ ] Not yet deployed; needs execution-gateway restarted, and the UI
+      dev server already serves the new source live (no rebuild needed
+      there beyond a browser refresh).
