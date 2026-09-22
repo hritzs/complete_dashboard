@@ -383,9 +383,20 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 			HedgeDiv:            57.0, // Default: Spot * IV / 57
 		},
 	}
+	// A caller of this endpoint directly (the Testing tab's manual deploy,
+	// which never goes through ConfigBuild) can still arm SL/TP/exit time
+	// via the raw fields below, since req.Risk itself is json:"-" and can
+	// only be set by ConfigBuild's own internal call.
+	risk := req.Risk
+	if risk == nil && (strings.TrimSpace(req.ExitTime) != "" || req.SlBps > 0 || req.TpBps > 0) {
+		risk = &BuildRiskConfig{ExitTime: req.ExitTime, SlBps: req.SlBps, TpBps: req.TpBps}
+	}
 	// Abort before anything is persisted or sent if the requested risk config
 	// is invalid.
-	if err := applyBuildRiskConfig(&trade.Config, req.Risk, now); err != nil {
+	if err := risk.Validate(now); err != nil {
+		return nil, err
+	}
+	if err := applyBuildRiskConfig(&trade.Config, risk, now); err != nil {
 		return nil, err
 	}
 	s.Store.SaveTrade(trade)

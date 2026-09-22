@@ -64,6 +64,64 @@ func TestExecuteFinalBuild_AppliesRiskConfigAndDefaultProduct(t *testing.T) {
 	_ = time.Now
 }
 
+// The Testing tab's manual deploy calls DeployStraddle directly, never
+// through ConfigBuild, so it cannot set the internal (json:"-") Risk field.
+// It must still be able to arm SL/TP/exit time via plain JSON fields on
+// DeployStraddleRequest itself.
+func TestDeployStraddle_AppliesRiskFromRawFieldsWhenRiskIsNil(t *testing.T) {
+	store := NewMemoryStore()
+	svc := &Service{
+		Store:         store,
+		BrokerFactory: &fakeBrokerFactory{executor: &fakeSLExecutor{}},
+		Snapshot:      fakeChainSnapshot{},
+	}
+
+	resp, err := svc.DeployStraddle(context.Background(), DeployStraddleRequest{
+		BrokerName: "GREEKSOFT", AccountID: "147", Symbol: "NIFTY", Lots: 1,
+		ExitTime: "15:37:00", SlBps: 14, TpBps: 14,
+	})
+	if err != nil {
+		t.Fatalf("DeployStraddle: %v", err)
+	}
+	t.Cleanup(func() {
+		if rt, ok := store.LoadRuntime(resp.TradeUID); ok {
+			close(rt.StopCh)
+			<-rt.DoneCh
+		}
+	})
+
+	tr, ok := store.LoadTrade(resp.TradeUID)
+	if !ok {
+		t.Fatal("built trade not stored")
+	}
+	c := tr.Config
+	if c.SLPnLBpsOfSpot != 14 || c.TPPnLBpsOfSpot != 14 {
+		t.Fatalf("SL/TP not applied from raw fields: %+v", c)
+	}
+	if c.SquareOffHardTime.IsZero() || c.SquareOffHardTime.Hour() != 15 || c.SquareOffHardTime.Minute() != 37 {
+		t.Fatalf("exit time not applied from raw fields: %v", c.SquareOffHardTime)
+	}
+}
+
+func TestDeployStraddle_BadRawExitTimePlacesNothing(t *testing.T) {
+	exec := &fakeSLExecutor{}
+	svc := &Service{
+		Store:         NewMemoryStore(),
+		BrokerFactory: &fakeBrokerFactory{executor: exec},
+		Snapshot:      fakeChainSnapshot{},
+	}
+	_, err := svc.DeployStraddle(context.Background(), DeployStraddleRequest{
+		BrokerName: "GREEKSOFT", AccountID: "147", Symbol: "NIFTY", Lots: 1,
+		ExitTime: "junk",
+	})
+	if err == nil {
+		t.Fatal("want an error for an unparseable raw exit time")
+	}
+	if len(exec.submitted) != 0 {
+		t.Fatalf("placed %d orders despite invalid raw risk fields", len(exec.submitted))
+	}
+}
+
 func TestExecuteFinalBuild_BadExitTimePlacesNothing(t *testing.T) {
 	exec := &fakeSLExecutor{}
 	svc := &Service{

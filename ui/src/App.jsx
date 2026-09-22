@@ -325,6 +325,11 @@
     const [manualHedgePreview, setManualHedgePreview] = createSignal(null);
     const [manualHedgeExecutions, setManualHedgeExecutions] = createSignal([]);
     const [terminalSellQty, setTerminalSellQty] = createSignal(1);
+    const [manualRiskConfig, setManualRiskConfig] = createSignal({
+      exit_time: '15:37:00',
+      sl_bps: 14,
+      tp_bps: 14
+    });
     const [manualHedgeBusy, setManualHedgeBusy] = createSignal(false);
     const [scheduledBuilds, setScheduledBuilds] = createSignal([]);
     // Deliberately NOT initialised from selectedExpiry(): an automated build must
@@ -685,7 +690,13 @@
         product_type: prefs.product_type || 'NRML',
         target_expiry: selectedExpiry() || optionChain().expiry,
         order_lots_per_call: toNum(prefs.order_lots_per_call) || 1,
-        exchange_segment: prefs.exchange_segment || 'NSEFO'
+        exchange_segment: prefs.exchange_segment || 'NSEFO',
+        // Same defaults as the Automation tab (SL/TP 14 bps of spot, exit
+        // 15:37:00) so a manual build is armed the same way an automated
+        // one is, unless explicitly changed here.
+        exit_time: manualRiskConfig().exit_time,
+        sl_bps: manualRiskConfig().sl_bps,
+        tp_bps: manualRiskConfig().tp_bps
       };
     };
 
@@ -1504,6 +1515,12 @@
         buy_buffer: defaultBuffer,
         sell_buffer: defaultBuffer
       }));
+
+      // Same past-market-close push-forward as the Automation defaults
+      // above: a manual build can happen at any time of day, not just
+      // before 15:37, and the default exit time must never be in the past
+      // (DeployStraddle rejects an exit_time that isn't after entry_time).
+      setManualRiskConfig((prev) => ({ ...prev, exit_time: exitTimeStr }));
     };
 
     const handleAutomationBuild = async () => {
@@ -1831,13 +1848,49 @@
                   <input
                     class="symbol-select"
                     type="number"
-                    min="1"
-                    value={terminalSellQty()}
-                    onInput={(e) => setTerminalSellQty(Number(e.target.value) || 1)}
+                    min={toNum(optionChain().lot_size) || 65}
+                    step={toNum(optionChain().lot_size) || 65}
+                    value={terminalSellQty() * (toNum(optionChain().lot_size) || 65)}
+                    onInput={(e) => {
+                      const lotSize = toNum(optionChain().lot_size) || 65;
+                      const rawQty = Number(e.target.value) || lotSize;
+                      const lots = Math.max(1, Math.round(rawQty / lotSize));
+                      setTerminalSellQty(lots);
+                    }}
                   />
                 </div>
                 <div class="metric-sub" style={{ 'margin-top': '10px' }}>
-                  Qty used for ATM and custom sell
+                  Total quantity, rounded to the nearest {toNum(optionChain().lot_size) || 65} (lot size) &middot; {terminalSellQty()} lot{terminalSellQty() === 1 ? '' : 's'}
+                </div>
+              </div>
+
+              <div class="metric-card">
+                <div class="metric-label">Risk &amp; Exit (manual build)</div>
+                <div style={{ display: 'flex', gap: '8px', 'margin-top': '10px' }}>
+                  <input
+                    class="symbol-select"
+                    type="text"
+                    title="Exit time (HH:MM:SS)"
+                    value={manualRiskConfig().exit_time}
+                    onInput={(e) => setManualRiskConfig((prev) => ({ ...prev, exit_time: e.target.value }))}
+                  />
+                  <input
+                    class="symbol-select"
+                    type="number"
+                    title="SL (bps of spot)"
+                    value={manualRiskConfig().sl_bps}
+                    onInput={(e) => setManualRiskConfig((prev) => ({ ...prev, sl_bps: Number(e.target.value) || 0 }))}
+                  />
+                  <input
+                    class="symbol-select"
+                    type="number"
+                    title="TP (bps of spot)"
+                    value={manualRiskConfig().tp_bps}
+                    onInput={(e) => setManualRiskConfig((prev) => ({ ...prev, tp_bps: Number(e.target.value) || 0 }))}
+                  />
+                </div>
+                <div class="metric-sub" style={{ 'margin-top': '10px' }}>
+                  Exit time / SL bps / TP bps &middot; applied to SELL STRADDLE and custom sell below
                 </div>
               </div>
 
@@ -2952,13 +3005,23 @@
               </div>
 
               <div class="control-block">
-                <label class="control-label">How many lots do you want to sell?</label>
+                <label class="control-label">Total quantity to sell</label>
                 <input
                   class="symbol-select"
                   type="number"
-                  value={automationConfig().size}
-                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, size: Number(e.target.value) || 1 }))}
+                  min={toNum(optionChain().lot_size) || 65}
+                  step={toNum(optionChain().lot_size) || 65}
+                  value={automationConfig().size * (toNum(optionChain().lot_size) || 65)}
+                  onInput={(e) => {
+                    const lotSize = toNum(optionChain().lot_size) || 65;
+                    const rawQty = Number(e.target.value) || lotSize;
+                    const lots = Math.max(1, Math.round(rawQty / lotSize));
+                    setAutomationConfig((prev) => ({ ...prev, size: lots }));
+                  }}
                 />
+                <div class="field-note">
+                  Rounded to the nearest {toNum(optionChain().lot_size) || 65} (lot size) &middot; {automationConfig().size} lot{automationConfig().size === 1 ? '' : 's'}
+                </div>
               </div>
 
               <div class="control-block">

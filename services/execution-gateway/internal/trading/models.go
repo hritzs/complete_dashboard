@@ -53,8 +53,16 @@ type DeployStraddleRequest struct {
 	PEStrikePrice    int    `json:"pe_strike_price,omitempty"`
 	OrderLotsPerCall int    `json:"order_lots_per_call,omitempty"`
 
+	// Direct risk fields for callers of this endpoint (the Testing tab's
+	// manual deploy) that don't go through ConfigBuild/Risk below -- applied
+	// the same way, via applyBuildRiskConfig, before any order is sent.
+	ExitTime string  `json:"exit_time,omitempty"`
+	SlBps    float64 `json:"sl_bps,omitempty"`
+	TpBps    float64 `json:"tp_bps,omitempty"`
+
 	// Risk is applied to the new trade's monitor config before any order is
-	// sent. Set only by the automated/config build path.
+	// sent. Set only by the automated/config build path; takes precedence
+	// over the raw fields above if both are somehow present.
 	Risk *BuildRiskConfig `json:"-"`
 }
 

@@ -1441,3 +1441,34 @@ pure code/log-tooling session, no broker calls made.
 - [ ] Not yet deployed; needs execution-gateway restarted, and the UI
       dev server already serves the new source live (no rebuild needed
       there beyond a browser refresh).
+
+## Manual build risk defaults; lot-size-based total-quantity inputs (2026-09-22)
+- [x] **The Testing tab's manual deploy had no way to arm SL/TP/exit time
+      at all.** `DeployStraddleRequest.Risk` was `json:"-"`, settable only
+      by ConfigBuild's own internal construction -- a direct POST to
+      `/api/trade/straddle` (what "SELL STRADDLE" and custom sell actually
+      call) could never carry it. Added plain JSON fields
+      (`exit_time`/`sl_bps`/`tp_bps`) directly on `DeployStraddleRequest`;
+      `DeployStraddle` now builds a `BuildRiskConfig` from them when
+      `req.Risk` is nil, validated the same way (rejects before any order
+      is sent). Testing tab now defaults to the same SL 14 bps / TP 14 bps
+      / exit 15:37:00 as the Automation tab, shown in an editable "Risk &
+      Exit (manual build)" panel, applied to both SELL STRADDLE and custom
+      sell.
+- [x] Guarded against the obvious failure mode: unlike a scheduled
+      Automation build, a manual build can happen at any time of day, so a
+      bare "15:37:00" default would make every manual build after 15:37
+      fail validation (exit not after entry). Reused the existing
+      past-market-close push-forward logic from `setUiDefaults` for the
+      manual risk config's exit time too.
+- [x] **Lot-count inputs changed to total-quantity inputs** in both the
+      Testing tab (Sell Quantity, used by SELL STRADDLE / custom sell) and
+      the Automation tab (size). Typing a raw quantity (e.g. 10000) rounds
+      to the nearest multiple of the symbol's actual lot size in the UI
+      before converting to the lot count the backend still receives
+      unchanged (e.g. NIFTY lot size 65: 10000 -> 154 lots -> 10010 shown).
+      Backend request shape (`lots`) is untouched by design.
+- [x] New tests `TestDeployStraddle_AppliesRiskFromRawFieldsWhenRiskIsNil`
+      and `TestDeployStraddle_BadRawExitTimePlacesNothing`; mutation-checked.
+      Full build/vet/test -race clean, UI build clean.
+- [ ] Not yet deployed; needs execution-gateway restarted and a UI refresh.
