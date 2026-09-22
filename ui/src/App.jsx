@@ -56,6 +56,10 @@
     const [manualLotsPerOrder, setManualLotsPerOrder] = createSignal(2);
     const [manualOrderType, setManualOrderType] = createSignal('1');
     const [manualProduct, setManualProduct] = createSignal('1');
+    const [modifyOrderId, setModifyOrderId] = createSignal('');
+    const [modifyOrderPrice, setModifyOrderPrice] = createSignal('');
+    const [modifyOrderBusy, setModifyOrderBusy] = createSignal(false);
+    const [modifyOrderStatus, setModifyOrderStatus] = createSignal('');
 
 
 
@@ -108,6 +112,12 @@
     setDirectOrderResult(null);
 
     try {
+      // Field names/types must match ManualOrderRequest exactly (Go's json
+      // decoder silently drops anything it doesn't recognize instead of
+      // erroring) -- this previously sent short_token/side='2'/ordertype
+      // etc., none of which matched the backend's gtoken/side/ordertype
+      // fields, so token in particular always decoded to empty regardless
+      // of what was shown in the confirmation dialog above.
       const result = await safeFetchJson('/api/manual/order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -116,39 +126,82 @@
           broker_name: executionPrefs().broker_name || 'greeksoft',
           account_id: executionPrefs().account_id || '147',
           exchange_segment: executionPrefs().exchange_segment || 'NSEFO',
+          product_type: manualProduct() === '0' ? 'MIS' : 'NRML',
           symbol,
-          expiry,
-          strike,
-          option_type: leg,
-          short_token: String(shortToken),
-          side: '2',
-          validity: '0',
-          price: ltp.toFixed(2),
-          exchange: 'NSE',
-          ordertype: manualOrderType(),
-          product: manualProduct(),
-          total_lots: String(totalLots),
-          lots_per_order: String(lotsPerOrder),
-          exchange_lot_size: String(exchangeLotSize),
-          lot: String(lotsPerOrder),
-          qty: String(quantity),
-          tag: `UI_MANUAL_${symbol}_${expiry.replace(/[^A-Z0-9]/gi, '')}_${leg}_${strike}_${Date.now()}`
+          token: shortToken,
+          side: 'SELL',
+          order_type: manualOrderType() === '2' ? 'MARKET' : 'LIMIT',
+          price: Number(ltp.toFixed(2)),
+          total_lots: totalLots,
+          lots_per_order: lotsPerOrder,
+          lot_size: exchangeLotSize
         })
       });
 
       setDirectOrderResult(result);
-      setDirectOrderStatus(
-        `Accepted: ${symbol} ${expiry} ${leg} ${strike} | total lots=${totalLots} | qty=${quantity} | broker clips=${orderCount}.`
-      );
-      appendEventLog(
-        'info',
-        `Manual sell accepted: ${symbol} ${expiry} ${leg} ${strike}, total lots=${totalLots}, qty=${quantity}`
-      );
+      const legs = Array.isArray(result.legs) ? result.legs : [];
+      const filled = legs.filter((l) => l.verified_qty > 0).length;
+      const failed = legs.filter((l) => l.error).length;
+      if (result.success) {
+        setDirectOrderStatus(
+          `Placed: ${symbol} ${expiry} ${leg} ${strike} | ${legs.length} order(s), ${filled} verified filled | total lots=${totalLots} qty=${quantity}.`
+        );
+        appendEventLog('success', `Manual order placed: ${symbol} ${expiry} ${leg} ${strike}, ${legs.length} order(s), ${filled} filled`);
+      } else {
+        setDirectOrderStatus(`Failed: ${symbol} ${expiry} ${leg} ${strike} | ${failed}/${legs.length} order(s) failed — see details below.`);
+        appendEventLog('error', `Manual order partially/fully failed: ${symbol} ${expiry} ${leg} ${strike}`);
+      }
     } catch (error) {
       setDirectOrderStatus(`Failed: ${error.message}`);
       appendEventLog('error', `Manual sell failed: ${error.message}`);
     } finally {
       setDirectOrderBusy(false);
+    }
+  }
+
+  async function handleModifyOrder() {
+    const brokerOrderId = modifyOrderId().trim();
+    const price = toNum(modifyOrderPrice());
+    const oc = optionChain();
+    const exchangeLotSize = toNum(oc.lot_size) || 65;
+    const quantity = Math.max(1, Math.floor(toNum(manualTotalLots()))) * exchangeLotSize;
+
+    if (!brokerOrderId) {
+      setModifyOrderStatus('Failed: enter the broker order id to modify (from a previous Direct manual order result).');
+      return;
+    }
+    if (!price || price <= 0) {
+      setModifyOrderStatus('Failed: enter a new price.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `MODIFY LIVE ORDER\n\norder ${brokerOrderId}\nnew price: ${price}\nquantity: ${quantity}\n\nContinue?`
+    );
+    if (!confirmed) return;
+
+    setModifyOrderBusy(true);
+    setModifyOrderStatus(`Modifying order ${brokerOrderId} to price ${price}...`);
+    try {
+      const result = await safeFetchJson('/api/manual/order/modify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          broker_name: executionPrefs().broker_name || 'greeksoft',
+          account_id: executionPrefs().account_id || '147',
+          broker_order_id: brokerOrderId,
+          price,
+          quantity,
+          lot_size: exchangeLotSize
+        })
+      });
+      setModifyOrderStatus(`Modified: order ${brokerOrderId} re-priced to ${result.price ?? price}.`);
+      appendEventLog('success', `Order ${brokerOrderId} modified to price ${price}`);
+    } catch (error) {
+      setModifyOrderStatus(`Failed: ${error.message}`);
+      appendEventLog('error', `Modify order failed for ${brokerOrderId}: ${error.message}`);
+    } finally {
+      setModifyOrderBusy(false);
     }
   }
 
@@ -3359,6 +3412,69 @@
               </button>
 
             </div>
+
+            <div class="panel-header" style={{ 'margin-top': '18px' }}>
+              <div class="panel-title">Modify order</div>
+              <div class="panel-subtitle">Re-price a resting order this account already placed (e.g. one from Direct manual order above)</div>
+            </div>
+            <div
+              style={{
+                display: 'grid',
+                'grid-template-columns': 'repeat(3, minmax(160px, 1fr)) auto',
+                gap: '10px',
+                'align-items': 'end'
+              }}
+            >
+              <label style={{ color: '#aab8cf', 'font-size': '12px', 'font-weight': '600' }}>
+                Broker order id
+                <input
+                  type="text"
+                  placeholder="e.g. 120000037"
+                  value={modifyOrderId()}
+                  onInput={(e) => setModifyOrderId(e.currentTarget.value)}
+                  style={{
+                    display: 'block', width: '100%', padding: '8px', 'margin-top': '6px',
+                    color: '#e5eefc', background: '#111b2d', border: '1px solid #344766', 'border-radius': '4px'
+                  }}
+                />
+              </label>
+              <label style={{ color: '#aab8cf', 'font-size': '12px', 'font-weight': '600' }}>
+                New price
+                <input
+                  type="number"
+                  step="0.05"
+                  value={modifyOrderPrice()}
+                  onInput={(e) => setModifyOrderPrice(e.currentTarget.value)}
+                  style={{
+                    display: 'block', width: '100%', padding: '8px', 'margin-top': '6px',
+                    color: '#e5eefc', background: '#111b2d', border: '1px solid #344766', 'border-radius': '4px'
+                  }}
+                />
+              </label>
+              <div style={{ color: '#8fa5c7', 'font-size': '12px', padding: '8px' }}>
+                Quantity: {Math.max(1, Math.floor(toNum(manualTotalLots()))) * (toNum(optionChain().lot_size) || 65)} (from "Total lots to sell" above)
+              </div>
+              <button
+                class="action-btn"
+                onClick={handleModifyOrder}
+                disabled={modifyOrderBusy()}
+                style={{ background: '#f3b51b', color: '#131313', padding: '9px 14px' }}
+              >
+                {modifyOrderBusy() ? 'MODIFYING...' : 'MODIFY ORDER'}
+              </button>
+            </div>
+            <Show when={modifyOrderStatus()}>
+              <div
+                class="empty-state"
+                style={{
+                  'margin-top': '10px',
+                  color: modifyOrderStatus().startsWith('Failed:') ? '#ff8080' : '#a7f3d0',
+                  'text-align': 'left'
+                }}
+              >
+                {modifyOrderStatus()}
+              </div>
+            </Show>
 
             <Show when={manualHedgeError()}>
               <div class="empty-state" style={{ 'margin-top': '12px', color: '#ff8080' }}>

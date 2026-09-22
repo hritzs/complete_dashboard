@@ -326,7 +326,8 @@ func startHTTPServer(cfg *Config, handlers *trading.Handlers) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/api/health", handlers.Health)
-	mux.HandleFunc("/api/manual/order", trading.ManualOrder)
+	mux.HandleFunc("/api/manual/order", handlers.ManualOrder)
+	mux.HandleFunc("/api/manual/order/modify", handlers.ManualModifyOrder)
 
 	mux.HandleFunc("/api/admin/reset-trading-data", handlers.ResetTradingData)
 	mux.HandleFunc("/api/trade/straddle", handlers.DeployStraddle)

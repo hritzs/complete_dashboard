@@ -1350,3 +1350,32 @@ pure code/log-tooling session, no broker calls made.
 - [ ] If NATS event publishing is ever actually needed, the real fix is standing up a NATS
       instance (or pointing `NATS_URL` at a real one) -- out of scope here, this only addressed
       the log noise.
+
+## Manual order submit + modify (2026-09-22)
+- [x] **"SELL LIVE ATM" was a no-op wearing a live-order confirmation dialog.** The UI's
+      Testing-tab button showed a "LIVE SELL ORDER... Continue?" confirmation and called
+      `/api/manual/order`, but that handler was a stub ("Wire ExecuteGreeksoftOrder() call here
+      to actually submit") that only logged and returned success -- no broker call, ever. Worse,
+      even a real implementation of the old handler couldn't have worked: the UI sent
+      `short_token`/`side:'2'`/`ordertype` while the backend's struct expected `gtoken`/`side`/
+      `ordertype` with different semantics -- a genuine field-name mismatch that would have
+      silently decoded to an empty token regardless.
+- [x] **Rebuilt properly, not patched.** `(h *Handlers) ManualOrder` (services/execution-gateway/
+      internal/trading/manual_order.go) builds real `OrderIntent`s and calls
+      `Executor.ExecuteOrderIntent` -- the same tested path DeployStraddle/SquareOff/
+      ManualHedgeLots use -- splitting into `lots_per_order`-sized chunks, verifying fills when
+      the executor supports it, and reporting per-order broker_order_id/status/verified fill.
+      Deliberately NOT tied to any StoredTrade's CEQty/PEQty (it's an ad-hoc order, nothing to
+      reconcile against; the reconciler's own Iris tracking still records the real fill). UI's
+      payload fixed to send matching field names/types; its status line now reflects
+      success/partial-failure per leg instead of always saying "Accepted".
+- [x] **Added Modify Order** (explicitly requested): `(h *Handlers) ManualModifyOrder` re-prices
+      a resting order via the `OrderModifier` interface built for the build-chase feature
+      (GreekSoft `SmallModifyOrderRequest`). New "Modify order" card in the Testing tab (broker
+      order id + new price, quantity taken from "Total lots to sell").
+- [x] 9 tests (chunking, validation, real-order-placement-with-verified-fill, chunking into
+      multiple orders, one-leg-failure still reports the others, rejects invalid requests without
+      ever calling the broker, modify success/validation/unsupported-broker); full suite +
+      race detector clean.
+- [ ] **Not live-tested.** Needs explicit approval before trying with a real broker order, same
+      as every other feature this session -- and the gateway needs restarting first regardless.
