@@ -66,7 +66,11 @@ BEGIN {
   probe = line
   gsub(/[A-Za-z_]*err(or)?=<nil>/, "", probe)
   isnoise = (line ~ /streaming_type=(HeartBeat|LicenseResponse|LoginResponse|Login)/)
-  iserr = (!isnoise && probe ~ /ERROR|FATAL|panic|[Ff]ailed|❌|⚠|WARN|mismatch|refused|giving up|HEDGE_FAILED|no matching order|error=/)
+  # NATS is not deployed in this environment; the reconciler already logs this
+  # as a graceful degradation ("continuing without event publishing"), not a
+  # real problem -- shown normally, just never colored/counted as an error.
+  isbenign = (line ~ /NATS connect failed, continuing without event publishing/)
+  iserr = (!isnoise && !isbenign && probe ~ /ERROR|FATAL|panic|[Ff]ailed|❌|⚠|WARN|mismatch|refused|giving up|HEDGE_FAILED|no matching order|error=/)
 
   iskey = (line ~ /\[RISK\]|\[BUILD-CHASE\]|_TRIGGER|HEDGE|Square-off|SQF reconciliation|BUILD (submitted|outcome|verification|submission)|\[GREEKSOFT ORDER\] (sending|submitted)|\[IRIS-WS\]|IRIS RX\] streaming_type=(Order|Trade)Response|DeployStraddle|Persisting SQF|PersistVerifiedFills done|login (successful|failed)|Greeksoft login|[Ll]istening|SYSTEM READY|\[MONITOR\]\[TRD|MINUTE-CHECK\]/)
 

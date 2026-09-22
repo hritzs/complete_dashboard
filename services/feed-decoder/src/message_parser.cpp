@@ -6,6 +6,10 @@
 #include <string>
 #include <algorithm>
 #include <cstring>
+#include <chrono>
+#include <unordered_map>
+#include <vector>
+#include <utility>
 
 namespace decoder {
 
@@ -410,9 +414,45 @@ void MessageParser::parse_bse(
         ContractInfo info = normalizer.get_contract(token);
 
         if (!info.is_valid) {
-            static int miss_count = 0;
-            if (++miss_count % 5000 == 0) {
-                std::cout << "[BSE] ❌ Unknown token: " << token << std::endl;
+            // These are not "a few tokens we haven't mapped yet" -- most
+            // (32767 = 0x7FFF, 2147418112 = 0x7FFF0000, values near
+            // UINT32_MAX) look like garbage from a misaligned/unhandled BSE
+            // sub-message type, at a high enough rate (600k+ per session)
+            // that even the old one-in-5000 throttle printed a noisy stream
+            // of essentially-random token values. This never affected
+            // correctness -- the tick is still safely dropped below -- only
+            // how loud the log was. Replaced with a periodic aggregate
+            // summary (bounded small-map memory: distinct tokens are
+            // capped) instead of one line per random instance.
+            static std::unordered_map<uint32_t, uint64_t> unknown_token_counts;
+            static uint64_t unknown_total = 0;
+            static auto last_summary = std::chrono::steady_clock::now();
+            constexpr size_t kMaxTrackedTokens = 64;
+
+            ++unknown_total;
+            if (unknown_token_counts.size() < kMaxTrackedTokens || unknown_token_counts.count(token)) {
+                ++unknown_token_counts[token];
+            }
+
+            auto now = std::chrono::steady_clock::now();
+            if (now - last_summary >= std::chrono::seconds(30) && unknown_total > 0) {
+                std::vector<std::pair<uint32_t, uint64_t>> top(
+                    unknown_token_counts.begin(), unknown_token_counts.end());
+                std::partial_sort(
+                    top.begin(), top.begin() + std::min<size_t>(5, top.size()), top.end(),
+                    [](const auto& a, const auto& b) { return a.second > b.second; });
+
+                std::cout << "[BSE] ⚠️ " << unknown_total
+                          << " unhandled/unmapped BSE ticks in the last 30s across "
+                          << unknown_token_counts.size() << " distinct token value(s), top:";
+                for (size_t i = 0; i < std::min<size_t>(5, top.size()); ++i) {
+                    std::cout << " " << top[i].first << "(x" << top[i].second << ")";
+                }
+                std::cout << std::endl;
+
+                unknown_token_counts.clear();
+                unknown_total = 0;
+                last_summary = now;
             }
             continue;
         }

@@ -1317,3 +1317,36 @@ pure code/log-tooling session, no broker calls made.
       like the sample above.
 - [ ] Still not implemented (unlike the Python reference): a ROLL check/mechanism does not exist
       in the Go system at all, so there is no "ROLL check" line to add.
+
+## Log-noise fixes (2026-09-22): FALLBACK BLOCKED, BSE unknown-token spam, NATS
+- [x] **FALLBACK BLOCKED fired on every successful deploy, not just real fallbacks.**
+      `DeployStraddle`'s own diagnostic log line called `GetFallbackLotSize(req.Symbol)` a
+      SECOND time purely to fill an unused `fallback=%d` field -- and that function logs a loud
+      warning by design whenever called for an index symbol, regardless of whether its result was
+      actually used. So the warning fired even when the chain had already correctly resolved
+      `lot_size=65` moments earlier. Removed the redundant call; the real fallback-path call
+      (`if lotSize == 0 { lotSize = GetFallbackLotSize(...) }`, and the two other genuine
+      call sites) is untouched. Test: `TestDeployStraddle_DoesNotLogFallbackWarningWhenChainResolvesLotSize`
+      (mutation-checked).
+- [x] **`[BSE] Unknown token` spam** (services/feed-decoder, C++): not a config gap -- most of the
+      logged token values (32767=0x7FFF, 2147418112=0x7FFF0000, values near UINT32_MAX) look like
+      garbage from a misaligned/unhandled BSE sub-message type, at a rate of 600k+ per session, so
+      even the old one-in-5000 throttle printed a noisy stream of near-random values. The tick was
+      always safely dropped either way -- this never affected correctness, only log volume.
+      Deliberately NOT touching the actual binary parsing (real risk to a live market-data feed
+      for a cosmetic fix); replaced the per-instance print with a periodic (30s) aggregate summary
+      (total misses, distinct token count, top 5 by frequency). Compiles clean, no warnings.
+- [x] **`NATS connect failed`**: NATS genuinely isn't installed/running in this environment (no
+      `nats-server`, nothing on :4222, no docker). The reconciler already degrades gracefully
+      ("continuing without event publishing") -- this was never a real problem, just misclassified
+      as an error by `watch_logs.sh`'s generic `[Ff]ailed` pattern. Excluded from error
+      classification only (still shows normally in default/all views, just not red / not under
+      `--errors`) -- unlike the Iris heartbeat/license `isnoise` exclusion, which hides those
+      entirely, this line is a one-time, informative startup notice worth keeping visible.
+- [ ] **Not yet deployed anywhere.** The Go fix needs execution-gateway restarted; the C++ fix
+      needs `./start_platform.sh` (rebuilds C++ in normal mode) or a manual `cmake --build`; the
+      watch_logs.sh fix takes effect on the next `scripts/watch_logs.sh` invocation (no restart
+      needed, it's not a running service).
+- [ ] If NATS event publishing is ever actually needed, the real fix is standing up a NATS
+      instance (or pointing `NATS_URL` at a real one) -- out of scope here, this only addressed
+      the log noise.

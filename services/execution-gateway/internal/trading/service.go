@@ -282,8 +282,8 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 		log.Printf("🚨 LOT SIZE MISMATCH | Symbol=%s resolved=%d expected=%d (req=%d chain=%d) — check /mnt/shared CSV freshness",
 			req.Symbol, lotSize, expected, req.LotSize, chain.LotSize)
 	}
-	log.Printf("📏 LOT SIZE RESOLVED | Symbol: %s | Expiry: %s | LotSize: %d | Source: req=%d, chain=%d, fallback=%d",
-		req.Symbol, chain.Expiry, lotSize, req.LotSize, chain.LotSize, GetFallbackLotSize(req.Symbol))
+	log.Printf("📏 LOT SIZE RESOLVED | Symbol: %s | Expiry: %s | LotSize: %d | Source: req=%d, chain=%d",
+		req.Symbol, chain.Expiry, lotSize, req.LotSize, chain.LotSize)
 	if req.Lots <= 0 {
 		return nil, fmt.Errorf("invalid lots: %d", req.Lots)
 	}

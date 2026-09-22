@@ -2,6 +2,7 @@ package trading
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -79,5 +80,36 @@ func TestExecuteFinalBuild_BadExitTimePlacesNothing(t *testing.T) {
 	}
 	if len(exec.submitted) != 0 {
 		t.Fatalf("placed %d orders despite invalid risk config", len(exec.submitted))
+	}
+}
+
+// GetFallbackLotSize logs a loud [FALLBACK BLOCKED] warning by design for
+// index symbols -- it is meant to fire only when the real lot size could not
+// be resolved and this path was genuinely taken. DeployStraddle's own
+// diagnostic log line used to call it a SECOND time purely to fill an unused
+// "fallback=%d" field, so the warning fired on every successful deploy even
+// though the chain had already resolved the real lot size moments earlier.
+func TestDeployStraddle_DoesNotLogFallbackWarningWhenChainResolvesLotSize(t *testing.T) {
+	store := NewMemoryStore()
+	svc := &Service{
+		Store:         store,
+		BrokerFactory: &fakeBrokerFactory{executor: &fakeSLExecutor{}},
+		Snapshot:      fakeChainSnapshot{}, // LotSize: 65, a real resolved value
+	}
+
+	out := captureLog(t, func() {
+		_, err := svc.DeployStraddle(context.Background(), DeployStraddleRequest{
+			BrokerName: "GREEKSOFT", AccountID: "147", Symbol: "NIFTY", Lots: 1,
+		})
+		if err != nil {
+			t.Fatalf("DeployStraddle: %v", err)
+		}
+	})
+
+	if strings.Contains(out, "FALLBACK BLOCKED") {
+		t.Fatalf("logged a false FALLBACK BLOCKED warning although the chain resolved a real lot size:\n%s", out)
+	}
+	if !strings.Contains(out, "LOT SIZE RESOLVED") || !strings.Contains(out, "LotSize: 65") {
+		t.Fatalf("expected a LOT SIZE RESOLVED line with LotSize: 65:\n%s", out)
 	}
 }
