@@ -53,39 +53,50 @@ require_index_master() {
     fi
 }
 
-# PERMANENT FIX: Use local files if they exist and are valid
-# Only try /mnt/shared if local files don't exist
-if [[ -s "$INDEX_TARGET" ]] && [[ -s "$BSE_TARGET" ]]; then
-    # Validate local files
-    if require_index_master "$INDEX_TARGET" 2>/dev/null && require_readable_csv "$BSE_TARGET" 2>/dev/null; then
-        # Check if already synced today
-        if [[ -f "$STAMP_FILE" ]] && [[ "$(cat "$STAMP_FILE")" == "$TODAY" ]]; then
-            echo "[TOKENS] already synchronized today: $TODAY (using local files)"
-            exit 0
-        fi
-        # Local files are valid, just update stamp
-        printf '%s\n' "$TODAY" > "$STAMP_FILE"
-        echo "[TOKENS] using existing local files on ${TODAY}"
-        stat -c '[TOKENS] %y %s bytes %n' "$INDEX_TARGET" "$BSE_TARGET"
-        exit 0
-    fi
+# A previous "PERMANENT FIX" here reused the local copy for good once it
+# existed and passed a loose validity check (has an Expiry column, has at
+# least one NIFTY row) -- that check stays true forever even as the file
+# rots, so it silently stopped re-syncing from /mnt/shared entirely: the
+# local IndexTokens.csv sat unchanged from 2026-08-28 while /mnt/shared's
+# copy moved on to 2026-09-18, missing three real, currently-listed NIFTY
+# weekly expiries (06/13/19-OCT-26) that were never in the local copy at
+# all -- confirmed live 2026-09-22 (the Terminal tab's expiry dropdown was
+# missing exactly those three). Compare against the source's freshness
+# every run instead of trusting a same-day stamp.
+LOCAL_VALID=0
+if [[ -s "$INDEX_TARGET" ]] && [[ -s "$BSE_TARGET" ]] &&
+   require_index_master "$INDEX_TARGET" 2>/dev/null && require_readable_csv "$BSE_TARGET" 2>/dev/null; then
+    LOCAL_VALID=1
 fi
-
-# Local files missing or invalid, try to sync from source
-echo "[TOKENS] attempting sync from ${SOURCE_DIR}..."
 
 # Check if source is accessible (with timeout)
 if ! timeout 5 test -f "$INDEX_SOURCE" 2>/dev/null; then
-    echo "[TOKENS] WARNING: ${SOURCE_DIR} not accessible, using existing local files"
-    if [[ -s "$INDEX_TARGET" ]] && [[ -s "$BSE_TARGET" ]]; then
+    if [[ "$LOCAL_VALID" == "1" ]]; then
+        echo "[TOKENS] WARNING: ${SOURCE_DIR} not accessible, using existing local files"
         printf '%s\n' "$TODAY" > "$STAMP_FILE"
         echo "[TOKENS] using existing local files (source unavailable)"
         exit 0
     else
-        echo "[TOKENS] ERROR: no local files and source unavailable" >&2
+        echo "[TOKENS] ERROR: no valid local files and source unavailable" >&2
         exit 1
     fi
 fi
+
+if [[ "$LOCAL_VALID" == "1" ]]; then
+    # Source is reachable: only skip the copy if it is not newer than what
+    # we already have. mtime, not a once-a-day stamp, decides freshness.
+    source_mtime="$(stat -c '%Y' "$INDEX_SOURCE" 2>/dev/null || echo 0)"
+    target_mtime="$(stat -c '%Y' "$INDEX_TARGET" 2>/dev/null || echo 0)"
+    if (( source_mtime <= target_mtime )); then
+        echo "[TOKENS] local files already at or ahead of ${SOURCE_DIR} (source mtime ${source_mtime} <= local ${target_mtime}); skipping copy"
+        printf '%s\n' "$TODAY" > "$STAMP_FILE"
+        stat -c '[TOKENS] %y %s bytes %n' "$INDEX_TARGET" "$BSE_TARGET"
+        exit 0
+    fi
+    echo "[TOKENS] ${SOURCE_DIR} is newer than the local copy; re-syncing"
+fi
+
+echo "[TOKENS] attempting sync from ${SOURCE_DIR}..."
 
 # Source is accessible, proceed with normal sync
 require_index_master "$INDEX_SOURCE"
