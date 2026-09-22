@@ -15,12 +15,15 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+	"github.com/nats-io/nats.go"
 	zmq "github.com/pebbe/zmq4"
 
 	gs "trading-platform/libs/broker-greeksoft"
 	xts "trading-platform/libs/broker-xts"
 	"trading-platform/libs/broker-xts/interactive"
+	"trading-platform/libs/contracts"
 	broker "trading-platform/libs/go-broker"
+	"trading-platform/libs/go-common/events"
 
 	greeksoftbroker "execution-gateway/internal/brokers/greeksoft"
 	"execution-gateway/internal/trading"
@@ -149,6 +152,40 @@ func main() {
 
 	service := trading.NewService(store, appConfig.XTSClientID)
 	service.Snapshot = &trading.SnapshotClient{BaseURL: appConfig.SnapshotServiceURL}
+
+	natsURL := strings.TrimSpace(os.Getenv("NATS_URL"))
+	if natsURL == "" {
+		natsURL = nats.DefaultURL
+	}
+	nc, natsErr := nats.Connect(
+		natsURL,
+		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
+			service.OrderEvents.SetHealthy(false)
+			log.Printf("[IRIS-NATS] disconnected: %v", err)
+		}),
+		nats.ReconnectHandler(func(conn *nats.Conn) {
+			service.OrderEvents.SetHealthy(true)
+			log.Printf("[IRIS-NATS] reconnected url=%s", conn.ConnectedUrl())
+		}),
+		nats.ClosedHandler(func(_ *nats.Conn) {
+			service.OrderEvents.SetHealthy(false)
+			log.Printf("[IRIS-NATS] connection closed")
+		}),
+	)
+	if natsErr != nil {
+		log.Printf("[IRIS-NATS] connect failed: %v", natsErr)
+	} else {
+		defer nc.Close()
+		_, subErr := events.Subscribe[contracts.OrderUpdate](nc, events.TopicOrderUpdates, func(update contracts.OrderUpdate) { service.OrderEvents.Publish(update) }, func(err error) { log.Printf("[IRIS-NATS] decode failed: %v", err) })
+		if subErr != nil {
+			log.Printf("[IRIS-NATS] subscribe failed: %v", subErr)
+		} else if err := nc.Flush(); err != nil {
+			log.Printf("[IRIS-NATS] flush failed: %v", err)
+		} else {
+			service.OrderEvents.SetHealthy(true)
+			log.Printf("[IRIS-NATS] subscribed subject=%s health=ready", events.TopicOrderUpdates)
+		}
+	}
 
 	// Resume only database-reconciled ACTIVE trades. A stale header without
 	// persisted CE/PE legs, fills, contracts, and filled orders must never

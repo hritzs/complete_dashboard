@@ -66,27 +66,17 @@ func (e *Executor) ExecuteOrderIntent(
 		}, nil
 	}
 
+	// Submission success means only that GreekSoft returned a non-empty
+	// broker order ID. Fill and rejection confirmation comes asynchronously
+	// from the reconciler-owned Iris websocket through orders.update.
+	//
+	// Do not poll GetOrderBook here: that delayed MarkOrderSubmitted and
+	// widened the race where Iris arrived before the broker order ID was
+	// persisted locally.
 	filledQty := int64(0)
 	averagePrice := float64(0)
-
-	if brokerOrderID != "" {
-		orderStatus, orderBookRaw, orderFilledQty, orderAveragePrice, err :=
-			e.waitOrderStatusFromOrderBook(
-				ctx,
-				brokerOrderID,
-				8,
-				250*time.Millisecond,
-			)
-		if err == nil && strings.TrimSpace(orderStatus) != "" {
-			status = normalizeGreeksoftOrderStatus(orderStatus)
-			eventReason = "GREEKSOFT_ORDERBOOK_CONFIRMED"
-			if strings.TrimSpace(orderBookRaw) != "" {
-				rawResponse = orderBookRaw
-			}
-			filledQty = orderFilledQty
-			averagePrice = orderAveragePrice
-		}
-	}
+	status = "SUBMITTED"
+	eventReason = "GREEKSOFT_ORDER_SENT_AWAITING_IRIS"
 
 	return &trading.ExecutionResult{
 		IntentID:      intent.IntentID,

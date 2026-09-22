@@ -36,6 +36,14 @@ func (t buildTiming) withDefaults() buildTiming {
 	return t
 }
 
+// buildCircuitBreakerRejectionThreshold is how many consecutive order
+// rejections (confirmed via the real-time order-event registry, or the
+// synchronous submit status when the registry has nothing) executeBuild
+// tolerates before it stops submitting further chunks. Found live
+// 2026-09-22: a 40-lot build kept submitting after its first margin (RMS)
+// rejection and placed 56 more, all rejected, before ever giving up.
+const buildCircuitBreakerRejectionThreshold = 2
+
 // chaseMaxDiscount bounds how far below the live price a chased SELL may be
 // re-priced (10%): a build that cannot fill within it is cancelled rather
 // than sold at any price.

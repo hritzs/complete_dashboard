@@ -18,6 +18,7 @@ type ExecutionResult struct {
 type Store interface {
 	SaveTrade(trade StoredTrade)
 	UpdateTrade(trade StoredTrade)
+	DeleteTrade(tradeUID string)
 	LoadTrade(tradeUID string) (StoredTrade, bool)
 	AllTrades() []StoredTrade
 

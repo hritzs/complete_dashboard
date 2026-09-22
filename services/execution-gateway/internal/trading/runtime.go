@@ -2,6 +2,7 @@ package trading
 
 import (
 	"log"
+	"math"
 	"time"
 )
 
@@ -114,4 +115,23 @@ func isTerminalTradeStatus(status string) bool {
 		return true
 	}
 	return false
+}
+
+func buildLegRatioSatisfied(requestedCE, requestedPE, verifiedCE, verifiedPE int64) bool {
+	if requestedCE <= 0 && requestedPE <= 0 {
+		return true
+	}
+	if verifiedCE <= 0 && verifiedPE <= 0 {
+		return true
+	}
+	if requestedCE <= 0 || requestedPE <= 0 {
+		return true
+	}
+	if verifiedCE == 0 || verifiedPE == 0 {
+		return false
+	}
+
+	requestedRatio := float64(requestedCE) / float64(requestedPE)
+	verifiedRatio := float64(verifiedCE) / float64(verifiedPE)
+	return math.Abs(verifiedRatio-requestedRatio) <= 0.01
 }

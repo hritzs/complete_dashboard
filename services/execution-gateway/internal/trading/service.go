@@ -58,6 +58,15 @@ func (s *MemoryStore) UpdateTrade(tr StoredTrade) {
 	s.trades[tr.TradeUID] = tr
 }
 
+func (s *MemoryStore) DeleteTrade(tradeUID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.trades, tradeUID)
+	delete(s.intents, tradeUID)
+	delete(s.snapshots, tradeUID)
+	delete(s.runtimes, tradeUID)
+}
+
 func (s *MemoryStore) AppendIntent(tradeUID string, intent OrderIntent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -111,6 +120,7 @@ type Service struct {
 	BrokerFactory   BrokerFactory
 	Snapshot        SnapshotProvider
 	LotSize         LotSizeProvider
+	OrderEvents     *OrderEventRegistry
 
 	// tradeLocks serializes exit-side actions (SquareOff, PartialSquareOff)
 	// per trade UID, in-process. Without this, two nearly-simultaneous
@@ -137,6 +147,7 @@ func NewService(store Store, clientID string) *Service {
 		BrokerFactory:   NewDefaultBrokerFactory(),
 		Snapshot:        NewSnapshotClient(),
 		LotSize:         NewLotSizeClient(),
+		OrderEvents:     NewOrderEventRegistry(),
 	}
 }
 
@@ -461,6 +472,14 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 	// later activation gating while preserving existing behavior.
 	buildOutcome, err := s.executeBuild(ctx, executor, trade, chunks)
 	if err != nil {
+		if strings.Contains(err.Error(), "build ratio mismatch") {
+			// executeBuild already persisted RECONCILIATION_REQUIRED with
+			// the real verified quantities -- leave it there, visible, for
+			// a human to square off, instead of overwriting it with the
+			// generic FAILED status below (which would still be truthful
+			// but loses the more specific "needs reconciliation" signal).
+			return nil, err
+		}
 		trade.Status = "FAILED"
 		trade.LastUpdateTime = time.Now()
 		s.Store.UpdateTrade(trade)
@@ -555,6 +574,48 @@ func (s *Service) executeBuild(
 	submittedBrokerOrderIDs := make(map[string]struct{})
 	var builtOrders []chaseOrder
 
+	// The circuit breaker checks real-time confirmation for the PREVIOUS
+	// order (one submission behind), never the one just sent -- submission
+	// never pauses to wait on any single order's confirmation. By the time
+	// the next order is submitted, the previous one's real Iris/NATS event
+	// has almost always already arrived (live confirm latency is ~10-30ms;
+	// see logs/4_execution.log IRIS-WS lines), so this is a free, real-time
+	// check, not a blocking one.
+	var pendingConfirmOrderID string
+	consecutiveRejections := 0
+	circuitBreakerTripped := false
+
+	checkPreviousOrder := func() {
+		if pendingConfirmOrderID == "" {
+			return
+		}
+		upd, ok := s.OrderEvents.Latest(trade.TradeUID, pendingConfirmOrderID)
+		if !ok {
+			// Not confirmed yet -- genuinely unknown, don't guess either way.
+			return
+		}
+		status := strings.ToUpper(strings.TrimSpace(upd.Status))
+		if status == "REJECTED" || status == "CANCELLED" || status == "CANCELED" {
+			consecutiveRejections++
+			log.Printf(
+				"BUILD confirmed trade=%s broker_order_id=%s status=%s reason=%q consecutive_rejections=%d",
+				trade.TradeUID, pendingConfirmOrderID, status, upd.ReasonText, consecutiveRejections,
+			)
+		} else if status == "FILLED" || status == "ACKED" || status == "PARTIAL_FILL" || status == "PARTIALLY_FILLED" {
+			consecutiveRejections = 0
+		}
+		pendingConfirmOrderID = ""
+		if consecutiveRejections >= buildCircuitBreakerRejectionThreshold {
+			err := fmt.Errorf("build aborted after %d consecutive order rejections", consecutiveRejections)
+			if outcome.FirstError == nil {
+				outcome.FirstError = err
+			}
+			log.Printf("[BUILD-CIRCUIT-BREAKER] trade=%s %s", trade.TradeUID, err.Error())
+			circuitBreakerTripped = true
+		}
+	}
+
+chunkLoop:
 	for chunkIdx, chunk := range chunks {
 		ordersToProcess := append([]ExecOrder(nil), chunk...)
 		maxChunkRetries := 1
@@ -655,15 +716,30 @@ func (s *Service) executeBuild(
 					status,
 				)
 
+				// Check the PREVIOUS order's real terminal status (a
+				// non-blocking cache lookup) before submitting further --
+				// never this one, and never a wait. See checkPreviousOrder's
+				// comment above for why this is free, real-time information
+				// by the time we get here.
+				checkPreviousOrder()
+				pendingConfirmOrderID = brokerOrderID
+
 				if status != "FILLED" &&
 					status != "SUCCESS" &&
 					status != "ACKED" &&
 					status != "SUBMITTED" {
 					nextRetry = append(nextRetry, order)
 				}
+
+				if circuitBreakerTripped {
+					break
+				}
 			}
 
 			ordersToProcess = nextRetry
+			if circuitBreakerTripped {
+				break
+			}
 		}
 
 		if len(ordersToProcess) > 0 {
@@ -683,6 +759,10 @@ func (s *Service) executeBuild(
 				chunkIdx+1,
 				len(ordersToProcess),
 			)
+		}
+
+		if circuitBreakerTripped {
+			break chunkLoop
 		}
 	}
 
@@ -741,6 +821,28 @@ func (s *Service) executeBuild(
 				summary.UnfilledCE,
 				summary.UnfilledPE,
 			)
+			if (summary.VerifiedCE > 0 || summary.VerifiedPE > 0) && !buildLegRatioSatisfied(summary.RequestedCE, summary.RequestedPE, summary.VerifiedCE, summary.VerifiedPE) {
+				err := fmt.Errorf("build ratio mismatch: requested CE=%d PE=%d, verified CE=%d PE=%d; leaving trade visible as RECONCILIATION_REQUIRED for manual square-off", summary.RequestedCE, summary.RequestedPE, summary.VerifiedCE, summary.VerifiedPE)
+				outcome.FirstError = err
+				outcome.Summary.VerificationError = err
+				// A lopsided build (e.g. CE filled, PE rejected outright) is
+				// real money at risk: some quantity genuinely filled at the
+				// broker. This used to delete the trade record entirely,
+				// which erased the only evidence that position existed --
+				// found live 2026-09-22 (a 40-lot NIFTY 23350 CE build hit
+				// RMS margin rejection after ~24 lots, PE never filled, and
+				// the naked CE sat open and untracked for over two hours).
+				// Record what actually filled and keep the trade visible
+				// instead, the same way HasVerifiedExposure() already does
+				// a few lines below in DeployStraddle for a plain partial.
+				trade.CEQty = int(summary.VerifiedCE)
+				trade.PEQty = int(summary.VerifiedPE)
+				trade.Status = "RECONCILIATION_REQUIRED"
+				trade.LastUpdateTime = time.Now()
+				s.Store.UpdateTrade(trade)
+				log.Printf("[BUILD-SYMMETRY] %s", err.Error())
+				return outcome, err
+			}
 		}
 	}
 
@@ -961,64 +1063,6 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 		}
 	}
 
-	// Stop-loss check. This executes on every monitor cycle. Two
-	// independent SL mechanisms can each trigger it: SLPointsPerLot
-	// (fixed points-per-original-lot, see slThresholdForTrade) or
-	// SLPnLBpsOfSpot (loss as a fraction of live synthetic spot,
-	// compared against pnlPerStraddle -- e.g. 1bps on a 24,400 spot is a
-	// 2.44-point-per-straddle threshold). Checked as one unified
-	// condition, not two separate ifs, so a tick where both happen to be
-	// configured and breached can't call SquareOff twice.
-	slBreached, slThreshold, slSource := false, 0.0, ""
-	if trade.Config.SLPointsPerLot > 0 {
-		lots, threshold := slThresholdForTrade(trade)
-		if totalPNL <= threshold {
-			slBreached, slThreshold = true, threshold
-			slSource = fmt.Sprintf("points_per_lot lots=%.2f", lots)
-		}
-	}
-	if !slBreached && trade.Config.SLPnLBpsOfSpot > 0 {
-		threshold := -bpsOfSpotThreshold(spot, trade.Config.SLPnLBpsOfSpot)
-		if pnlPerStraddle <= threshold {
-			slBreached, slThreshold = true, threshold
-			slSource = fmt.Sprintf("bps_of_spot spot=%.2f bps=%.2f", spot, trade.Config.SLPnLBpsOfSpot)
-		}
-	}
-	if slBreached {
-		log.Printf(
-			"[RISK] SL_TRIGGER trade=%s source=%s pnl=%.2f pnl_per_straddle=%.2f threshold=%.2f",
-			tradeUID, slSource, totalPNL, pnlPerStraddle, slThreshold,
-		)
-		s.executeAutoExit(tradeUID, "SL", "CLOSED_SL")
-	}
-
-	// Take-profit check: symmetric to the SL bps mechanism above.
-	// TPPnLBpsOfSpot > 0 enables it; TPPnLTarget (rupee-based) remains
-	// alert-only in tickRuntime, unchanged.
-	if trade.Config.TPPnLBpsOfSpot > 0 {
-		tpThreshold := bpsOfSpotThreshold(spot, trade.Config.TPPnLBpsOfSpot)
-		if pnlPerStraddle >= tpThreshold {
-			log.Printf(
-				"[RISK] TP_TRIGGER trade=%s pnl_per_straddle=%.2f threshold=%.2f spot=%.2f bps=%.2f",
-				tradeUID, pnlPerStraddle, tpThreshold, spot, trade.Config.TPPnLBpsOfSpot,
-			)
-			s.executeAutoExit(tradeUID, "TP", "CLOSED_TP")
-		}
-	}
-
-	// Time-based hard exit: unlike tickRuntime's separate SquareOffTime
-	// check (still alert-only, [RISK][EXIT_TIME_ALERT] -- a different,
-	// pre-existing config field), SquareOffHardTime actually exits via a
-	// real, verified SquareOff once reached. Normal (non-aggressive)
-	// chunking -- a scheduled close isn't an emergency.
-	if !trade.Config.SquareOffHardTime.IsZero() && !time.Now().Before(trade.Config.SquareOffHardTime) {
-		log.Printf(
-			"[RISK] TIME_TRIGGER trade=%s now=%s target=%s",
-			tradeUID, time.Now().Format(time.RFC3339), trade.Config.SquareOffHardTime.Format(time.RFC3339),
-		)
-		s.executeAutoExit(tradeUID, "TIME", "CLOSED_TIME")
-	}
-
 	// Per-tick snapshot: unlike the once-a-minute HEDGE/SL/TP/TIME status
 	// lines below (throttled by rt.LastMinuteCheck to avoid duplicate hedge
 	// signals), this prints on every runMonitorCycle call -- i.e. every
@@ -1098,13 +1142,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 						hedgeReason += " error=" + hedgeErr.Error()
 					}
 
-					// The forced test is single-shot by design: mark it done after
-					// ANY attempt, even a failed one. A failure can be ambiguous (an
-					// order accepted but its fill not yet verifiable), and re-firing
-					// next minute could double the hedge.
 					if forceOneLotTest {
-						// Reload: ManualHedge just booked new CE/PE quantities, and
-						// writing back this cycle's stale copy would undo them.
 						if latest, ok := s.Store.LoadTrade(tradeUID); ok {
 							latest.Config.HedgeTestExecuted = true
 							latest.LastUpdateTime = time.Now()
@@ -1135,26 +1173,51 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 				hedgeReason,
 			)
 
-			// SL/TP/TIME are actually checked every tick, above -- but until
-			// now they only ever logged when they BREACHED, so an operator
-			// watching the logs had no way to tell "monitoring is running and
-			// everything is fine" from "monitoring silently stopped". These
-			// mirror the reference system's per-minute "SL Check OK" /
-			// "TP DISABLED" cadence. slBreached/slThreshold/slSource and the
-			// TP threshold are the exact values the trigger check above this
-			// block already used this same tick -- reused here, not
-			// recomputed, so the status line can never drift from what
-			// actually decided whether to exit.
-			//
-			// This was previously attempted in tickRuntime (runtime.go), but
-			// that function shared this exact rt.LastMinuteCheck gate with
-			// this one: whichever ran first each tick "claimed" the minute,
-			// so tickRuntime's own per-minute block (and its alert log
-			// lines, which checked different, effectively-dead legacy
-			// config fields -- SLPnLLimit/TPPnLTarget/SquareOffTime, never
-			// set by anything that builds a trade today) never actually ran.
-			// Consolidated here instead of fixed in place, since this is the
-			// one function that already has the real thresholds in scope.
+			// SL/TP/TIME are only enforced once per minute, together with the
+			// minute-end hedge evaluation, to match the live reference behavior.
+			slBreached, slThreshold, slSource := false, 0.0, ""
+			if trade.Config.SLPointsPerLot > 0 {
+				lots, threshold := slThresholdForTrade(trade)
+				if totalPNL <= threshold {
+					slBreached, slThreshold = true, threshold
+					slSource = fmt.Sprintf("points_per_lot lots=%.2f", lots)
+				}
+			}
+			if !slBreached && trade.Config.SLPnLBpsOfSpot > 0 {
+				threshold := -bpsOfSpotThreshold(spot, trade.Config.SLPnLBpsOfSpot)
+				if pnlPerStraddle <= threshold {
+					slBreached, slThreshold = true, threshold
+					slSource = fmt.Sprintf("bps_of_spot spot=%.2f bps=%.2f", spot, trade.Config.SLPnLBpsOfSpot)
+				}
+			}
+			if slBreached {
+				log.Printf(
+					"[RISK] SL_TRIGGER trade=%s source=%s pnl=%.2f pnl_per_straddle=%.2f threshold=%.2f",
+					tradeUID, slSource, totalPNL, pnlPerStraddle, slThreshold,
+				)
+				s.executeAutoExit(tradeUID, "SL", "CLOSED_SL")
+			}
+
+			tpThreshold := 0.0
+			if trade.Config.TPPnLBpsOfSpot > 0 {
+				tpThreshold = bpsOfSpotThreshold(spot, trade.Config.TPPnLBpsOfSpot)
+				if pnlPerStraddle >= tpThreshold {
+					log.Printf(
+						"[RISK] TP_TRIGGER trade=%s pnl_per_straddle=%.2f threshold=%.2f spot=%.2f bps=%.2f",
+						tradeUID, pnlPerStraddle, tpThreshold, spot, trade.Config.TPPnLBpsOfSpot,
+					)
+					s.executeAutoExit(tradeUID, "TP", "CLOSED_TP")
+				}
+			}
+
+			if !trade.Config.SquareOffHardTime.IsZero() && !time.Now().Before(trade.Config.SquareOffHardTime) {
+				log.Printf(
+					"[RISK] TIME_TRIGGER trade=%s now=%s target=%s",
+					tradeUID, time.Now().Format(time.RFC3339), trade.Config.SquareOffHardTime.Format(time.RFC3339),
+				)
+				s.executeAutoExit(tradeUID, "TIME", "CLOSED_TIME")
+			}
+
 			slStatus := "NOT_CONFIGURED"
 			if slBreached {
 				slStatus = "BREACHED"
@@ -1166,17 +1229,17 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 				tradeUID, currentMinute.Format("15:04"), slStatus, slSource, totalPNL, pnlPerStraddle, slThreshold,
 			)
 
-			tpStatus, tpThreshold := "DISABLED", 0.0
+			tpStatus, tpThresholdLog := "DISABLED", 0.0
 			if trade.Config.TPPnLBpsOfSpot > 0 {
-				tpThreshold = bpsOfSpotThreshold(spot, trade.Config.TPPnLBpsOfSpot)
+				tpThresholdLog = bpsOfSpotThreshold(spot, trade.Config.TPPnLBpsOfSpot)
 				tpStatus = "OK"
-				if pnlPerStraddle >= tpThreshold {
+				if pnlPerStraddle >= tpThresholdLog {
 					tpStatus = "BREACHED"
 				}
 			}
 			log.Printf(
 				"[MONITOR][%s] minute=%s check=TP status=%s pnl_per_straddle=%.2f threshold=%.2f bps=%.2f",
-				tradeUID, currentMinute.Format("15:04"), tpStatus, pnlPerStraddle, tpThreshold, trade.Config.TPPnLBpsOfSpot,
+				tradeUID, currentMinute.Format("15:04"), tpStatus, pnlPerStraddle, tpThresholdLog, trade.Config.TPPnLBpsOfSpot,
 			)
 
 			timeStatus, remaining := "NOT_CONFIGURED", time.Duration(0)

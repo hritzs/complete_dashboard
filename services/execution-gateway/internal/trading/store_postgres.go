@@ -32,6 +32,19 @@ func (s *PostgresBackedStore) UpdateTrade(tr StoredTrade) {
 	s.upsertTrade(tr)
 }
 
+func (s *PostgresBackedStore) DeleteTrade(tradeUID string) {
+	s.mem.DeleteTrade(tradeUID)
+	if s == nil || s.db == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, err := s.db.ExecContext(ctx, `DELETE FROM trades WHERE trade_uid = $1`, strings.TrimSpace(tradeUID))
+	if err != nil {
+		log.Printf("[SQL STORE] delete trade failed trade_uid=%s err=%v", tradeUID, err)
+	}
+}
+
 func (s *PostgresBackedStore) LoadTrade(tradeUID string) (StoredTrade, bool) {
 	if s == nil || s.db == nil {
 		return StoredTrade{}, false

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -173,12 +174,43 @@ func TestBuildChase_FillsTheLeftoverByRepricingTheSameOrder(t *testing.T) {
 	}
 }
 
+// deployExpectBuildRatioFailure asserts the ratio-mismatch path leaves the
+// trade record VISIBLE with the real verified quantities and a
+// RECONCILIATION_REQUIRED status, rather than deleting it. Deleting it used
+// to be the behavior here, but that erases the only record of a position
+// that may genuinely still be open at the broker (confirmed live
+// 2026-09-22: a lopsided build left a real naked CE position untracked for
+// over two hours because its trade row -- and with it any chance of the
+// platform ever surfacing it again -- would have been deleted).
+func deployExpectBuildRatioFailure(t *testing.T, exec Executor) (*Service, *MemoryStore, error) {
+	t.Helper()
+	store := NewMemoryStore()
+	svc := &Service{Store: persistingStore{store}, BrokerFactory: &fakeBrokerFactory{executor: exec}, Snapshot: &staleThenLiveChain{}, buildTiming: fastTiming}
+	_, err := svc.DeployStraddle(context.Background(), DeployStraddleRequest{BrokerName: "GREEKSOFT", AccountID: "147", Symbol: "NIFTY", Lots: 1})
+	if err == nil {
+		t.Fatal("DeployStraddle: expected build ratio mismatch error")
+	}
+	if !strings.Contains(err.Error(), "build ratio mismatch") {
+		t.Fatalf("DeployStraddle error = %v, want build ratio mismatch", err)
+	}
+	trades := store.AllTrades()
+	if len(trades) != 1 {
+		t.Fatalf("stored trades after mismatch = %d, want 1 (the real fill must stay visible)", len(trades))
+	}
+	if trades[0].Status != "RECONCILIATION_REQUIRED" {
+		t.Fatalf("status = %s, want RECONCILIATION_REQUIRED", trades[0].Status)
+	}
+	if trades[0].CEQty != 65 || trades[0].PEQty != 0 {
+		t.Fatalf("stored quantities %d/%d, want 65/0: record what filled, not what was intended", trades[0].CEQty, trades[0].PEQty)
+	}
+	return svc, store, err
+}
+
 func TestBuildChase_GivesUpAndCancelsWhatStillRests(t *testing.T) {
 	b := newChaseBroker(1000, 300) // no realistic price fills the PE
-	_, store, resp := deployWith(t, b)
-
-	if resp.Status != "PARTIAL" {
-		t.Fatalf("status = %s, want PARTIAL", resp.Status)
+	_, _, err := deployExpectBuildRatioFailure(t, b)
+	if err == nil {
+		t.Fatal("expected mismatch error")
 	}
 	if len(b.order) != 2 {
 		t.Fatalf("%d orders exist, want 2 (no new orders)", len(b.order))
@@ -189,19 +221,14 @@ func TestBuildChase_GivesUpAndCancelsWhatStillRests(t *testing.T) {
 	if len(b.cancels) != 1 || b.orders[b.cancels[0]].intent.LegType != "PE" {
 		t.Fatalf("cancels = %v, want exactly the unfilled PE order", b.cancels)
 	}
-	tr, _ := store.LoadTrade(resp.TradeUID)
-	if tr.CEQty != 65 || tr.PEQty != 0 {
-		t.Fatalf("stored quantities %d/%d, want 65/0: record what filled, not what was intended", tr.CEQty, tr.PEQty)
-	}
 }
 
 func TestBuildChase_ModifyFailureStopsAndCancels(t *testing.T) {
 	b := newChaseBroker(1000, 300)
 	b.modifyErr = errors.New("broker said no")
-	_, _, resp := deployWith(t, b)
-
-	if resp.Status != "PARTIAL" {
-		t.Fatalf("status = %s, want PARTIAL", resp.Status)
+	_, _, err := deployExpectBuildRatioFailure(t, b)
+	if err == nil {
+		t.Fatal("expected mismatch error")
 	}
 	if len(b.modifies) != 0 || len(b.order) != 2 {
 		t.Fatalf("modifies=%v orders=%d: a failed modify must not lead to any new order", b.modifies, len(b.order))
@@ -213,9 +240,12 @@ func TestBuildChase_ModifyFailureStopsAndCancels(t *testing.T) {
 
 func TestBuildChase_ExecutorWithoutModifyIsLeftAsBefore(t *testing.T) {
 	b := newChaseBroker(1000, 300)
-	_, _, resp := deployWith(t, noModifyBroker{b})
-	if resp.Status != "PARTIAL" || len(b.modifies) != 0 || len(b.cancels) != 0 || len(b.order) != 2 {
-		t.Fatalf("status=%s modifies=%v cancels=%v orders=%d", resp.Status, b.modifies, b.cancels, len(b.order))
+	_, _, err := deployExpectBuildRatioFailure(t, noModifyBroker{b})
+	if err == nil {
+		t.Fatal("expected mismatch error")
+	}
+	if len(b.modifies) != 0 || len(b.cancels) != 0 || len(b.order) != 2 {
+		t.Fatalf("modifies=%v cancels=%v orders=%d", b.modifies, b.cancels, len(b.order))
 	}
 }
 

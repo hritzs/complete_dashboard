@@ -43,6 +43,21 @@ func captureLog(t *testing.T, fn func()) string {
 	return buf.String()
 }
 
+type breachChainSnapshot struct{}
+
+func (breachChainSnapshot) GetOptionChain(ctx context.Context, symbol, expiry string) (*OptionChainSnapshot, error) {
+	return &OptionChainSnapshot{
+		Symbol: "NIFTY", ATM: 23400, Expiry: "22-SEP-26", LotSize: 65,
+		SyntheticSpot: 23405, SyntheticFuture: 23405,
+		Chain: []OptionChainRow{{
+			Strike: 23400, IsATM: true, CEToken: 111, PEToken: 222,
+			CELtp: 220, PELtp: 210, CEDelta: 0.52, PEDelta: -0.48,
+		}},
+	}, nil
+}
+
+func (breachChainSnapshot) PushSnapshot(ctx context.Context, snap TradeSnapshot) error { return nil }
+
 // Before this, SL/TP/TIME only ever logged when they BREACHED, so an
 // operator watching the logs had no way to tell "monitoring is running and
 // nothing is wrong" from "monitoring silently stopped" -- confirmed live
@@ -106,6 +121,44 @@ func TestRunMonitorCycle_LogsNotConfiguredWhenNothingArmed(t *testing.T) {
 		}
 	}
 	_ = context.Background()
+}
+
+// Real risk exits must only fire when the minute-end check is actually being
+// evaluated. A bad tick earlier in the same minute must never trigger a stop-
+// loss or time exit before the scheduled minute boundary checkpoint.
+func TestRunMonitorCycle_OnlyExitsAtMinuteBoundary(t *testing.T) {
+	store := NewMemoryStore()
+	tr := newTestSquareOffTrade("TRD_MONITOR_MINUTE_BOUNDARY")
+	tr.Lots = 1
+	tr.CELtp = 100
+	tr.PELtp = 90
+	tr.CEQty = 65
+	tr.PEQty = 65
+	tr.Config.SLPointsPerLot = 1
+	tr.Config.SLPnLBpsOfSpot = 0
+	tr.Config.TPPnLBpsOfSpot = 0
+	tr.Config.SquareOffHardTime = time.Now().Add(2 * time.Hour)
+	store.SaveTrade(tr)
+
+	rt := &RuntimeTrade{Trade: tr, StopCh: make(chan struct{}), DoneCh: make(chan struct{}), LastMinuteCheck: time.Now().Truncate(time.Minute)}
+	store.SaveRuntime(rt)
+
+	// Make the position breach SL immediately if the exit check runs in the
+	// current tick. This must stay ACTIVE until the real minute-end checkpoint is
+	// reached; otherwise the logic is still firing every second.
+	tr.CEQty = 65
+	tr.PEQty = 65
+	tr.CELtp = 100
+	tr.PELtp = 90
+	store.UpdateTrade(tr)
+
+	svc := &Service{Store: store, Snapshot: breachChainSnapshot{}, BrokerFactory: &fakeBrokerFactory{executor: &fakeSLExecutor{}}}
+
+	captureLog(t, func() { svc.runMonitorCycle(tr.TradeUID) })
+
+	if got, _ := store.LoadTrade(tr.TradeUID); got.Status != "ACTIVE" {
+		t.Fatalf("trade status = %s, want ACTIVE because same-minute risk exits are throttled", got.Status)
+	}
 }
 
 // The per-tick snapshot must fire on every runMonitorCycle call -- unlike

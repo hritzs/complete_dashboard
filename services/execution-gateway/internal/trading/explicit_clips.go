@@ -44,7 +44,16 @@ func GenerateExplicitClips(
 	tsNow := time.Now().UnixMicro()
 	orderCounter := 0
 
-	var allClips [][]ExecOrder
+	// Build each leg's clips separately first, then interleave them below --
+	// do NOT append straight into one shared slice leg by leg. Concatenating
+	// leg by leg (the old behavior) builds one leg to completion before the
+	// other leg's first order is even submitted, so a margin/RMS rejection
+	// partway through the first leg (confirmed live 2026-09-22: a 40-lot
+	// NIFTY build filled ~24 lots of CE, then every remaining order --
+	// including all of PE, which had not even started yet -- was rejected
+	// for insufficient margin) leaves a fully naked, unhedged position
+	// instead of a small, roughly balanced one.
+	perLegClips := make([][][]ExecOrder, 0, len(legs))
 
 	for _, leg := range legs {
 		if leg.Token <= 0 {
@@ -61,6 +70,7 @@ func GenerateExplicitClips(
 			continue
 		}
 
+		var legClips [][]ExecOrder
 		lotsRemaining := leg.TotalLots
 
 		for lotsRemaining > 0 {
@@ -73,7 +83,7 @@ func GenerateExplicitClips(
 
 			uid := fmt.Sprintf("%s_%d", tradeUIDPrefix, tsNow+int64(orderCounter))
 
-			clip := []ExecOrder{
+			legClips = append(legClips, []ExecOrder{
 				{
 					UID:             uid,
 					Token:           leg.Token,
@@ -84,14 +94,41 @@ func GenerateExplicitClips(
 					ExpectedPrice:   leg.ExpectedPrice,
 					ExchangeSegment: leg.ExchangeSegment,
 				},
-			}
-
-			allClips = append(allClips, clip)
+			})
 
 			orderCounter++
 			lotsRemaining -= lotsThisClip
 		}
+
+		perLegClips = append(perLegClips, legClips)
 	}
 
-	return allClips, nil
+	return interleaveClips(perLegClips), nil
+}
+
+// interleaveClips round-robins clips across legs (CE clip 1, PE clip 1, CE
+// clip 2, PE clip 2, ...) instead of exhausting one leg before starting the
+// next. A leg with more clips than the others contributes its remaining
+// clips at the end, once every other leg is exhausted.
+func interleaveClips(perLegClips [][][]ExecOrder) [][]ExecOrder {
+	total := 0
+	for _, clips := range perLegClips {
+		total += len(clips)
+	}
+	merged := make([][]ExecOrder, 0, total)
+
+	for round := 0; ; round++ {
+		addedThisRound := false
+		for _, clips := range perLegClips {
+			if round < len(clips) {
+				merged = append(merged, clips[round])
+				addedThisRound = true
+			}
+		}
+		if !addedThisRound {
+			break
+		}
+	}
+
+	return merged
 }
