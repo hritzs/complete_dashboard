@@ -2469,7 +2469,12 @@
                                               const raw = item.config?.square_off_hard_time ?? item.config?.squareOffHardTime ?? "";
                                               if (!raw) return "Not configured";
                                               const d = new Date(raw);
-                                              return Number.isNaN(d.getTime())
+                                              // An unset time.Time on the Go side serializes as the
+                                              // year-1 zero value, not an empty string -- guard on
+                                              // year, not just NaN, or a browser's timezone table can
+                                              // render it as a bogus wall-clock time (pre-1906 India
+                                              // used +5:53:28, not +5:30).
+                                              return Number.isNaN(d.getTime()) || d.getUTCFullYear() < 2000
                                                 ? "Not configured"
                                                 : d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
                                             })()}

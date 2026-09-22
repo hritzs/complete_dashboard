@@ -692,7 +692,10 @@ func (s *PostgresBackedStore) loadTradesFromDB() []StoredTrade {
 			COALESCE(account_id, ''),
 			symbol,
 			status,
-			created_at
+			COALESCE(config, '{}'::jsonb),
+			COALESCE(realized_pnl, 0),
+			created_at,
+			closed_at
 		FROM trades
 		ORDER BY created_at DESC
 		LIMIT 200
@@ -705,19 +708,50 @@ func (s *PostgresBackedStore) loadTradesFromDB() []StoredTrade {
 
 	out := []StoredTrade{}
 	for rows.Next() {
-		var tr StoredTrade
+		var (
+			dbTradeUID, dbUserID, dbBrokerName, dbAccountID, dbSymbol, dbStatus string
+			rawConfig                                                           []byte
+			dbRealizedPNL                                                       float64
+			dbCreatedAt                                                         time.Time
+			dbClosedAt                                                          sql.NullTime
+		)
 		if err := rows.Scan(
-			&tr.TradeUID,
-			&tr.UserID,
-			&tr.BrokerName,
-			&tr.AccountID,
-			&tr.Symbol,
-			&tr.Status,
-			&tr.CreatedAt,
+			&dbTradeUID, &dbUserID, &dbBrokerName, &dbAccountID, &dbSymbol, &dbStatus,
+			&rawConfig, &dbRealizedPNL, &dbCreatedAt, &dbClosedAt,
 		); err != nil {
 			log.Printf("[SQL STORE] scan trade failed err=%v", err)
 			continue
 		}
+
+		// The config JSONB column holds a full StoredTrade snapshot (including
+		// the nested MonitorConfig, lots, lot size, strike, tokens, ...) from
+		// the last upsertTrade -- this used to be scanned nowhere in this
+		// function, so every list view (the Portfolio table's expanded Monitor
+		// Status / Net Greeks cards) silently saw the Go zero value for all of
+		// it: SL/TP/hedge settings read as unset, lot size as "-", and an
+		// unset square-off time rendered as year-1 (which a browser's
+		// timezone formatter can turn into a bogus wall-clock time, e.g.
+		// pre-1906 India used a +5:53:28 offset, not +5:30).
+		var tr StoredTrade
+		if len(rawConfig) > 0 {
+			if err := json.Unmarshal(rawConfig, &tr); err != nil {
+				log.Printf("[SQL STORE] decode trade config failed trade_uid=%s err=%v", dbTradeUID, err)
+			}
+		}
+
+		// Relational columns are authoritative over the JSON snapshot.
+		tr.TradeUID = dbTradeUID
+		tr.UserID = dbUserID
+		tr.BrokerName = dbBrokerName
+		tr.AccountID = dbAccountID
+		tr.Symbol = dbSymbol
+		tr.Status = dbStatus
+		tr.RealizedPnL = dbRealizedPNL
+		tr.CreatedAt = dbCreatedAt
+		if dbClosedAt.Valid {
+			tr.ClosedAt = dbClosedAt.Time
+		}
+
 		out = append(out, tr)
 	}
 
