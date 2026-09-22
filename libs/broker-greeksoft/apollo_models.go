@@ -2,6 +2,7 @@ package greeksoft
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 )
 
@@ -47,6 +48,16 @@ type ApolloFrame struct {
 	StreamingType string
 	ServiceName   string
 	Raw           []byte
+	// BCastTime is the exchange-side broadcast Unix epoch (seconds) this
+	// frame carries, when present -- confirmed live 2026-09-22 via
+	// cmd/apolloprobe: response.BCastTime is a bare epoch-seconds string
+	// (e.g. "1790070820"), distinct from the per-tick "ltt"/"lut" fields
+	// inside marketPicture's data object, which are "DD-MM-YYYY HH:MM:SS"
+	// strings (ltt = last TRADE time, only moves on an actual trade; lut =
+	// last UPDATE time, moves on every broadcast). BCastTime is simpler and
+	// closer to "when the exchange sent this," so it's what latency
+	// measurement should key off. Zero when absent or unparsable.
+	BCastTime int64
 }
 
 func classifyApolloFrame(raw []byte) ApolloFrame {
@@ -67,7 +78,32 @@ func classifyApolloFrame(raw []byte) ApolloFrame {
 		frame.StreamingType = "UNKNOWN"
 	}
 
+	frame.BCastTime = parseApolloEpochField(envelope.Response.BCastTime)
+
 	return frame
+}
+
+// parseApolloEpochField parses a raw JSON field that Apollo sends as an
+// epoch-seconds value -- as a bare number or (observed live) a quoted
+// string -- returning 0 if absent or unparsable rather than erroring, since
+// this only ever feeds latency measurement, never a trading decision.
+func parseApolloEpochField(raw json.RawMessage) int64 {
+	if len(raw) == 0 {
+		return 0
+	}
+	var asString string
+	if err := json.Unmarshal(raw, &asString); err == nil {
+		v, err := strconv.ParseInt(strings.TrimSpace(asString), 10, 64)
+		if err != nil {
+			return 0
+		}
+		return v
+	}
+	var asNumber int64
+	if err := json.Unmarshal(raw, &asNumber); err == nil {
+		return asNumber
+	}
+	return 0
 }
 
 // ApolloSubscribeSymbol identifies one instrument token to subscribe/

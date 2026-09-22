@@ -1472,3 +1472,44 @@ pure code/log-tooling session, no broker calls made.
       and `TestDeployStraddle_BadRawExitTimePlacesNothing`; mutation-checked.
       Full build/vet/test -race clean, UI build clean.
 - [ ] Not yet deployed; needs execution-gateway restarted and a UI refresh.
+
+## Apollo backup-feed latency measurement (2026-09-22)
+Asked: compare the primary feed vs GreekSoft's Apollo backup feed --
+per-packet timestamp and actual latency, and which one delivers data
+faster.
+
+- [x] **Apollo side: implemented.** `ApolloFrame` now carries `BCastTime`
+      (the exchange-side broadcast Unix epoch `response.BCastTime`),
+      parsed in `classifyApolloFrame`/`parseApolloEpochField`. Confirmed
+      the real wire format live via `cmd/apolloprobe` (RELIANCE, token
+      101002885): `BCastTime` is a quoted epoch-seconds string (e.g.
+      `"1790070820"`); the per-tick `ltt`/`lut` fields inside
+      marketPicture's data are separately formatted as
+      `"DD-MM-YYYY HH:MM:SS"` (`ltt` = last TRADE time, only moves on an
+      actual trade; `lut` = last UPDATE time, moves on every broadcast).
+      `BCastTime` is what latency should key off.
+      `greeksoft-feed-bridge` now measures `local_arrival - BCastTime`
+      for every Apollo frame it receives, unconditionally -- previously
+      frames were only even decoded when the primary feed was already
+      stale (the forwarding gate, unchanged), so there was no ongoing
+      visibility into Apollo's own latency at all. Reported once a minute
+      in the existing health log line: `apollo_latency_ms(n=.. avg=..
+      min=.. max=..)`.
+- [ ] **Primary feed side: blocked on the NSE packet spec.** The direct
+      UDP multicast parser (`parse_7208` in `message_parser.cpp`) only
+      reads token/book/LTP/bid/ask/volume/OI from fixed offsets in the
+      214-byte record -- no per-tick exchange timestamp is extracted, only
+      `g_last_primary_tick_epoch_ms` (coarse "when did any packet last
+      arrive," used for primary/backup failover, not per-tick latency).
+      Guessing at a byte offset for the timestamp field in this live
+      market-data parser without the official NSE spec risks misreading
+      an unrelated field. User will provide the spec; the actual head-to-
+      head comparison (which feed is faster, for the same tick) needs
+      this half done first.
+- [x] New tests: `TestClassifyApolloFrame_ParsesBCastTimeFromLiveSample`,
+      `TestParseApolloEpochField` (libs/broker-greeksoft), and
+      `TestLatencyTracker_*` (greeksoft-feed-bridge/cmd) -- the min-
+      tracking loop mutation-checked (removing it made the test fail
+      exactly as expected). Full build/vet/test clean across
+      broker-greeksoft, greeksoft-feed-bridge and execution-gateway.
+- [ ] Not yet deployed; needs greeksoft-feed-bridge restarted.

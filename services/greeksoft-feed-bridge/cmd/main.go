@@ -87,6 +87,56 @@ func envDurationSeconds(name string, def time.Duration) time.Duration {
 	return time.Duration(secs) * time.Second
 }
 
+// latencyTracker accumulates millisecond latency samples (e.g. local
+// arrival time minus a feed's own exchange-side broadcast timestamp) into
+// a rolling min/max/avg, reported and reset once a minute -- a per-minute
+// window is more useful for spotting a trend or a spike than an
+// all-time average that a long-running process would otherwise dilute.
+type latencyTracker struct {
+	count atomic.Int64
+	sumMs atomic.Int64
+	minMs atomic.Int64
+	maxMs atomic.Int64
+}
+
+func (t *latencyTracker) record(ms int64) {
+	t.count.Add(1)
+	t.sumMs.Add(ms)
+	for {
+		cur := t.maxMs.Load()
+		if ms <= cur {
+			break
+		}
+		if t.maxMs.CompareAndSwap(cur, ms) {
+			break
+		}
+	}
+	for {
+		cur := t.minMs.Load()
+		if cur != 0 && ms >= cur {
+			break
+		}
+		if t.minMs.CompareAndSwap(cur, ms) {
+			break
+		}
+	}
+}
+
+// snapshotAndReset returns this window's stats and starts a fresh one.
+// Not perfectly atomic across all four fields under concurrent record()
+// calls -- acceptable for a once-a-minute monitoring log, not a trading
+// decision.
+func (t *latencyTracker) snapshotAndReset() (count, avgMs, minMs, maxMs int64) {
+	count = t.count.Swap(0)
+	sum := t.sumMs.Swap(0)
+	minMs = t.minMs.Swap(0)
+	maxMs = t.maxMs.Swap(0)
+	if count > 0 {
+		avgMs = sum / count
+	}
+	return count, avgMs, minMs, maxMs
+}
+
 // primaryLivenessWatcher tracks how stale the platform's actual primary
 // feed (direct exchange UDP multicast + the XTS ZMQ fallback) is, using
 // feed-decoder's own reported primary_feed_age_ms -- NOT just "have I seen
@@ -98,6 +148,7 @@ func envDurationSeconds(name string, def time.Duration) time.Duration {
 // on :5556 is timer-driven and republishes last-known values every 100ms
 // regardless of upstream liveness, so raw traffic there isn't a valid
 // signal either -- the age it now reports inside each message is.
+
 type primaryLivenessWatcher struct {
 	lastMessageUnixNano atomic.Int64
 	lastReportedAgeMs   atomic.Int64 // -1 = feed-decoder running but has never seen a primary tick
@@ -296,6 +347,7 @@ func main() {
 	defer publisher.sock.Close()
 
 	var apolloFrameCount atomic.Int64
+	apolloLatency := &latencyTracker{}
 
 	resubscribe := func(apollo *greeksoft.ApolloMarketDataClient) error {
 		if len(tokens) == 0 {
@@ -312,6 +364,16 @@ func main() {
 
 	handler := func(frame greeksoft.ApolloFrame) {
 		apolloFrameCount.Add(1)
+
+		// Measured unconditionally, every frame, regardless of whether the
+		// primary feed is stale -- this is the only way to actually answer
+		// "how does Apollo's latency compare" on an ongoing basis, since
+		// under normal conditions Apollo frames arrive continuously but
+		// were never even decoded before (see the stale-gated return
+		// below, which governs FORWARDING only, unchanged here).
+		if frame.BCastTime > 0 {
+			apolloLatency.record(time.Now().UnixMilli() - frame.BCastTime*1000)
+		}
 
 		stale, age := watcher.staleSince(stalenessThreshold)
 		if !stale {
@@ -359,9 +421,11 @@ func main() {
 				return
 			case <-ticker.C:
 				stale, age := watcher.staleSince(stalenessThreshold)
+				count, avgMs, minMs, maxMs := apolloLatency.snapshotAndReset()
 				log.Printf(
-					"[BRIDGE] health: primary_status_msgs=%d apollo_frames=%d forwarded=%d primary_stale=%v primary_age=%s",
+					"[BRIDGE] health: primary_status_msgs=%d apollo_frames=%d forwarded=%d primary_stale=%v primary_age=%s apollo_latency_ms(n=%d avg=%d min=%d max=%d)",
 					watcher.messageCount.Load(), apolloFrameCount.Load(), publisher.forwardedCount.Load(), stale, age,
+					count, avgMs, minMs, maxMs,
 				)
 			}
 		}
