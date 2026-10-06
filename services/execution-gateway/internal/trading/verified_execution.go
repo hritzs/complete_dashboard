@@ -56,6 +56,10 @@ type VerifiedExecutionSummary struct {
 	UnfilledCE        int64
 	UnfilledPE        int64
 	VerificationError error
+	// Unconfirmed lists submitted broker order IDs that got no terminal
+	// confirmation in time: their outcome is UNKNOWN (may well have
+	// filled), so a caller must never re-send their quantity.
+	Unconfirmed []string
 }
 
 func (s VerifiedExecutionSummary) Complete() bool {
@@ -119,6 +123,113 @@ func verifySubmittedFills(
 	}
 
 	return out.Clamp(), nil
+}
+
+// submittedOrderMeta is what waitForVerifiedFillsLive needs per submitted
+// broker order to wait on it individually: which leg/token it belongs to
+// and the quantity that makes it terminal (a real IRIS FilledQty reaching
+// this counts as done, same threshold orderTerminal already uses).
+type submittedOrderMeta struct {
+	Token    int64
+	Leg      string
+	Quantity int64
+}
+
+// waitForVerifiedFillsLive verifies each submitted order via the live,
+// event-driven OrderEventRegistry (fed in real time by the IRIS push
+// pipeline, see order_event_registry.go) instead of polling the
+// reconciler's DB a fixed number of times over a fixed total budget.
+//
+// This closes a real double-square-off race confirmed live 2026-09-23: a
+// 77-lot position's square-off polled for a shared 4.8s budget across an
+// entire chunk of orders; under the load of that many orders, the
+// reconciler's Iris-push-to-Postgres write pipeline hadn't caught up by
+// the time the budget ran out, so SquareOff's outer retry loop saw
+// "still not fully verified" and submitted a SECOND full round of BUY
+// orders for the same "remaining" quantity -- while the FIRST round's
+// orders were still genuinely alive and went on to fill anyway. The real
+// broker position ended up bought back twice (confirmed via
+// GetAllContract/fills: order count and filled quantity both ~2x the
+// entry side), and had to be corrected manually in the broker's own
+// terminal. Waiting on each order's own live confirmation, with no fixed
+// shared budget, means the loop only ever concludes "still remaining"
+// once every submitted order has genuinely reached a terminal outcome --
+// never while something already sent might still be resolving.
+//
+// Falls back to the polling-based waitForVerifiedFills if the live
+// registry isn't available (e.g. in tests, or before it's wired up) --
+// never silently skips verification.
+func waitForVerifiedFillsLive(
+	ctx context.Context,
+	events *OrderEventRegistry,
+	provider VerifiedFillsProvider,
+	tradeUID string,
+	submitted map[string]submittedOrderMeta,
+	ceToken int64,
+	peToken int64,
+	requestedCE int64,
+	requestedPE int64,
+	perOrderTimeout time.Duration,
+) VerifiedExecutionSummary {
+	if events == nil || !events.Healthy() {
+		plain := make(map[string]struct{}, len(submitted))
+		for id := range submitted {
+			plain[id] = struct{}{}
+		}
+		return waitForVerifiedFills(ctx, provider, plain, ceToken, peToken, requestedCE, requestedPE, 6, 800*time.Millisecond)
+	}
+
+	out := VerifiedExecutionSummary{RequestedCE: requestedCE, RequestedPE: requestedPE}
+
+	type result struct {
+		brokerOrderID string
+		filled        int64
+		status        string
+		err           error
+	}
+	results := make(chan result, len(submitted))
+	for brokerOrderID, meta := range submitted {
+		go func(brokerOrderID string, meta submittedOrderMeta) {
+			u, err := events.WaitTerminal(ctx, tradeUID, brokerOrderID, meta.Quantity, perOrderTimeout)
+			results <- result{brokerOrderID: brokerOrderID, filled: u.FilledQty, status: u.Status, err: err}
+		}(brokerOrderID, meta)
+	}
+
+	for range submitted {
+		r := <-results
+		meta := submitted[r.brokerOrderID]
+		if r.err != nil {
+			// No live terminal event within the per-order timeout -- do
+			// NOT assume either outcome. Leave it unverified (counted as
+			// still-remaining below) rather than guessing it filled or
+			// guessing it's safely dead; the caller's own circuit breaker
+			// and bounded attempt count are what stop this from looping
+			// forever on a genuinely stuck order.
+			log.Printf("[SQF-LIVE] no terminal confirmation for order=%s trade=%s within %s: %v", r.brokerOrderID, tradeUID, perOrderTimeout, r.err)
+			out.Unconfirmed = append(out.Unconfirmed, r.brokerOrderID)
+			continue
+		}
+		if r.filled <= 0 {
+			continue
+		}
+		fill := BrokerFill{
+			BrokerOrderID: r.brokerOrderID,
+			Token:         meta.Token,
+			FilledQty:     r.filled,
+			Status:        r.status,
+			Verified:      true,
+			Source:        "IRIS_LIVE_EVENT",
+		}
+		out.Fills = append(out.Fills, fill)
+		switch meta.Token {
+		case ceToken:
+			out.VerifiedCE += r.filled
+		case peToken:
+			out.VerifiedPE += r.filled
+		}
+	}
+
+	return out.Clamp()
 }
 
 func waitForVerifiedFills(
@@ -186,6 +297,20 @@ func (s *Service) submitOrderIntent(
 	intent OrderIntent,
 ) (brokerOrderID string, status string, err error) {
 	s.Store.AppendIntent(tradeUID, intent)
+
+	// Never send an order whose intent_id is recorded under ANOTHER trade:
+	// its fills would be matched to the wrong trade (or none), and that
+	// trade's exit would then re-send the "unconfirmed" quantity.
+	if owners, ok := s.Store.(interface {
+		IntentOwner(ctx context.Context, intentID string) (string, bool, error)
+	}); ok {
+		owner, found, oerr := owners.IntentOwner(ctx, intent.IntentID)
+		if oerr == nil && found && owner != "" && owner != tradeUID {
+			log.Printf("🚫 ORDER REFUSED, NOT SENT: intent_id=%s is already recorded for trade=%s, not trade=%s (side=%s token=%d qty=%d)",
+				intent.IntentID, owner, tradeUID, intent.Side, intent.Token, intent.Quantity)
+			return "", "", fmt.Errorf("submit intent %s: intent_id already belongs to trade %s", intent.IntentID, owner)
+		}
+	}
 
 	res, err := executor.ExecuteOrderIntent(ctx, intent)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	greeksoft "trading-platform/libs/broker-greeksoft"
+	"trading-platform/libs/broker-greeksoft/normalize"
 )
 
 func TestDispatch_OrderResponse(t *testing.T) {
@@ -88,6 +89,61 @@ func TestDispatch_TradeResponse(t *testing.T) {
 	}
 	if payload.TradedPrice != "155.70" {
 		t.Errorf("TradedPrice = %q, want 155.70", payload.TradedPrice)
+	}
+}
+
+func TestDispatch_RmsRejectionResponse(t *testing.T) {
+	// Real RmsRejectionResponse captured live 2026-09-23: an order that was
+	// already accepted (NewOrderRequestResponse ErrorCode=0) got rejected
+	// by risk management afterwards ("Scrip Banned by Admin"). Before this
+	// streaming_type was recognized, Dispatch fell through to its default
+	// case (KindUnknown) and the reconciler silently dropped it, leaving
+	// the order stuck at SUBMITTED forever even though it was actually
+	// dead -- confirmed live: the trade got stranded in
+	// RECONCILIATION_REQUIRED and BUILD-CHASE's later modify/cancel calls
+	// failed with "order is not in pending or not found".
+	raw := []byte(`{
+		"response": {
+			"svcName": "order",
+			"serverTime": "1790153142000",
+			"infoID": "0",
+			"streaming_type": "RmsRejectionResponse",
+			"data": {
+				"gtoken": "102069806", "order_status": "Rms Rejected", "eorderid": "",
+				"gorderid": "120000037", "lu_time_exchange": "1790153142",
+				"lu_time": "1790153142", "tradeSymbol": "BANKNIFTY",
+				"symbol": "BANKNIFTY 29SEP26 CE 56700", "order_state": "0",
+				"code": "102", "side": "2", "qty": "30", "pending_qty": "30",
+				"order_type": "1", "product": "1",
+				"reason": "[RMS Failure] Scrip Banned by Admin| [NSE] [BANKNIFTY 29SEP26 CE 56700] SELL 30 @ 309.8000 Scrip Banned"
+			},
+			"appID": "bc90bb525bc9739a9595bb9e176dab17"
+		}
+	}`)
+
+	frame := greeksoft.IrisFrame{StreamingType: "RmsRejectionResponse", ServiceName: "order", Raw: raw}
+
+	kind, payload, tradePayload, err := Dispatch(frame)
+	if err != nil {
+		t.Fatalf("Dispatch returned error: %v", err)
+	}
+	if kind != KindOrderResponse {
+		t.Fatalf("kind = %v, want KindOrderResponse (converges on the same persistence path as any other rejection)", kind)
+	}
+	if tradePayload != nil {
+		t.Fatal("expected nil trade payload for an RmsRejectionResponse frame")
+	}
+	if payload == nil {
+		t.Fatal("payload is nil")
+	}
+	if payload.GOrderID != "120000037" {
+		t.Errorf("GOrderID = %q, want 120000037", payload.GOrderID)
+	}
+	if payload.OrderStatus != "Rms Rejected" {
+		t.Errorf("OrderStatus = %q, want %q", payload.OrderStatus, "Rms Rejected")
+	}
+	if got := normalize.MapStatus(payload.OrderStatus); got != normalize.StatusRejected {
+		t.Errorf("MapStatus(%q) = %v, want StatusRejected", payload.OrderStatus, got)
 	}
 }
 

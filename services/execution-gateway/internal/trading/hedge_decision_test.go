@@ -5,6 +5,43 @@ import (
 	"testing"
 )
 
+// signedLegGreeksAndPNL folds hedge legs (which can be long OR short, on a
+// different strike) into the trade's totals. A sign error here would make
+// a hedge look like it ADDS delta instead of offsetting it, so pin both
+// directions and its agreement with shortLegGreeks for the short case.
+func TestSignedLegGreeksAndPNL_SignsMatchShortLegGreeks(t *testing.T) {
+	near := func(a, b float64) bool { d := a - b; return d < 1e-9 && d > -1e-9 }
+
+	// Short straddle via shortLegGreeks (unsigned short quantities)...
+	ce := &OptionChainRow{CEDelta: 0.53, CEGamma: 0.0012, CETheta: -10, CEVega: 8}
+	pe := &OptionChainRow{PEDelta: -0.47, PEGamma: 0.0012, PETheta: -9, PEVega: 8}
+	wantD, wantG, wantT, wantV := shortLegGreeks(ce, pe, 65, 65)
+
+	// ...must equal the same two legs as SIGNED short quantities (-65).
+	cd, cg, ct, cv, _ := signedLegGreeksAndPNL(ce.CEDelta, ce.CEGamma, ce.CETheta, ce.CEVega, 0, 0, -65)
+	pd, pg, pt, pv, _ := signedLegGreeksAndPNL(pe.PEDelta, pe.PEGamma, pe.PETheta, pe.PEVega, 0, 0, -65)
+	if !near(cd+pd, wantD) || !near(cg+pg, wantG) || !near(ct+pt, wantT) || !near(cv+pv, wantV) {
+		t.Fatalf("signed short legs = d%v g%v t%v v%v, want shortLegGreeks d%v g%v t%v v%v",
+			cd+pd, cg+pg, ct+pt, cv+pv, wantD, wantG, wantT, wantV)
+	}
+
+	// A synthetic-long hedge (BUY CE +65, SELL PE -65) must ADD positive
+	// delta -- that's what offsets a short straddle's negative delta.
+	hd, _, _, _, _ := signedLegGreeksAndPNL(0.5, 0, 0, 0, 0, 0, 65)
+	hpd, _, _, _, _ := signedLegGreeksAndPNL(-0.5, 0, 0, 0, 0, 0, -65)
+	if hd <= 0 || hpd <= 0 {
+		t.Fatalf("synthetic long hedge delta CE=%v PE=%v, want both positive", hd, hpd)
+	}
+
+	// PnL: short profits when price falls, long profits when price rises.
+	if _, _, _, _, pnl := signedLegGreeksAndPNL(0, 0, 0, 0, 90, 100, -65); !near(pnl, 650) {
+		t.Fatalf("short leg entry 100 -> ltp 90 pnl = %v, want +650", pnl)
+	}
+	if _, _, _, _, pnl := signedLegGreeksAndPNL(0, 0, 0, 0, 110, 100, 65); !near(pnl, 650) {
+		t.Fatalf("long leg entry 100 -> ltp 110 pnl = %v, want +650", pnl)
+	}
+}
+
 func TestShortLegGreeks_SignsAndHedgeDirection(t *testing.T) {
 	// Spot just above the strike: call ITM (delta ~+0.53), put OTM (~-0.47).
 	ce := &OptionChainRow{CEDelta: 0.53, CEGamma: 0.0012, CETheta: -10, CEVega: 8}
@@ -57,7 +94,13 @@ func TestDecideHedge(t *testing.T) {
 		{"bps floor lifts a low allowance", with(func(i *hedgeDecisionInput) { i.PointsAllowed = 10; i.PointsOut = 15 }), false, 0, "BELOW_MIN_THRESHOLD"},
 		{"past the lifted floor hedges", with(func(i *hedgeDecisionInput) { i.PointsAllowed = 10; i.PointsOut = 20 }), true, 2, "HEDGE_TRIGGERED"},
 		{"floor disabled at 0 bps", with(func(i *hedgeDecisionInput) { i.PointsAllowed = 10; i.PointsOut = 15; i.MinThresholdBps = 0 }), true, 2, "HEDGE_TRIGGERED"},
-		{"delta below one lot cannot be improved", with(func(i *hedgeDecisionInput) { i.NetDelta = -30 }), false, 0, "DELTA_BELOW_ONE_LOT"},
+		// Nearest-lot sizing (lot 65): a hedge must never leave |delta|
+		// larger than it found it, so sizing rounds DOWN to the lower lot.
+		{"delta under one lot is skipped", with(func(i *hedgeDecisionInput) { i.NetDelta = -40 }), false, 0, "DELTA_BELOW_ONE_LOT"},
+		{"exactly one lot hedges one", with(func(i *hedgeDecisionInput) { i.NetDelta = -65 }), true, 1, "HEDGE_TRIGGERED"},
+		{"1.98 lots rounds down to one", with(func(i *hedgeDecisionInput) { i.NetDelta = -129 }), true, 1, "HEDGE_TRIGGERED"},
+		{"2.78 lots rounds down to two (live 2026-09-28: +180.57)", with(func(i *hedgeDecisionInput) { i.NetDelta = 180.57; i.TradeLots = 15 }), true, 2, "HEDGE_TRIGGERED"},
+		{"exactly zero delta is skipped", with(func(i *hedgeDecisionInput) { i.NetDelta = 0 }), false, 0, "DELTA_BELOW_ONE_LOT"},
 		{"capped at the trade's own lots", with(func(i *hedgeDecisionInput) { i.NetDelta = 650; i.TradeLots = 3 }), true, 3, "HEDGE_TRIGGERED"},
 		{"no allowance available", with(func(i *hedgeDecisionInput) { i.PointsAllowed = 0 }), false, 0, "NO_ALLOWANCE_AVAILABLE"},
 		{"no spot means no floor", with(func(i *hedgeDecisionInput) { i.Spot = 0; i.PointsAllowed = 10; i.PointsOut = 15 }), true, 2, "HEDGE_TRIGGERED"},

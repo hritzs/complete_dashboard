@@ -364,7 +364,7 @@ void ChainBuilder::update_spot_price(const std::string& base_symbol, double new_
 // ============================================================
 // Update CE / PE tick
 // ============================================================
-void ChainBuilder::update_option_price(int token, double new_price, uint32_t volume, uint32_t oi) {
+void ChainBuilder::update_option_price(int token, double new_price, double bid, double ask, uint32_t volume, uint32_t oi) {
     (void)volume;
     (void)oi;
 
@@ -393,13 +393,44 @@ void ChainBuilder::update_option_price(int token, double new_price, uint32_t vol
 
     if (strike_row.ce_token == static_cast<uint32_t>(token)) {
         strike_row.ce_ltp = new_price;
+        if (bid > 0.0) strike_row.ce_bid = bid;
+        if (ask > 0.0) strike_row.ce_ask = ask;
     } else if (strike_row.pe_token == static_cast<uint32_t>(token)) {
         strike_row.pe_ltp = new_price;
+        if (bid > 0.0) strike_row.pe_bid = bid;
+        if (ask > 0.0) strike_row.pe_ask = ask;
     } else {
         return;
     }
 
     recalculate_greeks_internal(chain);
+}
+
+// ============================================================
+// Update CE / PE 5-level depth ladder
+// ============================================================
+void ChainBuilder::update_option_depth(int token, const std::array<DepthLevel, 5>& bids, const std::array<DepthLevel, 5>& asks, int64_t now_ms) {
+    std::unique_lock<std::shared_mutex> lock(rw_mutex_);
+
+    auto it = token_to_strike_index_.find(token);
+    if (it == token_to_strike_index_.end()) return;
+
+    auto chain_it = chains_.find(it->second.first);
+    if (chain_it == chains_.end()) return;
+    auto& chain = chain_it->second;
+    const int idx = it->second.second;
+    if (idx < 0 || static_cast<size_t>(idx) >= chain.strikes.size()) return;
+
+    auto& row = chain.strikes[static_cast<size_t>(idx)];
+    if (row.ce_token == static_cast<uint32_t>(token)) {
+        row.ce_bids = bids;
+        row.ce_asks = asks;
+        row.ce_depth_ms = now_ms;
+    } else if (row.pe_token == static_cast<uint32_t>(token)) {
+        row.pe_bids = bids;
+        row.pe_asks = asks;
+        row.pe_depth_ms = now_ms;
+    }
 }
 
 // ============================================================

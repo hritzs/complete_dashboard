@@ -9,12 +9,90 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	_ "github.com/lib/pq"
 
 	"trading-platform/services/contract-master/internal/parser"
 	"trading-platform/services/contract-master/internal/persistence"
 )
+
+// loadTokenCSVs parses both token CSV files and upserts whatever it finds
+// into the contracts table. It never fails hard on a missing/unreadable
+// file (that leg is just skipped and logged) so a bad re-sync of one file
+// never blocks the other from refreshing.
+func loadTokenCSVs(ctx context.Context, store *persistence.Store, indexPath, bseIndexPath string) {
+	lotLookup := map[string]int{}
+
+	indexContracts, err := parser.ParseTokenCSVFile(indexPath, lotLookup)
+	if err != nil {
+		log.Printf("failed to load IndexTokens CSV from %s: %v", indexPath, err)
+	}
+
+	bseContracts, err := parser.ParseTokenCSVFile(bseIndexPath, lotLookup)
+	if err != nil {
+		log.Printf("failed to load BSEIndexTokens CSV from %s: %v", bseIndexPath, err)
+	}
+
+	log.Printf("📘 IndexTokens.csv contracts: %d", len(indexContracts))
+	log.Printf("📙 BSEIndexTokens.csv contracts: %d", len(bseContracts))
+
+	contracts := make([]persistence.Contract, 0, len(indexContracts)+len(bseContracts))
+	contracts = append(contracts, indexContracts...)
+	contracts = append(contracts, bseContracts...)
+
+	if len(contracts) == 0 {
+		log.Printf("⚠️ no contracts loaded from token CSV files")
+		return
+	}
+
+	if err := store.UpsertContracts(ctx, contracts); err != nil {
+		log.Printf("❌ failed to upsert contracts: %v", err)
+		return
+	}
+	log.Printf("✅ Loaded %d contracts from CSV files", len(contracts))
+}
+
+// watchTokenCSVsForChanges re-ingests the token CSVs whenever their mtime
+// moves forward, so lot sizes (and everything else sourced from these
+// files) stay current for this long-running process without needing a
+// restart -- lot sizes are revised periodically by exchange circular and
+// the sync script that refreshes these files from /mnt/shared can run at
+// any time, including overnight. Mirrors the same
+// "compare mtime, don't just trust a one-time check" fix already applied
+// to scripts/update_index_tokens_daily.sh.
+func watchTokenCSVsForChanges(store *persistence.Store, indexPath, bseIndexPath string, interval time.Duration) {
+	var lastIndexMTime, lastBSEMTime time.Time
+	if fi, err := os.Stat(indexPath); err == nil {
+		lastIndexMTime = fi.ModTime()
+	}
+	if fi, err := os.Stat(bseIndexPath); err == nil {
+		lastBSEMTime = fi.ModTime()
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		changed := false
+
+		if fi, err := os.Stat(indexPath); err == nil && fi.ModTime().After(lastIndexMTime) {
+			lastIndexMTime = fi.ModTime()
+			changed = true
+		}
+		if fi, err := os.Stat(bseIndexPath); err == nil && fi.ModTime().After(lastBSEMTime) {
+			lastBSEMTime = fi.ModTime()
+			changed = true
+		}
+
+		if !changed {
+			continue
+		}
+
+		log.Printf("🔄 token CSV(s) changed on disk, re-ingesting")
+		loadTokenCSVs(context.Background(), store, indexPath, bseIndexPath)
+	}
+}
 
 func main() {
 	dsn := strings.TrimSpace(os.Getenv("POSTGRES_DSN"))
@@ -56,33 +134,13 @@ func main() {
 	log.Printf("📂 INDEX_TOKENS path: %s", indexPath)
 	log.Printf("📂 BSE_INDEX_TOKENS path: %s", bseIndexPath)
 
-	lotLookup := map[string]int{}
+	loadTokenCSVs(ctx, store, indexPath, bseIndexPath)
 
-	indexContracts, err := parser.ParseTokenCSVFile(indexPath, lotLookup)
-	if err != nil {
-		log.Printf("failed to load IndexTokens CSV from %s: %v", indexPath, err)
-	}
-
-	bseContracts, err := parser.ParseTokenCSVFile(bseIndexPath, lotLookup)
-	if err != nil {
-		log.Printf("failed to load BSEIndexTokens CSV from %s: %v", bseIndexPath, err)
-	}
-
-	log.Printf("📘 IndexTokens.csv contracts: %d", len(indexContracts))
-	log.Printf("📙 BSEIndexTokens.csv contracts: %d", len(bseContracts))
-
-	contracts := make([]persistence.Contract, 0, len(indexContracts)+len(bseContracts))
-	contracts = append(contracts, indexContracts...)
-	contracts = append(contracts, bseContracts...)
-
-	if len(contracts) == 0 {
-		log.Printf("⚠️ no contracts loaded from token CSV files")
-	} else {
-		if err := store.UpsertContracts(ctx, contracts); err != nil {
-			log.Fatal(err)
-		}
-		log.Printf("✅ Loaded %d contracts from CSV files", len(contracts))
-	}
+	// Re-check the files' mtimes hourly and re-ingest on change, so a lot
+	// size (or anything else in these files) revised while this process
+	// keeps running -- including overnight -- is picked up automatically
+	// instead of only at the next restart.
+	go watchTokenCSVsForChanges(store, indexPath, bseIndexPath, time.Hour)
 
 	writeJSON := func(w http.ResponseWriter, status int, payload map[string]interface{}) {
 		w.Header().Set("Content-Type", "application/json")
@@ -219,5 +277,21 @@ func main() {
 	})
 
 	log.Printf("🌐 Contract Master running on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	log.Fatal(http.ListenAndServe(":"+port, corsMiddleware(http.DefaultServeMux)))
+}
+
+// corsMiddleware allows the UI (served from a different origin/port) to call
+// this service directly, matching execution-gateway's and snapshot-service's
+// existing CORS handling.
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

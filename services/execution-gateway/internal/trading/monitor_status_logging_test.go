@@ -87,10 +87,20 @@ func TestRunMonitorCycle_LogsSLTPTIMEStatusEveryMinuteEvenWhenNotBreached(t *tes
 		"check=TIME status=OK",
 		"tick=" + time.Now().Format("15:04") + ":",
 		" snapshot",
+		// The SL "OK" line must show the REAL configured threshold, not a
+		// stale 0.00 -- confirmed live 2026-09-23: slThreshold was only
+		// ever assigned inside the breach branch, so every non-breaching
+		// tick logged "threshold=+0.00" even with SLPnLBpsOfSpot=14 active
+		// (spot 23405 -> real threshold -32.77), making it look like SL
+		// wasn't armed when it actually was monitoring correctly.
+		"check=SL status=OK source=\"bps_of_spot spot=23405.00 bps=14.00\"",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("log output missing %q\n--- full output ---\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "check=SL status=OK") && strings.Contains(out, "threshold=+0.00") {
+		t.Fatalf("SL status=OK line shows threshold=+0.00 even though SLPnLBpsOfSpot=14 is configured\n--- full output ---\n%s", out)
 	}
 
 	// The trade must still be open: entries at 200 vs LTPs of 100/90 is a
@@ -121,6 +131,50 @@ func TestRunMonitorCycle_LogsNotConfiguredWhenNothingArmed(t *testing.T) {
 		}
 	}
 	_ = context.Background()
+}
+
+// A real SL/TP/TIME trigger line must carry the same spot/Greeks/CE-PE-LTP
+// snapshot fields as the per-tick "snapshot" line, so the exact moment an
+// exit fired is self-contained in one log line rather than requiring an
+// operator to cross-reference the nearest separate snapshot line by
+// timestamp.
+func TestRunMonitorCycle_SLTriggerLineCarriesSnapshotFields(t *testing.T) {
+	store := NewMemoryStore()
+	tr := newTestSquareOffTrade("TRD_MONITOR_SL_TRIGGER_SNAPSHOT")
+	tr.Lots = 1
+	tr.CEQty = 65
+	tr.PEQty = 65
+	tr.CELtp = 100 // entry sell prices
+	tr.PELtp = 90
+	tr.Config.SLPointsPerLot = 1 // guarantees breach against breachChainSnapshot's much higher LTPs
+	tr.Config.SLPnLBpsOfSpot = 0
+	tr.Config.TPPnLBpsOfSpot = 0
+	store.SaveTrade(tr)
+	store.SaveRuntime(&RuntimeTrade{Trade: tr, StopCh: make(chan struct{}), DoneCh: make(chan struct{})})
+
+	svc := &Service{Store: store, Snapshot: breachChainSnapshot{}, BrokerFactory: &fakeBrokerFactory{executor: &fakeSLExecutor{}}}
+
+	out := captureLog(t, func() { svc.runMonitorCycle(tr.TradeUID) })
+
+	// Isolate the SL_TRIGGER line specifically -- the periodic "snapshot"
+	// line (printed unconditionally every tick) happens to contain the same
+	// substrings, so checking the whole captured output would pass even if
+	// SL_TRIGGER itself never got the fields appended.
+	var triggerLine string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "[RISK] SL_TRIGGER") {
+			triggerLine = line
+			break
+		}
+	}
+	if triggerLine == "" {
+		t.Fatalf("expected an SL_TRIGGER line (breachChainSnapshot's LTPs should breach SLPointsPerLot=1)\n--- full output ---\n%s", out)
+	}
+	for _, want := range []string{"spot=23405.00", "delta=", "gamma=", "theta=", "vega=", "ce_ltp=220.00", "pe_ltp=210.00"} {
+		if !strings.Contains(triggerLine, want) {
+			t.Fatalf("SL_TRIGGER line missing snapshot field %q\n--- trigger line ---\n%s", want, triggerLine)
+		}
+	}
 }
 
 // Real risk exits must only fire when the minute-end check is actually being

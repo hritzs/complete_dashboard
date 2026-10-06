@@ -59,6 +59,22 @@ type OrderCanceller interface {
 	CancelOrder(ctx context.Context, brokerOrderID string) error
 }
 
+// FreezeInfo is a contract's order-size limits as reported live by the
+// broker -- nothing in it is hardcoded.
+type FreezeInfo struct {
+	FreezeQty   int64 // broker freezQty: an order at or above this is frozen
+	LotSize     int64 // broker lot size for the contract
+	MaxOrderQty int64 // largest placeable order: (FreezeQty-1) rounded down to whole lots
+}
+
+// FreezeQtyProvider is an optional broker capability returning a token's
+// live freeze quantity and lot size. Freeze quantities are revised by
+// exchange circular and can change overnight, so they are never
+// hardcoded; without a live value, orders go one lot at a time.
+type FreezeQtyProvider interface {
+	GetFreezeQty(ctx context.Context, token int64) (FreezeInfo, error)
+}
+
 type BrokerFactory interface {
 	GetExecutor(userID, brokerName, accountID string) (Executor, error)
 }

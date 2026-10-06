@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -63,8 +65,21 @@ func BuildTradeUID(userID, brokerName, accountID, symbol, expiry string, strike 
 	)
 }
 
+// orderUIDSeq makes every generated order UID unique within this process,
+// even for two trades exiting in the same second (live 2026-09-30: two
+// trades' TIME exits at 15:37 produced 239 identical intent IDs; the DB kept
+// one row per ID, so each trade's exit fills went unmatched and the
+// square-off retry bought back the "missing" quantity again).
+var orderUIDSeq uint64
+
 func BuildShortOrderUID(symbol, leg string, ts time.Time, suffix int) string {
-	base := fmt.Sprintf("%s%s%s", SymbolCode(symbol), ts.Format("020106150405"), strings.ToUpper(leg))
+	seq := strings.ToUpper(strconv.FormatUint(atomic.AddUint64(&orderUIDSeq, 1)%1679616, 36)) // 4 base-36 chars
+	for len(seq) < 4 {
+		seq = "0" + seq
+	}
+	// Sequence right after the timestamp, so a 32-char truncation can only
+	// cut the leg text, never the part that makes the UID unique.
+	base := fmt.Sprintf("%s%s%s%s", SymbolCode(symbol), ts.Format("020106150405"), seq, strings.ToUpper(leg))
 	if suffix > 0 {
 		base = fmt.Sprintf("%s_%d", base, suffix)
 	}
@@ -107,14 +122,13 @@ func GetFallbackLotSize(symbol string) int {
 	}
 }
 
-func MaxOrderQtyForSymbol(symbol string) int {
-	s := NormalizeSymbol(symbol)
-	switch {
-	case strings.Contains(s, "SENSEX"):
-		return 5000
-	case strings.Contains(s, "BANKEX"):
-		return 4000
-	default:
-		return 1800
+// CreatedTodayIST reports whether t falls on today's date in IST.
+func CreatedTodayIST(t time.Time) bool {
+	loc, err := time.LoadLocation("Asia/Kolkata")
+	if err != nil {
+		loc = time.FixedZone("IST", 5*3600+1800)
 	}
+	now := time.Now().In(loc)
+	tt := t.In(loc)
+	return tt.Year() == now.Year() && tt.YearDay() == now.YearDay()
 }

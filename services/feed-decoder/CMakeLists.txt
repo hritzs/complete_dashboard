@@ -10,6 +10,7 @@ add_executable(feed-decoder
     src/packet_dispatch.cpp
     src/decompressor.cpp
     src/message_parser.cpp
+    src/nse_mbp_record.cpp
     src/normalizer.cpp
     src/greeks_calculator.cpp
     src/chain_builder.cpp

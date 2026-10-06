@@ -36,6 +36,10 @@ namespace Config {
     constexpr const char* BSE_LOCAL_IP = "0.0.0.0";
 
     constexpr int PUBLISH_INTERVAL_MS = 100;
+    // L1-L5 depth is published only near the money and for the nearest
+    // expiries, to keep the 100ms chain message small.
+    constexpr int DEPTH_STRIKES_EACH_SIDE = 8;
+    constexpr size_t DEPTH_EXPIRIES = 3;
 }
 
 // ============================================================
@@ -340,7 +344,8 @@ int main() {
                 }
                 avail_exp_json += "]";
 
-                for (const auto& exp : expiries) {
+                for (size_t exp_index = 0; exp_index < expiries.size(); ++exp_index) {
+                    const auto& exp = expiries[exp_index];
                     std::string chain_key = sym + "|" + exp;
                     decoder::OptionChain chain;
 
@@ -415,8 +420,39 @@ int main() {
                         "\"available_expiries\":" + avail_exp_json + ","
                         "\"chain\":[";
 
+                    // Index of the ATM row (nearest strike) for the depth window.
+                    long atm_index = -1;
+                    {
+                        double best = 0.0;
+                        for (size_t i = 0; i < chain.strikes.size(); ++i) {
+                            const double d = std::fabs(chain.strikes[i].strike - actualAtm);
+                            if (atm_index < 0 || d < best) {
+                                best = d;
+                                atm_index = static_cast<long>(i);
+                            }
+                        }
+                    }
+                    auto depth_json = [&](const std::array<decoder::DepthLevel, 5>& bids,
+                                          const std::array<decoder::DepthLevel, 5>& asks,
+                                          int64_t depth_ms) {
+                        std::string d = "{\"b\":[";
+                        for (int i = 0; i < 5; ++i) {
+                            if (i) d += ",";
+                            d += "[" + safe_num(bids[i].price) + "," + std::to_string(bids[i].qty) + "]";
+                        }
+                        d += "],\"a\":[";
+                        for (int i = 0; i < 5; ++i) {
+                            if (i) d += ",";
+                            d += "[" + safe_num(asks[i].price) + "," + std::to_string(asks[i].qty) + "]";
+                        }
+                        d += "],\"age_ms\":" + std::to_string(now_ms - depth_ms) + "}";
+                        return d;
+                    };
+
                     bool first = true;
+                    long row_index = -1;
                     for (const auto& row : chain.strikes) {
+                        ++row_index;
                         if (!first) json += ",";
 
                         const bool is_atm = (row.strike == actualAtm);
@@ -427,6 +463,10 @@ int main() {
                         json += "\"pe_token\":" + std::to_string(row.pe_token) + ",";
                         json += "\"ce_ltp\":" + safe_num(row.ce_ltp) + ",";
                         json += "\"pe_ltp\":" + safe_num(row.pe_ltp) + ",";
+                        json += "\"ce_bid\":" + safe_num(row.ce_bid) + ",";
+                        json += "\"ce_ask\":" + safe_num(row.ce_ask) + ",";
+                        json += "\"pe_bid\":" + safe_num(row.pe_bid) + ",";
+                        json += "\"pe_ask\":" + safe_num(row.pe_ask) + ",";
                         json += "\"ce_iv\":" + safe_num(row.ce_greeks.iv * 100.0) + ",";
                         json += "\"pe_iv\":" + safe_num(row.pe_greeks.iv * 100.0) + ",";
                         json += "\"ce_delta\":" + safe_num(row.ce_greeks.delta) + ",";
@@ -437,6 +477,11 @@ int main() {
                         json += "\"pe_vega\":" + safe_num(row.pe_greeks.vega) + ",";
                         json += "\"ce_theta\":" + safe_num(row.ce_greeks.theta) + ",";
                         json += "\"pe_theta\":" + safe_num(row.pe_greeks.theta) + ",";
+                        if (exp_index < Config::DEPTH_EXPIRIES && atm_index >= 0 &&
+                            std::labs(row_index - atm_index) <= Config::DEPTH_STRIKES_EACH_SIDE) {
+                            if (row.ce_depth_ms > 0) json += "\"ce_depth\":" + depth_json(row.ce_bids, row.ce_asks, row.ce_depth_ms) + ",";
+                            if (row.pe_depth_ms > 0) json += "\"pe_depth\":" + depth_json(row.pe_bids, row.pe_asks, row.pe_depth_ms) + ",";
+                        }
                         json += "\"is_atm\":" + std::string(is_atm ? "true" : "false");
                         json += "}";
 

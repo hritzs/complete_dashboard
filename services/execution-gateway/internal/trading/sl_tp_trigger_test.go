@@ -2,7 +2,12 @@ package trading
 
 import (
 	"context"
+	"fmt"
+	"math/rand"
+	"sync"
 	"testing"
+	"time"
+	"trading-platform/libs/contracts"
 )
 
 func TestSlThresholdForTrade_UsesOriginalLotsNotLiveQuantity(t *testing.T) {
@@ -147,6 +152,182 @@ func newTestSquareOffTrade(tradeUID string) StoredTrade {
 		PEQty:    65,
 		LotSize:  65,
 		Lots:     1,
+	}
+}
+
+// liveConfirmingExecutor simulates the real live-Iris-confirmation timing
+// that exposed the double-square-off bug: each order is accepted
+// synchronously (status SUBMITTED) and IMMEDIATELY confirmed FILLED via a
+// live event publish to the registry (matching how fast real Iris pushes
+// actually arrive, ~10-100ms per the live logs) -- but GetVerifiedFills
+// (the reconciler-DB-backed polling path) deliberately returns nothing,
+// simulating the DB write pipeline lagging behind under load. If SquareOff
+// were still using the old polling-only verification, it would see "no
+// verified fills yet" and submit a second, duplicate round of orders for
+// the same already-filling quantity -- exactly what happened live
+// 2026-09-23 on a 77-lot square-off (order count came out exactly 2x:
+// 52 BUY CE against 26 SELL CE, 48 BUY PE against 24 SELL PE).
+type liveConfirmingExecutor struct {
+	mu        sync.Mutex
+	registry  *OrderEventRegistry
+	submitted []OrderIntent
+}
+
+func (e *liveConfirmingExecutor) ExecuteOrderIntent(ctx context.Context, in OrderIntent) (*ExecutionResult, error) {
+	e.mu.Lock()
+	id := "L" + string(rune('1'+len(e.submitted)))
+	e.submitted = append(e.submitted, in)
+	e.mu.Unlock()
+
+	e.registry.Publish(contracts.OrderUpdate{
+		TradeID: in.TradeUID, BrokerOrderID: id, Status: "FILLED", FilledQty: in.Quantity,
+	})
+
+	return &ExecutionResult{IntentID: in.IntentID, BrokerOrderID: id, Status: "SUBMITTED"}, nil
+}
+
+func (e *liveConfirmingExecutor) GetVerifiedFills(ctx context.Context) ([]BrokerFill, error) {
+	return nil, nil // deliberately empty -- simulates the reconciler DB not having caught up yet
+}
+
+func (e *liveConfirmingExecutor) submittedCount() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return len(e.submitted)
+}
+
+// TestSquareOff_UsesLiveConfirmationNotJustDBPolling proves the actual fix
+// for the confirmed-live double-square-off: when the live OrderEventRegistry
+// is healthy and has the real terminal confirmation for every submitted
+// order, SquareOff must reach the target in exactly the orders that were
+// actually needed -- never submitting a second round because a
+// DB-polling check (which here returns nothing) looked incomplete.
+func TestSquareOff_UsesLiveConfirmationNotJustDBPolling(t *testing.T) {
+	store := NewMemoryStore()
+	tradeUID := "TRD_TEST_LIVE_SQF"
+	tr := newTestSquareOffTrade(tradeUID)
+	tr.Lots = 2
+	tr.CEQty = 130 // 2 lots
+	tr.PEQty = 130
+	store.SaveTrade(tr)
+
+	registry := NewOrderEventRegistry()
+	registry.SetHealthy(true)
+	exec := &liveConfirmingExecutor{registry: registry}
+
+	svc := &Service{
+		Store:         store,
+		BrokerFactory: &fakeBrokerFactory{executor: exec},
+		OrderEvents:   registry,
+	}
+
+	if err := svc.SquareOff(tradeUID, "manual"); err != nil {
+		t.Fatalf("SquareOff returned error: %v", err)
+	}
+
+	tr2, ok := store.LoadTrade(tradeUID)
+	if !ok {
+		t.Fatalf("trade not found after SquareOff")
+	}
+	if tr2.Status != "CLOSEDSQF" {
+		t.Fatalf("status = %q, want CLOSEDSQF", tr2.Status)
+	}
+	if tr2.CEQty != 0 || tr2.PEQty != 0 {
+		t.Fatalf("CEQty/PEQty = %d/%d, want 0/0", tr2.CEQty, tr2.PEQty)
+	}
+
+	// 2 lots CE + 2 lots PE at one lot per order ("65-65" chunking) is 4
+	// orders total. If the old polling-only path were still in use, the
+	// empty GetVerifiedFills would make every attempt look incomplete,
+	// and the retry loop would keep submitting more (up to
+	// maxExecutionAttempts=4 full rounds -- 16 orders instead of 4).
+	if got := exec.submittedCount(); got != 4 {
+		t.Fatalf("orders submitted = %d, want exactly 4 (2 lots x 2 legs, no duplicate round from a stale/slow DB poll)", got)
+	}
+}
+
+// delayedLiveExecutor simulates the REAL observed confirmation timing from
+// the incident this fix addresses: querying latency_samples for the actual
+// 77-lot trade (2026-09-23, trade_id=212) showed real iris_confirmation/
+// iris_fill latency ranging 6.5ms-375ms across 324 samples (avg ~51-57ms).
+// Each order here gets published as FILLED on its own goroutine after a
+// randomized delay drawn from that real range, so many orders are
+// concurrently "in flight" at once -- matching the real load (100+ BUY
+// orders fired within ~8 seconds) that caused the DB-polling path to miss
+// fills still landing. GetVerifiedFills is deliberately always empty, the
+// worst case for the DB path, proving the live path alone is what carries
+// this.
+type delayedLiveExecutor struct {
+	mu        sync.Mutex
+	registry  *OrderEventRegistry
+	submitted []OrderIntent
+}
+
+func (e *delayedLiveExecutor) ExecuteOrderIntent(ctx context.Context, in OrderIntent) (*ExecutionResult, error) {
+	e.mu.Lock()
+	id := fmt.Sprintf("D%d", len(e.submitted)+1)
+	e.submitted = append(e.submitted, in)
+	e.mu.Unlock()
+
+	delayMs := 6 + rand.Intn(370) // 6ms-376ms, matching the real observed range
+	go func() {
+		time.Sleep(time.Duration(delayMs) * time.Millisecond)
+		e.registry.Publish(contracts.OrderUpdate{
+			TradeID: in.TradeUID, BrokerOrderID: id, Status: "FILLED", FilledQty: in.Quantity,
+		})
+	}()
+
+	return &ExecutionResult{IntentID: in.IntentID, BrokerOrderID: id, Status: "SUBMITTED"}, nil
+}
+
+func (e *delayedLiveExecutor) GetVerifiedFills(ctx context.Context) ([]BrokerFill, error) {
+	return nil, nil
+}
+
+func (e *delayedLiveExecutor) submittedCount() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return len(e.submitted)
+}
+
+// TestSquareOff_HandlesRealisticConcurrentLoadWithoutDuplicating replays
+// the actual incident at realistic scale: a 20-lot square-off (40 orders
+// across CE+PE at one lot each), each confirmed only via a delayed live
+// event drawn from the real observed latency distribution, with the DB
+// poll path providing nothing. Must still converge to exactly 40 orders,
+// never a duplicate round from treating in-flight orders as failed.
+func TestSquareOff_HandlesRealisticConcurrentLoadWithoutDuplicating(t *testing.T) {
+	store := NewMemoryStore()
+	tradeUID := "TRD_TEST_REALISTIC_LOAD_SQF"
+	tr := newTestSquareOffTrade(tradeUID)
+	tr.Lots = 20
+	tr.CEQty = 1300 // 20 lots x 65
+	tr.PEQty = 1300
+	store.SaveTrade(tr)
+
+	registry := NewOrderEventRegistry()
+	registry.SetHealthy(true)
+	exec := &delayedLiveExecutor{registry: registry}
+
+	svc := &Service{
+		Store:         store,
+		BrokerFactory: &fakeBrokerFactory{executor: exec},
+		OrderEvents:   registry,
+	}
+
+	if err := svc.SquareOff(tradeUID, "manual"); err != nil {
+		t.Fatalf("SquareOff returned error: %v", err)
+	}
+
+	tr2, ok := store.LoadTrade(tradeUID)
+	if !ok {
+		t.Fatalf("trade not found after SquareOff")
+	}
+	if tr2.CEQty != 0 || tr2.PEQty != 0 {
+		t.Fatalf("CEQty/PEQty = %d/%d, want 0/0", tr2.CEQty, tr2.PEQty)
+	}
+	if got := exec.submittedCount(); got != 40 {
+		t.Fatalf("orders submitted = %d, want exactly 40 (20 lots x 2 legs) -- more means a duplicate round was fired under realistic concurrent load", got)
 	}
 }
 

@@ -1,4 +1,8 @@
-  import { createSignal, createMemo, onMount, onCleanup, Index, Show, For } from 'solid-js';
+  import { createSignal, createMemo, createEffect, onMount, onCleanup, Index, Show, For } from 'solid-js';
+  import LutBuildTab from './LutBuildTab.jsx';
+  import StraddleBuildTab from './StraddleBuildTab.jsx';
+  import PaperSimTab from './PaperSimTab.jsx';
+  import SBPortfolioRows, { sbStore } from './SBPortfolioRows.jsx';
   import './App.css';
   import LatencyDashboard from './LatencyDashboard.jsx';
 
@@ -75,12 +79,24 @@
       return;
     }
 
+    // oc.lot_size is never actually populated by the live chain payload
+    // (confirmed by tracing feed-decoder -> snapshot-service -> here); use
+    // the live-fetched, per-symbol-correct lotSize() instead -- this value
+    // sizes a REAL order. lotSize() has no hardcoded fallback (see its
+    // definition), so 0/unset here means the real per-symbol lot size
+    // genuinely hasn't loaded yet -- refuse rather than guess, since a
+    // wrong guess would size a real order wrong.
+    const exchangeLotSize = lotSize();
+    if (!(exchangeLotSize > 0)) {
+      setDirectOrderStatus(`Failed: live lot size for ${selectedSymbol() || 'this symbol'} has not loaded yet -- refusing to guess. Wait a moment and retry.`);
+      return;
+    }
+
     const shortToken = leg === 'CE' ? toNum(row.ce_token) : toNum(row.pe_token);
     const ltp = leg === 'CE' ? toNum(row.ce_ltp) : toNum(row.pe_ltp);
     const symbol = normalize(selectedSymbol() || oc.symbol || 'NIFTY');
     const expiry = selectedExpiry() || oc.expiry || '';
     const strike = Math.round(toNum(row.strike));
-    const exchangeLotSize = toNum(oc.lot_size) || 65;
     const quantity = totalLots * exchangeLotSize;
     const orderCount = Math.ceil(totalLots / lotsPerOrder);
 
@@ -162,8 +178,10 @@
   async function handleModifyOrder() {
     const brokerOrderId = modifyOrderId().trim();
     const price = toNum(modifyOrderPrice());
-    const oc = optionChain();
-    const exchangeLotSize = toNum(oc.lot_size) || 65;
+    // See handleDirectTwoLotSingleOrder: oc.lot_size is never populated by
+    // the live chain payload, so this must use lotSize() (live-fetched,
+    // per-symbol) rather than fall back to a hardcoded 65 for a real order.
+    const exchangeLotSize = lotSize();
     const quantity = Math.max(1, Math.floor(toNum(manualTotalLots()))) * exchangeLotSize;
 
     if (!brokerOrderId) {
@@ -245,7 +263,6 @@
     tp_pnl_bps_of_spot: "0",
     square_off_time: "15:37:00",
     square_off_hard_time: "",
-    auto_risk_execution_enabled: true,
     straddle_div: "4",
     hedge_div: "57",
     hedge_threshold_delta: "",
@@ -293,6 +310,7 @@
       delta_neutral: true
     });
 
+    const [automationSizeText, setAutomationSizeText] = createSignal('65');
     const [automationConfig, setAutomationConfig] = createSignal({
       symbol: 'NIFTY',
       size: 1,
@@ -304,6 +322,7 @@
       hedge_frac: 1.0,
       sl_bps: 14,
       tp_bps: 14,
+      wing_pct: 0,
       buy_buffer: 2,
       sell_buffer: 2,
       order_lots_per_call: 1,
@@ -325,10 +344,16 @@
     const [manualHedgePreview, setManualHedgePreview] = createSignal(null);
     const [manualHedgeExecutions, setManualHedgeExecutions] = createSignal([]);
     const [terminalSellQty, setTerminalSellQty] = createSignal(1);
+    // What's shown in the Sell Quantity box while typing -- kept separate
+    // from terminalSellQty (the committed, lot-rounded value) so typing
+    // "2500" isn't stomped mid-keystroke by rounding to the nearest lot on
+    // every character. Rounding happens once, on blur.
+    const [terminalSellQtyText, setTerminalSellQtyText] = createSignal('65');
     const [manualRiskConfig, setManualRiskConfig] = createSignal({
       exit_time: '15:37:00',
       sl_bps: 14,
-      tp_bps: 14
+      tp_bps: 14,
+      wing_pct: 0
     });
     const [manualHedgeBusy, setManualHedgeBusy] = createSignal(false);
     const [scheduledBuilds, setScheduledBuilds] = createSignal([]);
@@ -336,6 +361,19 @@
     // never inherit an expiry, it has to be chosen here every time.
     const [automationExpiry, setAutomationExpiry] = createSignal('');
     const [portfolioTotals, setPortfolioTotals] = createSignal(null);
+    // Broker vs platform position check (GET /api/positions/check, every 30 s).
+    const [posCheck, setPosCheck] = createSignal(null);
+    {
+      const pullCheck = async () => {
+        try {
+          const d = await (await fetch("/api/positions/check")).json();
+          if (d.success) setPosCheck(d.check);
+        } catch (_) { /* gateway restarting */ }
+      };
+      pullCheck();
+      const t = setInterval(pullCheck, 30000);
+      onCleanup(() => clearInterval(t));
+    }
     const [manualHedgeError, setManualHedgeError] = createSignal('');
 
     const [optionChain, setOptionChain] = createSignal({
@@ -440,6 +478,16 @@
       ws.onmessage = (event) => {
       try {
         const raw = JSON.parse(event.data);
+
+        // LUT entry check (paper): handed to the LUT tab as-is.
+        if (raw.type === 'lut_update') {
+          window.dispatchEvent(new CustomEvent('lut_update', { detail: raw.data }));
+          return;
+        }
+        if (raw.type === 'sbuild_update') {
+          window.dispatchEvent(new CustomEvent('sbuild_update', { detail: raw.data }));
+          return;
+        }
 
         if (raw.type === 'straddle_update') {
           const data = raw.data || {};
@@ -612,6 +660,95 @@
       );
     });
 
+    // Single source of truth for lot size everywhere it's needed (quantity
+    // rounding, display, order sizing). The live chain payload (feed-decoder
+    // -> snapshot-service -> this WS) never actually carries a `lot_size`
+    // field -- confirmed by grepping both services, so `optionChain().lot_size`
+    // was silently always falling back to 65 for EVERY symbol, not just as a
+    // brief startup gap. Real lot sizes differ a lot (BANKNIFTY=15, SENSEX=20,
+    // FINNIFTY=40 as of 2026-09-23) and only NIFTY happened to also be 65,
+    // which is why the bug wasn't visible there. Fetched directly from
+    // contract-master's own DB-backed /api/lot-size, the same authoritative
+    // source the Go execution-gateway resolves from -- not hardcoded.
+    const [liveLotSize, setLiveLotSize] = createSignal(0);
+    createEffect(() => {
+      const symbol = selectedSymbol();
+      const expiry = selectedExpiry();
+      setLiveLotSize(0); // avoid showing the PREVIOUS symbol's lot size while this fetch is in flight
+      if (!symbol || !expiry) return;
+      const host = window.location.hostname;
+      fetch(`http://${host}:8010/api/lot-size?symbol=${encodeURIComponent(symbol)}&expiry=${encodeURIComponent(expiry)}`)
+        .then((r) => r.json())
+        .then((data) => {
+          // Guard against a slow response for a symbol/expiry the user has
+          // since switched away from landing late and overwriting the
+          // current selection's lot size.
+          if (symbol !== selectedSymbol() || expiry !== selectedExpiry()) return;
+          if (data?.success && Number(data.lot_size) > 0) {
+            setLiveLotSize(Number(data.lot_size));
+          }
+        })
+        .catch(() => {});
+    });
+    // No hardcoded numeric fallback here on purpose (this used to fall back
+    // to 65, which is only NIFTY's current lot size): if BANKNIFTY/FINNIFTY/
+    // etc. is selected before the live per-symbol lot size has loaded,
+    // silently guessing 65 would size a REAL order 2x/1.5x/2x too large or
+    // small. 0 means "not known yet" -- callers must treat that as blocking,
+    // never as a value to multiply a real order quantity by.
+    const lotSize = createMemo(() => liveLotSize() || toNum(optionChain().lot_size) || 0);
+
+    // Whole-portfolio live totals: every trade's own monitor snapshot summed
+    // (greeks and unrealized from OPEN trades, realized from all of today's
+    // trades). Wings are shown separately -- they're RM only and are already
+    // excluded from each trade's greeks/PnL by the monitor.
+    const portfolioLive = createMemo(() => {
+      const t = { open: 0, delta: 0, gamma: 0, theta: 0, vega: 0, unrealized: 0, realized: 0, wing: 0 };
+      const metricsByUid = straddleMetrics() || {};
+      for (const item of portfolioItems() || []) {
+        const uid = item.tradeUid || item.id;
+        const m = metricsByUid[uid] || {};
+        const st = String(m.status ?? item.status ?? "").toUpperCase();
+        const closed = st.replace(/^SBUILD_/, "").startsWith("CLOSED") || st === "FAILED";
+        // Realized from exchange fills (the summary): the live monitor reports
+        // 0 for an open trade, which would drop a partial exit's booked PnL.
+        t.realized += Number(item.realizedPnl ?? m.realized_pnl ?? 0) || 0;
+        t.wing += Number(item.wingRealizedPnl) || 0;
+        if (closed || st === "RECONCILIATION_REQUIRED") continue;
+        t.open += 1;
+        t.delta += Number(m.net_delta ?? item.netDelta ?? 0) || 0;
+        t.gamma += Number(m.net_gamma ?? item.netGamma ?? 0) || 0;
+        t.theta += Number(m.net_theta ?? item.netTheta ?? 0) || 0;
+        t.vega += Number(m.net_vega ?? item.netVega ?? 0) || 0;
+        t.unrealized += Number(m.unrealized_pnl ?? item.unrealizedPnl ?? 0) || 0;
+        t.wing += Number(m.wing_pnl) || 0;
+      }
+      // Live straddle builds (their open trade row is shown from the build's PMS).
+      for (const run of sbStore.holding()) {
+        if (run.mode !== "LIVE") continue;
+        const p = run.position || {};
+        const legRealized = (p.legs || []).reduce((a, l) => a + (Number(l.realized) || 0), 0);
+        t.open += 1;
+        t.delta += Number(p.net_delta) || 0;
+        t.gamma += Number(p.net_gamma) || 0;
+        t.realized += legRealized;
+        t.unrealized += (Number(p.pnl) || 0) - legRealized;
+      }
+      t.total = t.realized + t.unrealized;
+      return t;
+    });
+
+    // Keep the Sell Quantity / Automation size text boxes in sync with the
+    // committed, lot-rounded values -- but only the committed values, never
+    // on every keystroke (see the onInput handlers below), so free typing
+    // of e.g. "2500" is never interrupted mid-entry.
+    createEffect(() => {
+      setTerminalSellQtyText(String(terminalSellQty() * lotSize()));
+    });
+    createEffect(() => {
+      setAutomationSizeText(String(automationConfig().size * lotSize()));
+    });
+
     const atmRow = createMemo(() => {
       const chain = optionChain().chain || [];
       return chain.find((r) => r.is_atm || r.strike === optionChain().atm) || null;
@@ -696,7 +833,8 @@
         // one is, unless explicitly changed here.
         exit_time: manualRiskConfig().exit_time,
         sl_bps: manualRiskConfig().sl_bps,
-        tp_bps: manualRiskConfig().tp_bps
+        tp_bps: manualRiskConfig().tp_bps,
+        wing_pct: manualRiskConfig().wing_pct
       };
     };
 
@@ -871,6 +1009,9 @@
               status === "HEDGING" ||
               status === "SQUARING-OFF";
 
+            // Straddle-build trades are shown by their own panel (live PMS view).
+            if (status === "SBUILD") return false;
+
             return sameAccount && sameBroker && status !== "FAILED" && (hasLegs || usefulStatus);
           })
           .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
@@ -892,7 +1033,7 @@
           appendEventLog("warn", `Could not load today's executed trades: ${err.message}`);
         }
         const summaryByUid = Object.fromEntries(todaySummaries.map((t) => [t.trade_uid, t]));
-        const isClosedStatus = (status) => String(status || "").trim().toUpperCase().startsWith("CLOSED");
+        const isClosedStatus = (status) => String(status || "").trim().toUpperCase().replace(/^SBUILD_/, "").startsWith("CLOSED");
 
         const closedItems = todaySummaries
           .filter((t) => isClosedStatus(t.status))
@@ -920,9 +1061,11 @@
             peLtp: t.pe?.bought_avg ?? 0,
             netDelta: 0,
             realizedPnl: t.realized_pnl ?? 0,
+            wingRealizedPnl: t.wing_realized_pnl ?? 0,
+            pnlPerStraddle: t.pnl_per_straddle ?? 0,
             unrealizedPnl: 0,
             totalPnl: t.realized_pnl ?? 0,
-            config: {},
+            config: t.config || {},
             points_allowed: 0,
             closeReason: t.close_reason || "",
             closedAt: t.closed_at || "",
@@ -970,6 +1113,7 @@
           peLtp: tr.pe_ltp ?? 0,
           netDelta: tr.net_delta ?? 0,
           realizedPnl: summaryByUid[tr.trade_uid]?.realized_pnl ?? tr.realized_pnl ?? 0,
+          wingRealizedPnl: summaryByUid[tr.trade_uid]?.wing_realized_pnl ?? 0,
           executions: summaryByUid[tr.trade_uid]?.executions || [],
           unrealizedPnl: tr.unrealized_pnl ?? 0,
           totalPnl: tr.total_pnl ?? tr.live_pnl ?? 0,
@@ -1115,6 +1259,58 @@
     const isTradeClosed = (item) =>
       CLOSED_TRADE_STATUSES.has(String(item.status || "").trim().toUpperCase());
 
+    // Stop building (OMS only): no more build orders; resting ones are
+    // cancelled and what filled becomes an ACTIVE (partial) trade that the
+    // monitor (hedge / SL / TP / exit time) keeps running on.
+    const handlePortfolioStopBuild = async (item) => {
+      const tradeUid = item.tradeUid || item.id;
+      if (!tradeUid) return;
+      if (!window.confirm(`Stop building ${tradeUid}?\n\nNo more build orders are sent (resting ones are cancelled). What has filled stays open as a PARTIAL position and stays monitored (hedge / SL / TP / exit time).`)) return;
+      try {
+        const res = await fetch("/api/build/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trade_uid: tradeUid }) });
+        const data = await res.json();
+        appendEventLog(data.success ? "success" : "error", data.success ? `Stop building sent for ${tradeUid}: filled part will be monitored as partial` : `Stop building ${tradeUid}: ${data.error}`);
+      } catch (err) {
+        appendEventLog("error", `Stop building ${tradeUid}: ${err.message}`);
+      }
+    };
+
+    // Broker sync: match every order of this trade against the broker's own
+    // order book (broker order id AND our order tag), preview, then record
+    // any broker fill we missed under the trade. Never sends an order.
+    const handlePortfolioBrokerSync = async (item) => {
+      const tradeUid = item.tradeUid || item.id;
+      if (!tradeUid) return;
+      const call = async (apply) => {
+        const res = await fetch("/api/trade/broker-sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trade_uid: tradeUid, apply }) });
+        return res.json();
+      };
+      try {
+        const pv = await call(false);
+        if (!pv.success) { window.alert(`Broker sync ${tradeUid} failed: ${pv.error}`); return; }
+        const r = pv.result || {};
+        const lines = (r.rows || []).map((x) =>
+          `${x.side} ${x.leg} ${x.strike || ""} x${x.qty}  ours ${x.intent_id} / broker ${x.broker_order_id || "—"}  ` +
+          `recorded ${x.our_filled} vs broker ${x.broker_filled}${x.broker_price ? " @" + x.broker_price : ""}  [${x.match}] ${x.action}`);
+        const open = (r.open_legs || []).map((l) => `${l.OptionType || l.option_type} token ${l.Token || l.token} qty ${l.Qty ?? l.qty}`).join(", ") || "none";
+        const head = `Broker sync for ${tradeUid}\n(matched on broker order id AND our order tag)\n\n`;
+        if (!r.to_add) {
+          window.alert(head + lines.join("\n") + `\n\nEverything matches the broker -- nothing to sync. Open legs: ${open}`);
+          return;
+        }
+        if (!window.confirm(head + lines.join("\n") + `\n\n${r.to_add} broker fill(s) are missing from this trade. Record them under the trade now?\n(No order is sent. If a leg is left open the trade reopens so you can square it off.)`)) return;
+        const ap = await call(true);
+        if (!ap.success) { window.alert(`Broker sync apply failed: ${ap.error}`); return; }
+        const a = ap.result || {};
+        const openAfter = (a.open_legs || []).map((l) => `${l.OptionType || l.option_type} token ${l.Token || l.token} qty ${l.Qty ?? l.qty}`).join(", ") || "none";
+        appendEventLog("success", `Broker sync ${tradeUid}: recorded ${a.to_add} missing fill(s); status ${a.status_from} -> ${a.status_to}; open legs: ${openAfter}`);
+        window.alert(`Synced. Status ${a.status_from} -> ${a.status_to}. Open legs now: ${openAfter}`);
+        await refreshPortfolio();
+      } catch (err) {
+        appendEventLog("error", `Broker sync ${tradeUid}: ${err.message}`);
+      }
+    };
+
     const handlePortfolioSync = async (item) => {
       const tradeUid = item.tradeUid || item.id;
       if (!tradeUid) return;
@@ -1160,8 +1356,18 @@
           throw new Error(data.error || "manual hedge failed");
         }
 
+        // The server sizes Hedge Now from its own live delta and may place
+        // nothing (|delta| under half a lot) -- show what it actually did
+        // instead of always claiming a hedge went out.
+        if (!(Number(data.quantity) > 0)) {
+          const msg = data.message || "nothing to hedge";
+          appendEventLog("info", `Hedge for ${tradeUid}: ${msg}`);
+          alert(`No hedge placed: ${msg}`);
+          return;
+        }
+
         updatePortfolioStatus(tradeUid, "HEDGING");
-        appendEventLog("success", `Hedge submitted for ${tradeUid}`);
+        appendEventLog("success", `Hedge for ${tradeUid}: ${data.message || `${data.quantity} qty submitted`}`);
         await refreshPortfolio();
       } catch (err) {
         appendEventLog("error", `Hedge failed for ${tradeUid}: ${err.message}`);
@@ -1235,7 +1441,6 @@
 
         tp_pnl_bps_of_spot: cfg.tp_pnl_bps_of_spot ?? cfg.tpPnlBpsOfSpot ?? "0",
 
-        auto_risk_execution_enabled: cfg.auto_risk_execution_enabled ?? cfg.autoRiskExecutionEnabled ?? true,
 
         straddle_div: cfg.straddle_div ?? cfg.straddleDiv ?? "4",
 
@@ -1323,24 +1528,13 @@
 
       }
 
-      payload.auto_risk_execution_enabled = !!form.auto_risk_execution_enabled;
 
 
-      const squareOffTime = String(form.square_off_time ?? "").trim();
 
-      if (squareOffTime !== "") {
-
-        if (!/^\d{2}:\d{2}:\d{2}$/.test(squareOffTime)) {
-
-          setModifyTradeError("Square-off time must be HH:MM:SS, for example 15:37:00.");
-
-          return;
-
-        }
-
-        payload.square_off_time = squareOffTime;
-
-      }
+      // Only the visible Exit Time field is sent (square_off_hard_time
+      // below). The old alert-only square_off_time is never sent: it looked
+      // like an exit time but never exited (live 2026-09-30: 15:38 saved
+      // there, trade still exited at 15:37).
 
 
       const squareOffHardTime = String(form.square_off_hard_time ?? "").trim();
@@ -1547,6 +1741,7 @@
         straddle_filter: cfg.straddle_filter,
         sl_bps: cfg.sl_bps,
         tp_bps: cfg.tp_bps,
+        wing_pct: cfg.wing_pct,
         buy_buffer: cfg.buy_buffer,
         sell_buffer: cfg.sell_buffer,
         hedge_div: cfg.hedge_div,
@@ -1741,6 +1936,24 @@
             Automation
           </button>
           <button
+            class={`tab-btn ${activeTab() === 'lut' ? 'active' : ''}`}
+            onClick={() => setActiveTab('lut')}
+          >
+            LUT Build
+          </button>
+          <button
+            class={`tab-btn ${activeTab() === 'sbuild' ? 'active' : ''}`}
+            onClick={() => setActiveTab('sbuild')}
+          >
+            Straddle Build
+          </button>
+          <button
+            class={`tab-btn ${activeTab() === 'papersim' ? 'active' : ''}`}
+            onClick={() => setActiveTab('papersim')}
+          >
+            Paper Sim
+          </button>
+          <button
             class={`tab-btn ${activeTab() === 'logs' ? 'active' : ''}`}
             onClick={() => setActiveTab('logs')}
           >
@@ -1844,29 +2057,31 @@
 
               <div class="metric-card">
                 <div class="metric-label">Sell Quantity</div>
-                <div style={{ 'margin-top': '10px' }}>
+                <div class="metric-input-row">
                   <input
                     class="symbol-select"
                     type="number"
-                    min={toNum(optionChain().lot_size) || 65}
-                    step={toNum(optionChain().lot_size) || 65}
-                    value={terminalSellQty() * (toNum(optionChain().lot_size) || 65)}
-                    onInput={(e) => {
-                      const lotSize = toNum(optionChain().lot_size) || 65;
-                      const rawQty = Number(e.target.value) || lotSize;
-                      const lots = Math.max(1, Math.round(rawQty / lotSize));
+                    min={lotSize()}
+                    step={lotSize()}
+                    value={terminalSellQtyText()}
+                    onInput={(e) => setTerminalSellQtyText(e.target.value)}
+                    onBlur={(e) => {
+                      const ls = lotSize();
+                      const rawQty = Number(e.target.value) || ls;
+                      const lots = Math.max(1, Math.round(rawQty / ls));
                       setTerminalSellQty(lots);
+                      setTerminalSellQtyText(String(lots * ls));
                     }}
                   />
                 </div>
-                <div class="metric-sub" style={{ 'margin-top': '10px' }}>
-                  Total quantity, rounded to the nearest {toNum(optionChain().lot_size) || 65} (lot size) &middot; {terminalSellQty()} lot{terminalSellQty() === 1 ? '' : 's'}
+                <div class="metric-sub">
+                  Total quantity, rounded to the nearest {lotSize()} (lot size) &middot; {terminalSellQty()} lot{terminalSellQty() === 1 ? '' : 's'}
                 </div>
               </div>
 
               <div class="metric-card">
                 <div class="metric-label">Risk &amp; Exit (manual build)</div>
-                <div style={{ display: 'flex', gap: '8px', 'margin-top': '10px' }}>
+                <div class="metric-input-row" style={{ display: 'flex', gap: '8px' }}>
                   <input
                     class="symbol-select"
                     type="text"
@@ -1888,9 +2103,18 @@
                     value={manualRiskConfig().tp_bps}
                     onInput={(e) => setManualRiskConfig((prev) => ({ ...prev, tp_bps: Number(e.target.value) || 0 }))}
                   />
+                  <input
+                    class="symbol-select"
+                    type="number"
+                    step="0.5"
+                    min="0"
+                    title="Wings % (0 = no wings)"
+                    value={manualRiskConfig().wing_pct}
+                    onInput={(e) => setManualRiskConfig((prev) => ({ ...prev, wing_pct: Number(e.target.value) || 0 }))}
+                  />
                 </div>
-                <div class="metric-sub" style={{ 'margin-top': '10px' }}>
-                  Exit time / SL bps / TP bps &middot; applied to SELL STRADDLE and custom sell below
+                <div class="metric-sub">
+                  Exit time / SL bps / TP bps / Wings % &middot; applied to SELL STRADDLE and custom sell below
                 </div>
               </div>
 
@@ -1915,14 +2139,16 @@
 
               <div class="metric-card">
                 <div class="metric-label">Custom Strangle/Straddle</div>
-                <div class="custom-strike-inputs">
+                <div class="custom-strike-inputs metric-input-row">
                   <input
+                    class="symbol-select"
                     type="number"
                     placeholder="CE Strike"
                     value={customCeStrike()}
                     onInput={(e) => setCustomCeStrike(e.target.value)}
                   />
                   <input
+                    class="symbol-select"
                     type="number"
                     placeholder="PE Strike"
                     value={customPeStrike()}
@@ -2159,7 +2385,7 @@
                 </label>
 
                 <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px", "grid-column": "1 / -1" }}>
-                  Hard Square-Off Time (HH:MM) -- real verified exit
+                  Exit Time (HH:MM or HH:MM:SS) -- squares off the trade at this time
                   <input
                     type="text"
                     placeholder="15:15"
@@ -2169,28 +2395,8 @@
                   />
                 </label>
 
-                <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px", "grid-column": "1 / -1" }}>
-                  Auto Square-Off Time (HH:MM:SS) -- alert only, no exit
-                  <input
-                    type="text"
-                    placeholder="15:37:00"
-                    value={modifyTradeForm().square_off_time}
-                    onInput={(event) => setModifyTradeForm((form) => ({ ...form, square_off_time: event.currentTarget.value }))}
-                    style={{ padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
-                  />
-                </label>
+                
 
-                <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px", "grid-column": "1 / -1" }}>
-                  <div style={{ display: "flex", "align-items": "center", gap: "8px" }}>
-                    <input
-                      type="checkbox"
-                      checked={modifyTradeForm().auto_risk_execution_enabled}
-                      onChange={(event) => setModifyTradeForm((form) => ({ ...form, auto_risk_execution_enabled: event.currentTarget.checked }))}
-                      style={{ width: "18px", height: "18px" }}
-                    />
-                    <span>Enable Auto Risk Execution (TP/SL)</span>
-                  </div>
-                </label>
               </div>
 
               <Show when={modifyTradeError()}>
@@ -2229,6 +2435,25 @@
               <div class="panel-subtitle">Today's open and closed trades with realized PnL. Click a row to see what executed.</div>
             </div>
 
+            <Show when={posCheck() && (posCheck().ok === false || (posCheck().reopened || []).length > 0)}>
+              <div style={{ margin: "0 0 12px", padding: "10px 12px", border: "1px solid #c62828", "border-radius": "8px", background: "rgba(198,40,40,0.12)", "font-size": "13px" }}>
+                <strong style={{ color: "#ff5252" }}>Broker and platform positions differ</strong>
+                <span style={{ opacity: 0.7 }}> (checked {posCheck().at || "—"})</span>
+                <Show when={posCheck().error}><div>{posCheck().error}</div></Show>
+                <For each={posCheck().diffs || []}>
+                  {(d) => (
+                    <div>
+                      {d.symbol || d.token}: broker net <strong>{d.broker_qty}</strong> vs platform <strong>{d.our_qty}</strong>
+                      {(d.trades || []).length ? ` — trade ${d.trades.join(", ")}` : " — not in any platform trade"}
+                    </div>
+                  )}
+                </For>
+                <Show when={(posCheck().reopened || []).length > 0}>
+                  <div>Reopened by auto broker sync (missed fills recorded): {posCheck().reopened.join(", ")} — square them off from their cards.</div>
+                </Show>
+              </div>
+            </Show>
+
             <Show when={portfolioTotals()}>
               <div style={{ display: "flex", gap: "18px", "flex-wrap": "wrap", "align-items": "baseline", margin: "0 0 14px" }}>
                 <span>{portfolioTotals().date}</span>
@@ -2242,11 +2467,33 @@
                   </strong>{" "}
                   <span style={{ opacity: "0.6", "font-size": "12px" }}>(gross of brokerage and charges)</span>
                 </span>
+                <span>
+                  Wings realized{" "}
+                  <strong class={Number(portfolioTotals().wing_realized_pnl) >= 0 ? "positive" : "negative"}>
+                    ₹{fmt(portfolioTotals().wing_realized_pnl ?? 0, 2)}
+                  </strong>{" "}
+                  <span style={{ opacity: "0.6", "font-size": "12px" }}>(RM only, not in Realized)</span>
+                </span>
+              </div>
+            </Show>
+
+
+            <Show when={portfolioItems().length > 0}>
+              <div class="portfolio-live-totals" style={{ display: "flex", gap: "18px", "flex-wrap": "wrap", "align-items": "baseline", margin: "0 0 14px", padding: "10px 12px", border: "1px solid rgba(255,255,255,0.08)", "border-radius": "8px" }}>
+                <strong>Portfolio ({portfolioLive().open} open)</strong>
+                <span>Net Δ <strong class={portfolioLive().delta >= 0 ? "positive" : "negative"}>{fmt(portfolioLive().delta, 2)}</strong></span>
+                <span>Γ <strong>{fmt(portfolioLive().gamma, 4)}</strong></span>
+                <span>Θ <strong>{fmt(portfolioLive().theta, 2)}</strong></span>
+                <span>Vega <strong>{fmt(portfolioLive().vega, 2)}</strong></span>
+                <span>Unrealized <strong class={portfolioLive().unrealized >= 0 ? "positive" : "negative"}>₹{fmt(portfolioLive().unrealized, 2)}</strong></span>
+                <span>Realized <strong class={portfolioLive().realized >= 0 ? "positive" : "negative"}>₹{fmt(portfolioLive().realized, 2)}</strong></span>
+                <span>Total PnL <strong class={portfolioLive().total >= 0 ? "positive" : "negative"}>₹{fmt(portfolioLive().total, 2)}</strong></span>
+                <span style={{ opacity: 0.8 }}>Wings <strong class={portfolioLive().wing >= 0 ? "positive" : "negative"}>₹{fmt(portfolioLive().wing, 2)}</strong> <span style={{ opacity: "0.6", "font-size": "12px" }}>(RM only, not in totals)</span></span>
               </div>
             </Show>
 
             <Show
-              when={portfolioItems().length > 0}
+              when={portfolioItems().length > 0 || sbStore.holding().length > 0}
               fallback={
                 <div class="empty-state">
                   No current-account portfolio items yet. Build/sell a straddle or press SYNC after broker execution.
@@ -2275,9 +2522,12 @@
                       <th style={{ padding: "10px" }}>Unrealized</th>
                       <th style={{ padding: "10px" }}>Realized</th>
                       <th style={{ padding: "10px" }}>Total PnL</th>
+                      <th style={{ padding: "10px" }}>PnL / Straddle</th>
+                      <th style={{ padding: "10px" }} title="Wings are RM only: not in Realized / Total PnL">Wing PnL</th>
                     </tr>
                   </thead>
                   <tbody>
+                    <SBPortfolioRows expanded={expandedTrade()} onToggle={(u) => setExpandedTrade(expandedTrade() === u ? null : u)} />
                     <For each={portfolioItems()}>
                       {(item) => {
                         const uid = item.tradeUid || item.id;
@@ -2285,14 +2535,47 @@
                         const isExpanded = () => expandedTrade() === uid;
                         const toggle = () => setExpandedTrade(isExpanded() ? null : uid);
 
-                        const status = () => metrics().status ?? item.status ?? "ACTIVE";
-                        const isClosed = () => String(status()).toUpperCase().startsWith("CLOSED");
+                        // A closed trade's stored status wins: the last live snapshot
+                        // was pushed while it was still active and is never updated.
+                        const status = () => String(item.status || "").toUpperCase().replace(/^SBUILD_/, "").startsWith("CLOSED")
+                          ? item.status
+                          : (metrics().status ?? item.status ?? "ACTIVE");
+                        const isClosed = () => String(status()).toUpperCase().replace(/^SBUILD_/, "").startsWith("CLOSED");
                         const isPending = () => String(status()).toUpperCase() === "PENDING";
+                        // ACTIVE (partial): the build stopped part-way (e.g. margin) and
+                        // the trade is tracked at what really filled.
+                        const partialCfg = () => (live().config || item.config || {});
+                        const isPartialFill = () => !isClosed() && Boolean(partialCfg().partial_fill);
+                        const partialTitle = () => `Partial build: filled CE ${ceQty()} / PE ${peQty()} of requested CE ${partialCfg().requested_ce_qty || "?"} / PE ${partialCfg().requested_pe_qty || "?"}`;
 
                         // Values below are from GET /api/snapshots/:tradeUid.
                         const live = () => metrics() || {};
-                        const livePositions = () =>
+                        const monitorPositions = () =>
                           Array.isArray(live().live_positions) ? live().live_positions : [];
+                        // No monitor running (e.g. a trade reopened by Sync with Broker):
+                        // show the open legs from the DB (exchange fills) at live prices.
+                        const [dbLegs, setDbLegs] = createSignal([]);
+                        createEffect(() => {
+                          if (!isExpanded() || isClosed() || monitorPositions().length > 0) return;
+                          let stop = false;
+                          const pull = async () => {
+                            try {
+                              const d = await (await fetch(`/api/trade/open-legs?trade_uid=${encodeURIComponent(uid)}`)).json();
+                              if (!stop && d.success) setDbLegs(d.legs || []);
+                            } catch (_) { /* gateway restarting */ }
+                          };
+                          pull();
+                          const t = setInterval(pull, 3000);
+                          onCleanup(() => { stop = true; clearInterval(t); });
+                        });
+                        const livePositions = () => {
+                          if (monitorPositions().length > 0) return monitorPositions();
+                          if (isClosed()) return [];
+                          return dbLegs().map((l) => ({
+                            option_type: l.option_type, strike: l.strike, action: l.action, quantity: Math.abs(Number(l.qty) || 0),
+                            entry_price: l.entry_price, ltp: l.ltp, pnl: l.pnl, iv: 0, token: l.token, fromDb: true,
+                          }));
+                        };
 
                         const leg = (type) => livePositions().find(
                           (position) => String(position.option_type || "").toUpperCase() === type
@@ -2341,12 +2624,25 @@
                         const netDelta = () => live().net_delta ?? item.netDelta ?? 0;
                         const netGamma = () => live().net_gamma ?? item.netGamma ?? 0;
 
-                        const rPnl = () => live().realized_pnl ?? item.realizedPnl ?? 0;
-                        const uPnl = () => isClosed() ? 0 : (live().unrealized_pnl ?? item.unrealizedPnl ?? 0);
-                        const totalPnl = () =>
-                          isClosed()
-                            ? rPnl()
-                            : (live().total_pnl ?? live().live_pnl ?? (rPnl() + uPnl()));
+                        // Realized = booked so far from exchange fills (partial
+                        // exits included); the live monitor only values the legs
+                        // still open, so for an open trade total = realized + open MTM.
+                        const rPnl = () => Number(item.realizedPnl ?? live().realized_pnl ?? 0) || 0;
+                        const uPnl = () => isClosed() ? 0 : (Number(live().unrealized_pnl ?? item.unrealizedPnl ?? 0) || 0);
+                        const totalPnl = () => (isClosed() ? rPnl() : rPnl() + uPnl());
+
+                        // Closed: realized / (lots x lot size) from the summary.
+                        // Open: the live monitor's own pnl_per_straddle.
+                        const pnlPerStraddleValue = () => {
+                          if (isClosed()) return Number(item.pnlPerStraddle ?? 0) || 0;
+                          const q = Number(live().straddle_quantity) || 0;
+                          return q > 0 ? totalPnl() / q : (Number(live().pnl_per_straddle ?? item.pnlPerStraddle ?? 0) || 0);
+                        };
+                        // Wings: realized so far (e.g. sold back on a hedge or
+                        // at exit) + live MTM of wings still held (open only).
+                        const wingPnlValue = () =>
+                          (Number(item.wingRealizedPnl) || 0) +
+                          (isClosed() ? 0 : (Number(live().wing_pnl) || 0));
 
                         const pointsOut = () => {
                           const value = live().points_out ?? live().pts_out;
@@ -2362,6 +2658,14 @@
                           if (value != null && Number.isFinite(Number(value))) return Number(value);
                           return item.points_allowed ?? item.pointsAllowed ?? 0;
                         };
+
+                        // Pushed live from executeBuild over the straddle_update
+                        // websocket while status is BUILDING (see build_orders_submitted/
+                        // build_orders_total in TradeSnapshot) -- not present once a
+                        // trade leaves BUILDING, so this only renders during a build.
+                        const buildTotal = () => Number(live().build_orders_total) || 0;
+                        const buildSubmitted = () => Number(live().build_orders_submitted) || 0;
+                        const isBuilding = () => String(status()).toUpperCase() === "BUILDING";
 
                         return (
                           <>
@@ -2380,8 +2684,13 @@
                               <td style={{ padding: "10px" }}>{item.strike || metrics().strike || "—"}</td>
                               <td style={{ padding: "10px" }}>
                                 <span class={`status-badge ${(status()).toLowerCase()}`}>
-                                  {status()}
+                                  {status()}<Show when={isPartialFill()}><span title={partialTitle()}> · PARTIAL</span></Show>
                                 </span>
+                                <Show when={isBuilding() && buildTotal() > 0}>
+                                  <div style={{ "font-size": "11px", opacity: 0.75, "margin-top": "2px" }}>
+                                    Building {buildSubmitted()}/{buildTotal()} orders placed
+                                  </div>
+                                </Show>
                               </td>
                               <td style={{ padding: "10px" }}>{ceQty()}</td>
                               <td style={{ padding: "10px" }}>₹{fmt(ceLtp(), 2)}</td>
@@ -2397,10 +2706,14 @@
                               <td style={{ padding: "10px" }} class={uPnl() >= 0 ? "positive" : "negative"}>₹{fmt(uPnl(), 2)}</td>
                               <td style={{ padding: "10px" }} class={rPnl() >= 0 ? "positive" : "negative"}>₹{fmt(rPnl(), 2)}</td>
                               <td style={{ padding: "10px" }} class={totalPnl() >= 0 ? "positive" : "negative"}>₹{fmt(totalPnl(), 2)}</td>
+                              <td style={{ padding: "10px" }} class={pnlPerStraddleValue() >= 0 ? "positive" : "negative"}>₹{fmt(pnlPerStraddleValue(), 2)}</td>
+                              <td style={{ padding: "10px", opacity: 0.8 }} class={wingPnlValue() >= 0 ? "positive" : "negative"}>
+                                <Show when={wingPnlValue() !== 0 || Number(live().wing_pct) > 0} fallback={"—"}>₹{fmt(wingPnlValue(), 2)}</Show>
+                              </td>
                             </tr>
                             <Show when={isExpanded()}>
                               <tr class="details-row">
-                                <td colSpan="15" style={{ padding: "16px", background: "#101a33" }}>
+                                <td colSpan="17" style={{ padding: "16px", background: "#101a33" }}>
                                   <div class="trade-dashboard">
 
                                     <div class="trade-dashboard-header">
@@ -2410,7 +2723,7 @@
                                       </div>
 
                                       <span class={`status-badge ${String(status()).toLowerCase()}`}>
-                                        {status()}
+                                        {status()}<Show when={isPartialFill()}><span title={partialTitle()}> · PARTIAL</span></Show>
                                       </span>
                                     </div>
 
@@ -2448,6 +2761,14 @@
                                         <div class="trade-metric-row">
                                           <span>Points Allowed</span>
                                           <strong>{fmt(pointsAllowed(), 2)}</strong>
+                                        </div>
+                                        <div class="trade-metric-row">
+                                          <span>&nbsp;&nbsp;Straddle ÷ S-Div{live().allowed_strike ? ` (${Math.round(live().allowed_strike)})` : ""}</span>
+                                          <strong>{fmt(live().points_allowed_straddle ?? 0, 2)}</strong>
+                                        </div>
+                                        <div class="trade-metric-row">
+                                          <span>&nbsp;&nbsp;Spot × IV ÷ H-Div</span>
+                                          <strong>{fmt(live().points_allowed_iv ?? 0, 2)}</strong>
                                         </div>
 
                                         <div class="trade-metric-row">
@@ -2615,23 +2936,7 @@
                                           </strong>
                                         </div>
 
-                                        <div class="monitor-row">
-                                          <span>Square-Off</span>
-                                          <strong>
-                                            {(() => {
-                                              const value =
-                                                item.config?.square_off_time ??
-                                                item.config?.squareOffTime ??
-                                                "";
-
-                                              const text = String(value || "");
-
-                                              return /^\d{2}:\d{2}:\d{2}$/.test(text)
-                                                ? text
-                                                : "Not configured";
-                                            })()}
-                                          </strong>
-                                        </div>
+                                        
 
                                         <div class="monitor-row">
                                           {/* Mirrors execution-gateway's decideHedge: the floor under
@@ -2677,16 +2982,137 @@
                                       </section>
 
                                       <section class="trade-card recent-events-card">
-                                        <div class="trade-card-title">Recent Events</div>
-                                        <div class="trade-events-empty">Not shown here yet</div>
-                                        <div class="trade-event-hint">
-                                          Risk breaches, SL, TP, time-square-off, and order events
-                                          are available in the Logs tab.
+                                        <div class="trade-card-title">Modifications</div>
+                                        <Show
+                                          when={(item.config?.modifications || []).filter((m) => m.field !== "Auto risk execution").length > 0}
+                                          fallback={<div class="trade-events-empty">No changes made to this trade</div>}
+                                        >
+                                          <For each={[...(item.config?.modifications || []).filter((m) => m.field !== "Auto risk execution")].reverse()}>
+                                            {(m) => (
+                                              <div class="monitor-row">
+                                                <span>{m.time} · {m.field}</span>
+                                                <strong>{m.from} → {m.to}</strong>
+                                              </div>
+                                            )}
+                                          </For>
+                                        </Show>
+                                      </section>
+
+                                      <section class="trade-card manual-actions-card">
+                                        <div class="trade-card-title">Broker check</div>
+                                        <div class="manual-actions">
+                                          <button
+                                            class="dashboard-btn cyan"
+                                            onClick={(event) => {
+                                              event.stopPropagation();
+                                              handlePortfolioBrokerSync(item);
+                                            }}
+                                          >
+                                            Sync with Broker
+                                          </button>
+                                          <span style={{ "font-size": "12px", opacity: "0.65", "align-self": "center" }}>
+                                            Matches this trade's orders with the broker order book (broker order id + our order id). Preview first; never sends an order.
+                                          </span>
+                                        </div>
+                                      </section>
+
+                                      <Show when={!isClosed()}>
+                                      <section class="trade-card manual-actions-card">
+                                        <div class="trade-card-title">Manual Actions</div>
+
+                                        <div class="manual-actions">
+                                          <Show when={String(status()).toUpperCase() === "BUILDING"}>
+                                            <button
+                                              class="dashboard-btn yellow"
+                                              onClick={(event) => {
+                                                event.stopPropagation();
+                                                handlePortfolioStopBuild(item);
+                                              }}
+                                            >
+                                              Stop Building
+                                            </button>
+                                          </Show>
+                                          <button
+                                            class="dashboard-btn blue"
+                                            onClick={(event) => {
+                                              event.stopPropagation();
+                                              handlePortfolioHedge(item);
+                                            }}
+                                          >
+                                            Hedge Now
+                                          </button>
+
+                                          <button
+                                            class="dashboard-btn purple"
+                                            onClick={(event) => {
+                                              event.stopPropagation();
+                                              openModifyTradeModal(item);
+                                            }}
+                                          >
+                                            Modify Config
+                                          </button>
+
+
+                                          <button
+                                            class="dashboard-btn yellow"
+                                            onClick={(event) => {
+                                              event.stopPropagation();
+                                              handlePortfolioPartialSquareOff(item);
+                                            }}
+                                          >
+                                            Partial Exit
+                                          </button>
+
+                                          <button
+                                            class="dashboard-btn red"
+                                            onClick={(event) => {
+                                              event.stopPropagation();
+                                              handlePortfolioSquareOff(item);
+                                            }}
+                                          >
+                                            Full Exit
+                                          </button>
+                                        </div>
+                                      </section>
+                                      </Show>
+
+                                      <section class="trade-card position-details-card">
+                                        <div class="trade-card-title">Trade Parameters (current values{(item.config?.modifications || []).filter((m) => m.field !== "Auto risk execution").length ? ", after modifications" : ""})</div>
+                                        <div style={{ display: "grid", "grid-template-columns": "repeat(auto-fit, minmax(210px, 1fr))", gap: "4px 18px" }}>
+                                          <div class="monitor-row"><span>Expiry / Strike</span><strong>{item.expiry || "—"} / {item.strike || "—"}</strong></div>
+                                          <div class="monitor-row"><span>Lots × lot size</span><strong>{item.lots || "—"} × {item.lotSize || "—"}</strong></div>
+                                          <div class="monitor-row"><span>Broker / account</span><strong>{item.brokerName} / {item.accountId}</strong></div>
+                                          <div class="monitor-row"><span>SL (bps of spot)</span><strong>{item.config?.sl_pnl_bps_of_spot || "off"}</strong></div>
+                                          <div class="monitor-row"><span>TP (bps of spot)</span><strong>{item.config?.tp_pnl_bps_of_spot || "off"}</strong></div>
+                                          <div class="monitor-row"><span>Exit time</span><strong>{(() => {
+                                            const d = new Date(item.config?.square_off_hard_time || "");
+                                            return Number.isNaN(d.getTime()) || d.getUTCFullYear() < 2000 ? "not set" : d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+                                          })()}</strong></div>
+                                          <div class="monitor-row"><span>Straddle div / Hedge div</span><strong>{item.config?.straddle_div || 4} / {item.config?.hedge_div || 57}</strong></div>
+                                          <div class="monitor-row"><span>Hedge min (bps of spot)</span><strong>{item.config?.hedge_min_threshold_bps ?? "8 (default)"}</strong></div>
+                                          <div class="monitor-row"><span>Wings</span><strong>{Number(item.config?.wing_pct) > 0 ? `${item.config.wing_pct}%` : "off"}</strong></div>
+                                          <div class="monitor-row"><span>Buy / sell buffer</span><strong>{item.config?.buy_buffer ?? "—"} / {item.config?.sell_buffer ?? "—"}</strong></div>
+                                          <div class="monitor-row"><span>Order lots per call</span><strong>{item.config?.order_lots_per_call || "auto"}</strong></div>
+                                          <div class="monitor-row"><span>Partial build</span><strong>{item.config?.partial_fill ? `yes (requested CE ${item.config.requested_ce_qty} / PE ${item.config.requested_pe_qty})` : "no"}</strong></div>
                                         </div>
                                       </section>
 
                                       <section class="trade-card position-details-card">
                                         <div class="trade-card-title">Position Details</div>
+                                        <Show when={livePositions()[0]?.fromDb}>
+                                          <div class="metric-sub">From exchange fills (no monitor running on this trade) &middot; live LTP / PnL</div>
+                                        </Show>
+                                        <Show when={Number(live().wing_pct) > 0}>
+                                          <div class="metric-sub">
+                                            Wings {live().wing_pct}% &middot; RM only, not in delta / PnL / SL / TP
+                                            {" "}&middot; wing PnL ₹{fmt(live().wing_pnl ?? 0, 2)}
+                                            {" "}&middot;{" "}
+                                            <span class={(Number(live().wing_net_ce) === 0 && Number(live().wing_net_pe) === 0) ? "positive" : "negative"}>
+                                              net CE {live().wing_net_ce ?? 0} / PE {live().wing_net_pe ?? 0}
+                                              {(Number(live().wing_net_ce) === 0 && Number(live().wing_net_pe) === 0) ? " (balanced)" : " (NOT balanced)"}
+                                            </span>
+                                          </div>
+                                        </Show>
 
                                         <div class="position-table-wrap">
                                           <table class="trade-position-table">
@@ -2706,14 +3132,20 @@
                                             <tbody>
                                               <For each={livePositions()}>
                                                 {(position) => (
-                                                  <tr>
-                                                    <td>{position.option_type || "—"}</td>
+                                                  <tr style={position.wing ? { opacity: 0.6 } : undefined}>
+                                                    <td>{position.option_type || "—"}{position.wing ? " WING (RM)" : ""}</td>
                                                     <td>{position.strike || "—"}</td>
                                                     <td class={String(position.action || "").toUpperCase() === "BUY" ? "positive" : "negative"}>
                                                       {position.action || "—"}
                                                     </td>
                                                     <td>{position.quantity ?? "—"}</td>
-                                                    <td>₹{fmt((position.option_type || "").toUpperCase() === "CE" ? ceEntry() : peEntry(), 2)}</td>
+                                                    <td>₹{fmt(
+                                                      // Straddle legs keep the reconciled trade entry; any other
+                                                      // leg (e.g. an ATM hedge) shows its own fill price.
+                                                      position.fromDb ? (position.entry_price ?? 0)
+                                                        : Number(position.token) === Number(item.ceToken) ? ceEntry()
+                                                        : Number(position.token) === Number(item.peToken) ? peEntry()
+                                                        : (position.entry_price ?? 0), 2)}</td>
                                                     <td>₹{fmt(position.ltp ?? 0, 2)}</td>
                                                     <td class={Number(position.pnl || 0) >= 0 ? "positive" : "negative"}>
                                                       ₹{fmt(position.pnl ?? 0, 2)}
@@ -2791,63 +3223,7 @@
                                         </section>
                                       </Show>
 
-                                      <Show when={!isClosed()}>
-                                      <section class="trade-card manual-actions-card">
-                                        <div class="trade-card-title">Manual Actions</div>
 
-                                        <div class="manual-actions">
-                                          <button
-                                            class="dashboard-btn blue"
-                                            onClick={(event) => {
-                                              event.stopPropagation();
-                                              handlePortfolioHedge(item);
-                                            }}
-                                          >
-                                            Hedge Now
-                                          </button>
-
-                                          <button
-                                            class="dashboard-btn purple"
-                                            onClick={(event) => {
-                                              event.stopPropagation();
-                                              openModifyTradeModal(item);
-                                            }}
-                                          >
-                                            Modify Config
-                                          </button>
-
-                                          <button
-                                            class="dashboard-btn cyan"
-                                            onClick={(event) => {
-                                              event.stopPropagation();
-                                              handlePortfolioSync(item);
-                                            }}
-                                          >
-                                            Sync Trade
-                                          </button>
-
-                                          <button
-                                            class="dashboard-btn yellow"
-                                            onClick={(event) => {
-                                              event.stopPropagation();
-                                              handlePortfolioPartialSquareOff(item);
-                                            }}
-                                          >
-                                            Partial Exit
-                                          </button>
-
-                                          <button
-                                            class="dashboard-btn red"
-                                            onClick={(event) => {
-                                              event.stopPropagation();
-                                              handlePortfolioSquareOff(item);
-                                            }}
-                                          >
-                                            Full Exit
-                                          </button>
-                                        </div>
-                                      </section>
-                                      </Show>
 
                                     </div>
                                   </div>
@@ -2894,31 +3270,26 @@
                   <thead>
                     <tr>
                       <th>Symbol</th>
+                      <th>Token</th>
                       <th>Side</th>
-                      <th>Qty</th>
-                      <th>Avg Price</th>
-                      <th>LTP</th>
-                      <th>PnL</th>
+                      <th>Net Qty</th>
+                      <th>Product</th>
+                      <th>Day net amount</th>
                     </tr>
                   </thead>
                   <tbody>
                     <For each={positions()}>
                       {(pos) => {
-                        const avg = pos.AveragePrice || pos.avgPrice || 0;
-                        const ltp = pos.LTP || pos.ltp || 0;
-                        const qty = pos.Quantity || pos.quantity || 0;
-                        const side = pos.OrderSide || pos.side || "";
-                        const pnl = (ltp - avg) * qty * (side === "BUY" ? 1 : -1);
-                        const pnlClass = pnl >= 0 ? "positive" : "negative";
-
+                        // Broker's own net position (GreekSoft NPRequest).
+                        const q = Number(pos.net_qty) || 0;
                         return (
                           <tr>
-                            <td>{pos.TradingSymbol || pos.symbol}</td>
-                            <td>{side}</td>
-                            <td>{qty}</td>
-                            <td>₹{avg.toFixed(2)}</td>
-                            <td>₹{ltp.toFixed(2)}</td>
-                            <td class={pnlClass}>₹{pnl.toFixed(2)}</td>
+                            <td>{pos.symbol}</td>
+                            <td>{pos.token}</td>
+                            <td class={q < 0 ? "negative" : "positive"}>{q < 0 ? "SHORT" : "LONG"}</td>
+                            <td>{q}</td>
+                            <td>{pos.product_type || "—"}</td>
+                            <td>₹{(Number(pos.day_net_amount) || 0).toFixed(2)}</td>
                           </tr>
                         );
                       }}
@@ -3009,18 +3380,20 @@
                 <input
                   class="symbol-select"
                   type="number"
-                  min={toNum(optionChain().lot_size) || 65}
-                  step={toNum(optionChain().lot_size) || 65}
-                  value={automationConfig().size * (toNum(optionChain().lot_size) || 65)}
-                  onInput={(e) => {
-                    const lotSize = toNum(optionChain().lot_size) || 65;
-                    const rawQty = Number(e.target.value) || lotSize;
-                    const lots = Math.max(1, Math.round(rawQty / lotSize));
+                  min={lotSize()}
+                  step={lotSize()}
+                  value={automationSizeText()}
+                  onInput={(e) => setAutomationSizeText(e.target.value)}
+                  onBlur={(e) => {
+                    const ls = lotSize();
+                    const rawQty = Number(e.target.value) || ls;
+                    const lots = Math.max(1, Math.round(rawQty / ls));
                     setAutomationConfig((prev) => ({ ...prev, size: lots }));
+                    setAutomationSizeText(String(lots * ls));
                   }}
                 />
                 <div class="field-note">
-                  Rounded to the nearest {toNum(optionChain().lot_size) || 65} (lot size) &middot; {automationConfig().size} lot{automationConfig().size === 1 ? '' : 's'}
+                  Rounded to the nearest {lotSize()} (lot size) &middot; {automationConfig().size} lot{automationConfig().size === 1 ? '' : 's'}
                 </div>
               </div>
 
@@ -3066,6 +3439,18 @@
                   type="number"
                   value={automationConfig().tp_bps}
                   onInput={(e) => setAutomationConfig((prev) => ({ ...prev, tp_bps: Number(e.target.value) || 0 }))}
+                />
+              </div>
+
+              <div class="control-block">
+                <label class="control-label">Wings % (0 = off)</label>
+                <input
+                  class="symbol-select"
+                  type="number"
+                  step="0.5"
+                  min="0"
+                  value={automationConfig().wing_pct}
+                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, wing_pct: Number(e.target.value) || 0 }))}
                 />
               </div>
 
@@ -3279,320 +3664,213 @@
               <div class="panel-subtitle">Manual hedge preview and execution tools</div>
             </div>
 
-            <div class="automation-grid">
-              <div class="section-title">Manual hedge inputs</div>
-
-              <div class="control-block">
-                <label class="control-label">Net Delta</label>
-                <input
-                  class="symbol-select"
-                  type="number"
-                  step="0.01"
-                  value={manualHedgeConfig().net_delta}
-                  onInput={(e) => setManualHedgeConfig((prev) => ({ ...prev, net_delta: Number(e.target.value) || 0 }))}
-                />
+            <div class="testing-card">
+              <div class="testing-card-header">
+                <div>
+                  <div class="testing-card-title">Manual hedge inputs</div>
+                  <div class="testing-card-subtitle">Preview computes intents only; execute sends real orders</div>
+                </div>
               </div>
 
-              <div class="control-block">
-                <label class="control-label">Lot Size</label>
-                <input
-                  class="symbol-select"
-                  type="number"
-                  value={manualHedgeConfig().lot_size}
-                  onInput={(e) => setManualHedgeConfig((prev) => ({ ...prev, lot_size: Number(e.target.value) || 0 }))}
-                />
+              <div class="testing-field-grid">
+                <div class="testing-field">
+                  <label>Net Delta</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={manualHedgeConfig().net_delta}
+                    onInput={(e) => setManualHedgeConfig((prev) => ({ ...prev, net_delta: Number(e.target.value) || 0 }))}
+                  />
+                </div>
+
+                <div class="testing-field">
+                  <label>Lot Size</label>
+                  <input
+                    type="number"
+                    value={manualHedgeConfig().lot_size}
+                    onInput={(e) => setManualHedgeConfig((prev) => ({ ...prev, lot_size: Number(e.target.value) || 0 }))}
+                  />
+                </div>
+
+                <div class="testing-field">
+                  <label>Qty to Hedge/Sell</label>
+                  <input
+                    type="number"
+                    value={manualHedgeConfig().quantity}
+                    onInput={(e) => setManualHedgeConfig((prev) => ({ ...prev, quantity: Number(e.target.value) || 0 }))}
+                  />
+                </div>
               </div>
 
-              <div class="control-block">
-                <label class="control-label">Qty to Hedge/Sell</label>
-                <input
-                  class="symbol-select"
-                  type="number"
-                  value={manualHedgeConfig().quantity}
-                  onInput={(e) => setManualHedgeConfig((prev) => ({ ...prev, quantity: Number(e.target.value) || 0 }))}
-                />
+              <div class="testing-actions">
+                <button class="dashboard-btn cyan" onClick={handleManualHedgePreview} disabled={manualHedgeBusy()}>
+                  {manualHedgeBusy() ? 'WORKING...' : 'PREVIEW HEDGE'}
+                </button>
+                <button class="dashboard-btn purple" onClick={handleManualHedgeExecute} disabled={manualHedgeBusy()}>
+                  EXECUTE HEDGE
+                </button>
               </div>
 
-              <div class="section-title">Actions</div>
-
-              <button class="buy-btn" onClick={handleManualHedgePreview} disabled={manualHedgeBusy()}>
-                {manualHedgeBusy() ? 'WORKING...' : 'PREVIEW HEDGE'}
-              </button>
-              <button
-                class="action-btn"
-                onClick={handleManualHedgeExecute}
-                disabled={manualHedgeBusy()}
-                style={{ background: '#7b61ff', color: '#fff' }}
-              >
-                EXECUTE HEDGE
-              </button>
+              <Show when={manualHedgeError()}>
+                <div class="testing-status-msg err">{manualHedgeError()}</div>
+              </Show>
             </div>
 
-            <div class="panel-header" style={{ 'margin-top': '18px' }}>
-              <div class="panel-title">Direct manual order</div>
-              <div class="panel-subtitle">Sells the live ATM leg directly (bypasses hedge preview above)</div>
-            </div>
+            <div class="testing-card">
+              <div class="testing-card-header">
+                <div>
+                  <div class="testing-card-title">Direct manual order</div>
+                  <div class="testing-card-subtitle">Sells the live ATM leg directly (bypasses hedge preview above)</div>
+                </div>
+              </div>
 
-            <div class="automation-grid">
-              <div
-                style={{
-                  display: 'grid',
-                  'grid-template-columns': 'repeat(4, minmax(130px, 1fr))',
-                  gap: '10px',
-                  padding: '12px',
-                  'margin-bottom': '10px',
-                  border: '1px solid #2b3b55',
-                  'border-radius': '6px',
-                  background: '#0b1220'
-                }}
-              >
-                <label style={{ color: '#aab8cf', 'font-size': '12px', 'font-weight': '600' }}>
-                  Total lots to sell
+              <div class="testing-field-grid">
+                <div class="testing-field">
+                  <label>Total lots to sell</label>
                   <input
                     type="number"
                     min="1"
                     step="1"
                     value={manualTotalLots()}
                     onInput={(e) => setManualTotalLots(Math.max(1, Math.floor(toNum(e.currentTarget.value))))}
-                    style={{
-                      display: 'block',
-                      width: '100%',
-                      padding: '8px',
-                      'margin-top': '6px',
-                      color: '#e5eefc',
-                      background: '#111b2d',
-                      border: '1px solid #344766',
-                      'border-radius': '4px'
-                    }}
                   />
-                </label>
+                </div>
 
-                <label style={{ color: '#aab8cf', 'font-size': '12px', 'font-weight': '600' }}>
-                  Lots in each order
+                <div class="testing-field">
+                  <label>Lots in each order</label>
                   <input
                     type="number"
                     min="1"
                     step="1"
                     value={manualLotsPerOrder()}
                     onInput={(e) => setManualLotsPerOrder(Math.max(1, Math.floor(toNum(e.currentTarget.value))))}
-                    style={{
-                      display: 'block',
-                      width: '100%',
-                      padding: '8px',
-                      'margin-top': '6px',
-                      color: '#e5eefc',
-                      background: '#111b2d',
-                      border: '1px solid #344766',
-                      'border-radius': '4px'
-                    }}
                   />
-                </label>
+                </div>
 
-                <label style={{ color: '#aab8cf', 'font-size': '12px', 'font-weight': '600' }}>
-                  Execution type
+                <div class="testing-field">
+                  <label>Execution type</label>
                   <select
                     value={manualOrderType()}
                     onChange={(e) => setManualOrderType(e.currentTarget.value)}
-                    style={{
-                      display: 'block',
-                      width: '100%',
-                      padding: '8px',
-                      'margin-top': '6px',
-                      color: '#e5eefc',
-                      background: '#111b2d',
-                      border: '1px solid #344766',
-                      'border-radius': '4px'
-                    }}
                   >
                     <option value="1">LIMIT at live LTP</option>
                     <option value="2">MARKET</option>
                   </select>
-                </label>
+                </div>
 
-                <div
-                  style={{
-                    padding: '8px 10px',
-                    color: '#aab8cf',
-                    'font-size': '12px',
-                    'font-weight': '600',
-                    background: '#111b2d',
-                    border: '1px solid #344766',
-                    'border-radius': '4px'
-                  }}
-                >
+                <div class="testing-summary">
                   Order calculation
-                  <div style={{ color: '#dbeafe', 'font-family': 'monospace', 'font-size': '13px', 'margin-top': '7px' }}>
-                    {`${manualTotalLots()} × ${(toNum(optionChain().lot_size) || 65)} = ${manualTotalLots() * (toNum(optionChain().lot_size) || 65)} qty`}
-                  </div>
-                  <div style={{ color: '#94a3b8', 'font-family': 'monospace', 'font-size': '11px', 'margin-top': '4px' }}>
-                    {`${Math.ceil(manualTotalLots() / manualLotsPerOrder())} order clip(s) • ${manualLotsPerOrder()} lot(s)/clip`}
-                  </div>
+                  <strong>{`${manualTotalLots()} × ${(lotSize())} = ${manualTotalLots() * (lotSize())} qty`}</strong>
+                  <div class="sub">{`${Math.ceil(manualTotalLots() / manualLotsPerOrder())} order clip(s) • ${manualLotsPerOrder()} lot(s)/clip`}</div>
                 </div>
               </div>
 
-              <div
-                style={{
-                  display: 'flex',
-                  gap: '8px',
-                  'align-items': 'center',
-                  padding: '8px 10px',
-                  border: '1px solid #2b3b55',
-                  'border-radius': '4px',
-                  background: '#0b1220'
-                }}
-              >
-                <span style={{ color: '#aab8cf', 'font-size': '12px' }}>Live ATM leg:</span>
+              <div class="leg-toggle-row">
+                <span class="label">Live ATM leg</span>
                 <button
                   type="button"
-                  class="action-btn"
+                  class={`leg-pill ce ${directOrderLeg() === 'CE' ? 'active' : ''}`}
                   onClick={() => setDirectOrderLeg('CE')}
                   disabled={directOrderBusy()}
-                  style={{
-                    background: directOrderLeg() === 'CE' ? '#2563eb' : '#172033',
-                    color: '#fff',
-                    padding: '7px 12px'
-                  }}
                 >
                   CE
                 </button>
                 <button
                   type="button"
-                  class="action-btn"
+                  class={`leg-pill pe ${directOrderLeg() === 'PE' ? 'active' : ''}`}
                   onClick={() => setDirectOrderLeg('PE')}
                   disabled={directOrderBusy()}
-                  style={{
-                    background: directOrderLeg() === 'PE' ? '#7c3aed' : '#172033',
-                    color: '#fff',
-                    padding: '7px 12px'
-                  }}
                 >
                   PE
                 </button>
-                <span style={{ color: '#8fa5c7', 'font-family': 'monospace', 'font-size': '12px' }}>
+                <span class="leg-meta">
                   {atmRow()
-                    ? `${selectedSymbol()} ${selectedExpiry() || optionChain().expiry} ${directOrderLeg()} ${Math.round(atmRow().strike)} | token=${directOrderLeg() === 'CE' ? atmRow().ce_token : atmRow().pe_token} | LTP=${fmt(directOrderLeg() === 'CE' ? atmRow().ce_ltp : atmRow().pe_ltp)} | lot=${manualTotalLots()} | qty=${manualTotalLots() * (toNum(optionChain().lot_size) || 65)}`
+                    ? `${selectedSymbol()} ${selectedExpiry() || optionChain().expiry} ${directOrderLeg()} ${Math.round(atmRow().strike)} | token=${directOrderLeg() === 'CE' ? atmRow().ce_token : atmRow().pe_token} | LTP=${fmt(directOrderLeg() === 'CE' ? atmRow().ce_ltp : atmRow().pe_ltp)} | lot=${manualTotalLots()} | qty=${manualTotalLots() * (lotSize())}`
                     : 'Waiting for live ATM option data…'}
                 </span>
               </div>
 
               <button
-                class="action-btn"
+                class="big-action-btn"
+                style={{ background: 'var(--red)' }}
                 onClick={handleDirectTwoLotSingleOrder}
                 disabled={manualHedgeBusy() || directOrderBusy()}
-                style={{ background: '#dc3545', color: '#fff' }}
               >
                 {directOrderBusy()
-                  ? `SUBMITTING ${manualTotalLots() * (toNum(optionChain().lot_size) || 65)}...`
-                  : `SELL LIVE ATM ${directOrderLeg()} — ${manualTotalLots()} LOT${manualTotalLots() === 1 ? '' : 'S'} / ${manualTotalLots() * (toNum(optionChain().lot_size) || 65)} QTY / ${Math.ceil(manualTotalLots() / Math.max(1, Math.floor(toNum(manualLotsPerOrder()))))} ORDER${Math.ceil(manualTotalLots() / Math.max(1, Math.floor(toNum(manualLotsPerOrder())))) === 1 ? '' : 'S'}`}
+                  ? `SUBMITTING ${manualTotalLots() * (lotSize())}...`
+                  : `SELL LIVE ATM ${directOrderLeg()} — ${manualTotalLots()} LOT${manualTotalLots() === 1 ? '' : 'S'} / ${manualTotalLots() * (lotSize())} QTY / ${Math.ceil(manualTotalLots() / Math.max(1, Math.floor(toNum(manualLotsPerOrder()))))} ORDER${Math.ceil(manualTotalLots() / Math.max(1, Math.floor(toNum(manualLotsPerOrder())))) === 1 ? '' : 'S'}`}
               </button>
 
-            </div>
+              <Show when={directOrderStatus()}>
+                <div class={`testing-status-msg mono ${directOrderStatus().startsWith('Failed:') ? 'err' : 'ok'}`}>
+                  {directOrderStatus()}
+                </div>
+              </Show>
 
-            <div class="panel-header" style={{ 'margin-top': '18px' }}>
-              <div class="panel-title">Modify order</div>
-              <div class="panel-subtitle">Re-price a resting order this account already placed (e.g. one from Direct manual order above)</div>
-            </div>
-            <div
-              style={{
-                display: 'grid',
-                'grid-template-columns': 'repeat(3, minmax(160px, 1fr)) auto',
-                gap: '10px',
-                'align-items': 'end'
-              }}
-            >
-              <label style={{ color: '#aab8cf', 'font-size': '12px', 'font-weight': '600' }}>
-                Broker order id
-                <input
-                  type="text"
-                  placeholder="e.g. 120000037"
-                  value={modifyOrderId()}
-                  onInput={(e) => setModifyOrderId(e.currentTarget.value)}
+              <Show when={directOrderResult()}>
+                <pre
                   style={{
-                    display: 'block', width: '100%', padding: '8px', 'margin-top': '6px',
-                    color: '#e5eefc', background: '#111b2d', border: '1px solid #344766', 'border-radius': '4px'
+                    'margin-top': '10px',
+                    padding: '12px',
+                    overflow: 'auto',
+                    'border-radius': '8px',
+                    border: '1px solid var(--border)',
+                    background: '#09111f',
+                    color: '#b9d7ff',
+                    'font-size': '12px',
+                    'text-align': 'left'
                   }}
-                />
-              </label>
-              <label style={{ color: '#aab8cf', 'font-size': '12px', 'font-weight': '600' }}>
-                New price
-                <input
-                  type="number"
-                  step="0.05"
-                  value={modifyOrderPrice()}
-                  onInput={(e) => setModifyOrderPrice(e.currentTarget.value)}
-                  style={{
-                    display: 'block', width: '100%', padding: '8px', 'margin-top': '6px',
-                    color: '#e5eefc', background: '#111b2d', border: '1px solid #344766', 'border-radius': '4px'
-                  }}
-                />
-              </label>
-              <div style={{ color: '#8fa5c7', 'font-size': '12px', padding: '8px' }}>
-                Quantity: {Math.max(1, Math.floor(toNum(manualTotalLots()))) * (toNum(optionChain().lot_size) || 65)} (from "Total lots to sell" above)
-              </div>
-              <button
-                class="action-btn"
-                onClick={handleModifyOrder}
-                disabled={modifyOrderBusy()}
-                style={{ background: '#f3b51b', color: '#131313', padding: '9px 14px' }}
-              >
-                {modifyOrderBusy() ? 'MODIFYING...' : 'MODIFY ORDER'}
-              </button>
+                >
+                  {JSON.stringify(directOrderResult(), null, 2)}
+                </pre>
+              </Show>
             </div>
-            <Show when={modifyOrderStatus()}>
-              <div
-                class="empty-state"
-                style={{
-                  'margin-top': '10px',
-                  color: modifyOrderStatus().startsWith('Failed:') ? '#ff8080' : '#a7f3d0',
-                  'text-align': 'left'
-                }}
-              >
-                {modifyOrderStatus()}
+
+            <div class="testing-card">
+              <div class="testing-card-header">
+                <div>
+                  <div class="testing-card-title">Modify order</div>
+                  <div class="testing-card-subtitle">Re-price a resting order this account already placed (e.g. one from Direct manual order above)</div>
+                </div>
               </div>
-            </Show>
 
-            <Show when={manualHedgeError()}>
-              <div class="empty-state" style={{ 'margin-top': '12px', color: '#ff8080' }}>
-                {manualHedgeError()}
+              <div class="testing-modify-row">
+                <div class="testing-field">
+                  <label>Broker order id</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 120000037"
+                    value={modifyOrderId()}
+                    onInput={(e) => setModifyOrderId(e.currentTarget.value)}
+                  />
+                </div>
+                <div class="testing-field">
+                  <label>New price</label>
+                  <input
+                    type="number"
+                    step="0.05"
+                    value={modifyOrderPrice()}
+                    onInput={(e) => setModifyOrderPrice(e.currentTarget.value)}
+                  />
+                </div>
+                <div class="testing-summary">
+                  Quantity (from "Total lots to sell" above)
+                  <strong>{Math.max(1, Math.floor(toNum(manualTotalLots()))) * (lotSize())}</strong>
+                </div>
+                <button class="dashboard-btn yellow" onClick={handleModifyOrder} disabled={modifyOrderBusy()}>
+                  {modifyOrderBusy() ? 'MODIFYING...' : 'MODIFY ORDER'}
+                </button>
               </div>
-            </Show>
 
-            <Show when={directOrderStatus()}>
-              <div
-                class="empty-state"
-                style={{
-                  'margin-top': '12px',
-                  color: directOrderStatus().startsWith('Failed:') ? '#ff8080' : '#a7f3d0',
-                  'text-align': 'left',
-                  'font-family': 'monospace',
-                  'white-space': 'pre-wrap'
-                }}
-              >
-                {directOrderStatus()}
-              </div>
-            </Show>
-
-            <Show when={directOrderResult()}>
-              <pre
-                style={{
-                  'margin-top': '10px',
-                  padding: '12px',
-                  overflow: 'auto',
-                  'border-radius': '6px',
-                  border: '1px solid #2b3b55',
-                  background: '#09111f',
-                  color: '#b9d7ff',
-                  'font-size': '12px',
-                  'text-align': 'left'
-                }}
-              >
-                {JSON.stringify(directOrderResult(), null, 2)}
-              </pre>
-            </Show>
-
+              <Show when={modifyOrderStatus()}>
+                <div class={`testing-status-msg ${modifyOrderStatus().startsWith('Failed:') ? 'err' : 'ok'}`}>
+                  {modifyOrderStatus()}
+                </div>
+              </Show>
+            </div>
 
             <Show when={manualHedgePreview()}>
-              <div class="portfolio-card" style={{ 'margin-top': '14px' }}>
+              <div class="portfolio-card" style={{ 'margin-top': '16px' }}>
                 <div class="portfolio-header">
                   <strong>Manual Hedge Preview</strong>
                   <span class="status-badge active">
@@ -3657,6 +3935,18 @@
               </div>
             </Show>
           </section>
+        </Show>
+
+        <Show when={activeTab() === 'lut'}>
+          <LutBuildTab />
+        </Show>
+
+        <Show when={activeTab() === 'sbuild'}>
+          <StraddleBuildTab />
+        </Show>
+
+        <Show when={activeTab() === 'papersim'}>
+          <PaperSimTab />
         </Show>
 
         <Show when={activeTab() === 'logs'}>

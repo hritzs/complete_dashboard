@@ -118,6 +118,19 @@ func (s *Store) ApplyOrderUpdate(ctx context.Context, update normalize.OrderUpda
 		exchangeOrderIDArg = update.ExchangeOrderID
 	}
 
+	// The "AND status NOT IN (...)" guard stops a late, out-of-order,
+	// non-terminal push (e.g. an ACKED that Iris sent before the FILLED it
+	// already superseded, but which arrives here after) from regressing an
+	// already-terminal order back to a non-terminal status. Confirmed live
+	// 2026-09-23: a 154-order build (77 lots x 2 legs, fired in well under
+	// a second) hit this constantly -- 104 of 154 orders ended up
+	// permanently stuck showing SUBMITTED/ACKED in the DB despite having
+	// actually filled (the separate, idempotent fills/trade-leg accounting
+	// below was never affected -- real PnL and position tracking stayed
+	// correct throughout), which is also why the reconciler's stuck-order
+	// recovery poller kept finding orders to (uselessly) re-poll for them.
+	// order_events below still records every push regardless, terminal or
+	// not, for a complete audit trail.
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE orders
 		SET status = $1,
@@ -126,6 +139,7 @@ func (s *Store) ApplyOrderUpdate(ctx context.Context, update normalize.OrderUpda
 		    exchange_order_id = COALESCE($4, exchange_order_id),
 		    updated_at = NOW()
 		WHERE id = $5
+		  AND status NOT IN ('FILLED', 'CANCELLED', 'REJECTED')
 	`, string(update.Status), update.FilledQtyToday, update.PendingQty, exchangeOrderIDArg, orderID); err != nil {
 		return ApplyResult{}, fmt.Errorf("update order id=%d: %w", orderID, err)
 	}
@@ -213,13 +227,37 @@ func ensureTradeLeg(ctx context.Context, tx *sql.Tx, tradeID int64, contractID i
 }
 
 func recomputeTradeLegFromPersistedFills(ctx context.Context, tx *sql.Tx, tradeID int64, contractID int64) error {
+	// Count each ORDER's real fill once. The same fill lands in `fills` from
+	// up to three writers with different fill_ids -- this reconciler
+	// (per-push deltas) and the execution gateway (cumulative snapshots
+	// "<BROKER>:<order>[...]") -- so summing raw rows double/triple-counted
+	// every fill (confirmed live 2026-09-28: a 1040/910 position recorded
+	// as 2080/1820). Per order: sum our deltas, take the max gateway
+	// snapshot, use the larger. Must stay identical to the execution
+	// gateway's perOrderFillsSQL -- both recompute the same trade_legs row.
 	rows, err := tx.QueryContext(ctx, `
-		SELECT o.side, f.fill_quantity, f.fill_price
-		FROM fills f
-		JOIN orders o ON o.id = f.order_id
-		WHERE f.trade_id = $1
-		  AND o.contract_id = $2
-		ORDER BY f.fill_timestamp, f.id
+		WITH per_order_raw AS (
+			SELECT
+				o.side,
+				COALESCE(SUM(f.fill_quantity) FILTER (WHERE NOT gw.is_gw), 0) AS r_qty,
+				COALESCE(SUM(f.fill_quantity * f.fill_price) FILTER (WHERE NOT gw.is_gw), 0) AS r_val,
+				COALESCE(MAX(f.fill_quantity) FILTER (WHERE gw.is_gw), 0) AS g_qty,
+				(ARRAY_AGG(f.fill_price ORDER BY f.fill_quantity DESC, f.id DESC) FILTER (WHERE gw.is_gw))[1] AS g_px
+			FROM fills f
+			JOIN orders o ON o.id = f.order_id
+			CROSS JOIN LATERAL (
+				SELECT COALESCE(o.broker_name, '') <> ''
+				   AND UPPER(f.fill_id) LIKE UPPER(o.broker_name) || ':%' AS is_gw
+			) gw
+			WHERE f.trade_id = $1
+			  AND o.contract_id = $2
+			GROUP BY o.id, o.side
+		)
+		SELECT
+			side,
+			CASE WHEN r_qty > 0 THEN r_qty ELSE g_qty END,
+			(CASE WHEN r_qty > 0 THEN r_val ELSE g_qty * COALESCE(g_px, 0) END)::float8
+		FROM per_order_raw
 	`, tradeID, contractID)
 	if err != nil {
 		return fmt.Errorf("load fills for trade leg trade_id=%d contract_id=%d: %w", tradeID, contractID, err)
@@ -235,18 +273,18 @@ func recomputeTradeLegFromPersistedFills(ctx context.Context, tx *sql.Tx, tradeI
 		var (
 			side  string
 			qty   int64
-			price float64
+			value float64
 		)
-		if err := rows.Scan(&side, &qty, &price); err != nil {
+		if err := rows.Scan(&side, &qty, &value); err != nil {
 			return fmt.Errorf("scan leg fill: %w", err)
 		}
 		switch strings.ToUpper(strings.TrimSpace(side)) {
 		case "BUY":
 			buyQty += qty
-			buyValue += float64(qty) * price
+			buyValue += value
 		case "SELL":
 			sellQty += qty
-			sellValue += float64(qty) * price
+			sellValue += value
 		}
 	}
 	if err := rows.Err(); err != nil {

@@ -294,20 +294,30 @@ func lookupLotSize(lots LotSizeLookup, exchange, symbol string, expiry time.Time
 	return 0
 }
 
+// fallbackLotSize's values are verified live against GreekSoft's own
+// getAllContract scrip master (2026-09-23, via libs/broker-greeksoft/cmd/
+// lotsizeprobe) -- consistent across every contract row for each symbol,
+// no ambiguity. A previous version of this table had BANKNIFTY=15,
+// FINNIFTY=40, MIDCPNIFTY=65, BANKEX=15, all wrong (off by 2x/1.5x/1.5x/2x)
+// -- confirmed wrong live when IRIS rejected a real BANKNIFTY order sized
+// off it ("Lot size and Qty is Not Matched In Request"). Whatever fed those
+// numbers (this table, or whatever it was copied from) was never checked
+// against the broker's own contract master. Re-verify against
+// lotsizeprobe before changing any of these again.
 func fallbackLotSize(symbol string) int {
 	switch strings.ToUpper(strings.TrimSpace(symbol)) {
 	case "NIFTY":
 		return 65
 	case "BANKNIFTY":
-		return 15
+		return 30
 	case "FINNIFTY":
-		return 40
+		return 60
 	case "MIDCPNIFTY":
-		return 65
+		return 120
 	case "SENSEX":
 		return 20
 	case "BANKEX":
-		return 15
+		return 30
 	default:
 		return 0
 	}

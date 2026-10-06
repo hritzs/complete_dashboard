@@ -4,6 +4,8 @@
 #include <cmath>
 #include <algorithm>
 #include <cctype>
+#include <array>
+#include <chrono>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -17,9 +19,25 @@ void GreeksCalculator::process_tick(int token, double ltp, double bid, double as
             std::string base = info.symbol.substr(0, info.symbol.find("FUT"));
             chain_builder_->update_spot_price(base, ltp, volume, oi); 
         } else {
-            chain_builder_->update_option_price(token, ltp, volume, oi);
+            chain_builder_->update_option_price(token, ltp, bid, ask, volume, oi);
         }
     }
+}
+
+void GreeksCalculator::process_depth(int token, const double bid_px[5], const uint32_t bid_qty[5],
+                                     const double ask_px[5], const uint32_t ask_qty[5], const ContractInfo& info) {
+    if (!chain_builder_) return;
+    if (info.symbol.find("FUT") != std::string::npos) return; // options only
+    std::array<DepthLevel, 5> bids{}, asks{};
+    for (int i = 0; i < 5; ++i) {
+        bids[i].price = bid_px[i];
+        bids[i].qty = bid_qty[i];
+        asks[i].price = ask_px[i];
+        asks[i].qty = ask_qty[i];
+    }
+    const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    chain_builder_->update_option_depth(token, bids, asks, now_ms);
 }
 
 namespace greeks {

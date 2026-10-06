@@ -142,6 +142,25 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	// Generic live event from the gateway (e.g. the LUT entry check):
+	// {"type": "lut_update", "data": {...}} is broadcast to UI clients as-is.
+	http.HandleFunc("/api/push-event", func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Type string          `json:"type"`
+			Data json.RawMessage `json:"data"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.Type == "" {
+			http.Error(w, "type and data required", http.StatusBadRequest)
+			return
+		}
+		out, _ := json.Marshal(map[string]interface{}{"type": payload.Type, "data": payload.Data})
+		select {
+		case hub.broadcast <- out:
+		default: // never block the gateway on a slow UI
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
 	// -------------------------------------------------------
 	// REST fallback: /api/option-chain/{SYMBOL}?expiry=DDMMMYYYY
 	// If expiry param given  → return that exact expiry from cache

@@ -131,6 +131,13 @@ func (f *OMSFeed) GetVerifiedFills(ctx context.Context) ([]trading.BrokerFill, e
 		JOIN contracts c ON c.id = o.contract_id
 		JOIN fills fl ON fl.order_id = o.id
 		WHERE o.created_at::date = CURRENT_DATE
+		  -- Exchange fills only (written by the reconciler). The gateway's
+		  -- own "<BROKER>:<order>..." rows are copies of what THIS query
+		  -- returned earlier; summing them in fed each verification pass
+		  -- its own previous answer, so a second pass doubled every order
+		  -- (live 2026-09-30: 65-lot orders recorded as 130 filled).
+		  AND NOT (COALESCE(o.broker_name, '') <> ''
+		           AND UPPER(fl.fill_id) LIKE UPPER(o.broker_name) || ':%')
 		GROUP BY o.id, o.broker_order_id, o.side, c.broker_token, o.status
 		HAVING COALESCE(SUM(fl.fill_quantity), 0) > 0
 	`)

@@ -22,6 +22,7 @@ type BuildRiskConfig struct {
 	SellBuffer  float64
 	HedgeDiv    float64
 	StraddleDiv float64
+	WingPct     float64 // -> MonitorConfig.WingPct; 0 = no wings
 }
 
 // ParseClockTodayIST parses "HH:MM" or "HH:MM:SS" as a time today in IST.
@@ -62,11 +63,14 @@ func (r *BuildRiskConfig) Validate(entryAt time.Time) error {
 	}
 	for name, v := range map[string]float64{
 		"sl_bps": r.SlBps, "tp_bps": r.TpBps, "buy_buffer": r.BuyBuffer, "sell_buffer": r.SellBuffer,
-		"hedge_div": r.HedgeDiv, "straddle_div": r.StraddleDiv,
+		"hedge_div": r.HedgeDiv, "straddle_div": r.StraddleDiv, "wing_pct": r.WingPct,
 	} {
 		if v < 0 {
 			return fmt.Errorf("%s must be >= 0", name)
 		}
+	}
+	if r.WingPct > maxWingPct {
+		return fmt.Errorf("wing_pct %.2f is above the %.0f%% limit", r.WingPct, maxWingPct)
 	}
 	return nil
 }
@@ -101,6 +105,9 @@ func applyBuildRiskConfig(cfg *MonitorConfig, r *BuildRiskConfig, now time.Time)
 	}
 	if r.StraddleDiv > 0 {
 		cfg.StraddleDiv = r.StraddleDiv
+	}
+	if r.WingPct > 0 {
+		cfg.WingPct = r.WingPct
 	}
 	return nil
 }

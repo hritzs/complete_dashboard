@@ -3,6 +3,7 @@ package trading
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -74,10 +75,10 @@ func TestApplyBuildRiskConfig(t *testing.T) {
 	if err := applyBuildRiskConfig(&cfg, &BuildRiskConfig{}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if cfg != base {
+	if !reflect.DeepEqual(cfg, base) {
 		t.Fatalf("empty risk config changed the defaults: %+v", cfg)
 	}
-	if err := applyBuildRiskConfig(&cfg, nil, time.Now()); err != nil || cfg != base {
+	if err := applyBuildRiskConfig(&cfg, nil, time.Now()); err != nil || !reflect.DeepEqual(cfg, base) {
 		t.Fatalf("nil risk config: %v %+v", err, cfg)
 	}
 	if err := applyBuildRiskConfig(&cfg, &BuildRiskConfig{ExitTime: "junk"}, time.Now()); err == nil {

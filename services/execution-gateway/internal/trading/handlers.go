@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -175,6 +176,7 @@ func (h *Handlers) ConfigBuild(w http.ResponseWriter, r *http.Request) {
 		SellBuffer:  req.SellBuffer,
 		HedgeDiv:    req.HedgeDiv,
 		StraddleDiv: req.StraddleDiv,
+		WingPct:     req.WingPct,
 	}
 	// Reject a bad exit time now, while no order exists, not at entry time.
 	if err := risk.Validate(runAt); err != nil {
@@ -430,7 +432,37 @@ func (h *Handlers) ManualHedge(w http.ResponseWriter, r *http.Request) {
 	}
 	tradeUID := parts[2]
 
-	if err := h.Service.ManualHedge(context.Background(), tradeUID); err != nil {
+	// Without ?lots: hedge the position's complete live delta (nearest
+	// whole lot, see ManualHedgeNow). ?lots=N is an explicit manual size,
+	// e.g. to test the freeze-qty tranche logic.
+	var lots int64
+	var err error
+	if raw := strings.TrimSpace(r.URL.Query().Get("lots")); raw != "" {
+		parsed, perr := strconv.Atoi(raw)
+		if perr != nil || parsed <= 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("invalid lots %q: must be a positive integer", raw),
+			})
+			return
+		}
+		lots = int64(parsed)
+		err = h.Service.ManualHedgeLots(context.Background(), tradeUID, parsed)
+	} else {
+		lots, err = h.Service.ManualHedgeNow(context.Background(), tradeUID)
+		if err == nil && lots == 0 {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"message": fmt.Sprintf("nothing to hedge for %s: live net delta is under one lot", tradeUID),
+			})
+			return
+		}
+	}
+
+	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -443,7 +475,7 @@ func (h *Handlers) ManualHedge(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"message": fmt.Sprintf("Manual hedge for %s completed", tradeUID),
+		"message": fmt.Sprintf("Manual hedge for %s completed (%d lots)", tradeUID, lots),
 	})
 }
 
@@ -727,6 +759,8 @@ func (h *Handlers) ModifyTrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	before := tr.Config
+
 	// Update config fields
 	if req.SLPointsPerLot != nil {
 		tr.Config.SLPointsPerLot = *req.SLPointsPerLot
@@ -787,13 +821,12 @@ func (h *Handlers) ModifyTrade(w http.ResponseWriter, r *http.Request) {
 	if req.HedgePointsFloor != nil {
 		tr.Config.HedgePointsFloor = *req.HedgePointsFloor
 	}
-	if req.SquareOffTime != nil {
-		// Parse time string "15:37:00" into time.Time
-		t, err := time.Parse("15:04:05", *req.SquareOffTime)
-		if err == nil {
-			now := time.Now()
-			tr.Config.SquareOffTime = time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), t.Second(), 0, now.Location())
-		}
+	if req.SquareOffTime != nil && req.SquareOffHardTime == nil {
+		// square_off_time used to set an alert-only time that never exited
+		// (live 2026-09-30: 15:38 saved there, trades still exited at 15:37).
+		// An exit time is an exit time: it now sets the real, verified exit.
+		v := strings.TrimSpace(*req.SquareOffTime)
+		req.SquareOffHardTime = &v
 	}
 
 	if req.ForceHedgeRegardlessOfPoints != nil {
@@ -825,8 +858,20 @@ func (h *Handlers) ModifyTrade(w http.ResponseWriter, r *http.Request) {
 		tr.Config.SquareOffHardTime = time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), t.Second(), 0, now.Location())
 	}
 
+	changes := diffMonitorConfig(before, tr.Config)
+	tr.Config.Modifications = append(append([]ConfigChange(nil), before.Modifications...), changes...)
+	for _, c := range changes {
+		log.Printf("[MODIFY] trade=%s %s: %s -> %s", tradeUID, c.Field, c.From, c.To)
+	}
+	if len(changes) == 0 {
+		log.Printf("[MODIFY] trade=%s submitted with no effective change", tradeUID)
+	}
+
 	tr.LastUpdateTime = time.Now()
 	h.Store.UpdateTrade(tr)
+	log.Printf("[MODIFY] trade=%s status=%s hard_exit=%s square_off_time=%s sl_bps=%.2f tp_bps=%.2f straddle_div=%.2f hedge_div=%.2f",
+		tradeUID, tr.Status, tr.Config.SquareOffHardTime.Format("15:04:05"), tr.Config.SquareOffTime.Format("15:04:05"),
+		tr.Config.SLPnLBpsOfSpot, tr.Config.TPPnLBpsOfSpot, tr.Config.StraddleDiv, tr.Config.HedgeDiv)
 
 	// Reload from DB and refresh runtime to ensure in-memory cache
 	// matches the persisted state. This prevents stale configs after
@@ -969,10 +1014,11 @@ func (h *Handlers) PortfolioToday(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var realized float64
+	var realized, wingRealized float64
 	open, closed := 0, 0
 	for _, t := range trades {
 		realized += t.RealizedPnL
+		wingRealized += t.WingRealizedPnL
 		if closeReasonForStatus(t.Status) != "" {
 			closed++
 		} else {
@@ -987,7 +1033,9 @@ func (h *Handlers) PortfolioToday(w http.ResponseWriter, r *http.Request) {
 			"open":         open,
 			"closed":       closed,
 			"realized_pnl": round2(realized),
-			"note":         "realized PnL is gross of brokerage and charges",
+			// Wings (margin-only legs), separate -- not in realized_pnl.
+			"wing_realized_pnl": round2(wingRealized),
+			"note":              "realized PnL is gross of brokerage and charges",
 		},
 		"trades": trades,
 	})

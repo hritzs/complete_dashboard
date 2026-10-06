@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	broker "trading-platform/libs/go-broker"
 )
@@ -17,9 +20,34 @@ func hashPasswordMD5(password string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// loginReject remembers a credential rejection (jloginNew ErrorCode != 0)
+// per client so this process does not keep re-sending a wrong password:
+// repeated bad attempts can lock the broker account. A restart (after the
+// credentials are fixed in .env) clears it.
+var (
+	loginRejectMu sync.Mutex
+	loginReject   = map[string]struct {
+		at  time.Time
+		err error
+	}{}
+)
+
+const loginRejectCooldown = 10 * time.Minute
+
+// panMask hides the PAN in broker responses before they reach any log.
+var panMask = regexp.MustCompile(`"panNo"\s*:\s*"[^"]*"`)
+
 func (c *Client) PerformFullLogin(ctx context.Context, accCfg *broker.AccountConfig) (*broker.SessionDetails, error) {
 	if accCfg == nil {
 		return nil, fmt.Errorf("account config is nil")
+	}
+	key := strings.ToUpper(strings.TrimSpace(accCfg.ClientID))
+	loginRejectMu.Lock()
+	rej, blocked := loginReject[key]
+	loginRejectMu.Unlock()
+	if blocked && time.Since(rej.at) < loginRejectCooldown {
+		return nil, fmt.Errorf("login NOT attempted: broker rejected the credentials for client %s at %s (%v) -- fix GREEK_JLOGIN_PASSWORD / GREEK_PAN_DOB in .env and restart; retrying with the same credentials can lock the account",
+			key, rej.at.Format("15:04:05"), rej.err)
 	}
 
 	slog.Info("starting Greeksoft login sequence", "account", accCfg.Name)
@@ -36,6 +64,15 @@ func (c *Client) PerformFullLogin(ctx context.Context, accCfg *broker.AccountCon
 
 	jloginRes, err := c.jloginNew(ctx, sessionToken, accCfg.ClientID, jloginPassword, accCfg.PanDob)
 	if err != nil {
+		if strings.Contains(err.Error(), "jloginNew ErrorCode=") {
+			loginRejectMu.Lock()
+			loginReject[key] = struct {
+				at  time.Time
+				err error
+			}{time.Now(), err}
+			loginRejectMu.Unlock()
+			slog.Error("Greeksoft rejected the login credentials -- no further login attempts from this process for 10 minutes", "client", key)
+		}
 		return nil, fmt.Errorf("jloginNew failed: %w", err)
 	}
 
@@ -172,7 +209,7 @@ func (c *Client) jloginNew(
 		return nil, fmt.Errorf("jloginNew ErrorCode=%d message=%s raw=%s",
 			resBody.Response.Data.ErrorCode,
 			resBody.Response.Data.Message,
-			string(raw),
+			panMask.ReplaceAllString(string(raw), `"panNo":"***"`),
 		)
 	}
 

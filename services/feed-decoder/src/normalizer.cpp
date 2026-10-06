@@ -6,6 +6,7 @@
 #include <vector>
 #include <algorithm>
 #include <map>
+#include <set>
 #include <cctype>
 #include <ctime>
 
@@ -122,6 +123,25 @@ static long long expiry_to_yyyymmdd(std::string exp) {
     return 99999999LL;
 }
 
+// True only for a real calendar date (e.g. rejects "0-DEC-26", "EP-S-26",
+// "31-FEB-27"). expiry_to_yyyymmdd maps anything unparsable to 99999999,
+// which the "today or later" filter below would otherwise read as a far
+// FUTURE expiry and keep -- confirmed live 2026-09-28: 158 corrupted rows
+// in the synced IndexTokens.csv surfaced "0-DEC-26" as a selectable (and
+// default, since it sorted first) NIFTY expiry with a garbage chain.
+static bool expiry_is_real_date(const std::string& exp) {
+    const long long v = expiry_to_yyyymmdd(exp);
+    if (v == 99999999LL) return false;
+    const int y = static_cast<int>(v / 10000);
+    const int m = static_cast<int>((v / 100) % 100);
+    const int d = static_cast<int>(v % 100);
+    static const int days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    if (m < 1 || m > 12) return false;
+    int maxDay = days[m - 1];
+    if (m == 2 && ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0)) maxDay = 29;
+    return d >= 1 && d <= maxDay;
+}
+
 // --------------------------------------------------
 // STRICT DTE NORMALIZATION (Institutional Fix)
 // --------------------------------------------------
@@ -222,6 +242,7 @@ bool Normalizer::load_contracts_csv(const std::string& filepath) {
     std::string line;
     int parsed = 0;
     int skipped = 0;
+    std::set<std::string> dropped_bad_expiries;
 
     while (std::getline(file, line)) {
         trim_inplace(line);
@@ -261,6 +282,13 @@ bool Normalizer::load_contracts_csv(const std::string& filepath) {
         // ---------------------------
         // OPTIONS
         // ---------------------------
+        if ((opType == "CE" || opType == "PE" || opType == "XX" || opType == "FUT" ||
+             type.find("FUT") != std::string::npos) && !expiry_is_real_date(expiry)) {
+            dropped_bad_expiries.insert(symbol + " " + expiry);
+            skipped++;
+            continue;
+        }
+
         if (opType == "CE" || opType == "PE") {
             const long long expVal = expiry_to_yyyymmdd(expiry);
 
@@ -369,6 +397,11 @@ bool Normalizer::load_contracts_csv(const std::string& filepath) {
         std::sort(pair.second.begin(), pair.second.end(), [](const std::string& a, const std::string& b){
             return to_epoch(a) < to_epoch(b);
         });
+    }
+
+    for (const auto& bad : dropped_bad_expiries) {
+        std::cerr << "[Normalizer] ⚠️ dropped rows with invalid expiry (not a real date): "
+                  << bad << " in " << filepath << std::endl;
     }
 
     std::cout << "[Normalizer] ✅ File: " << filepath

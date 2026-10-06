@@ -54,6 +54,11 @@ public:
 
     void process_tick(int token, double ltp, double bid, double ask, uint32_t volume, uint32_t oi, const ContractInfo& info);
 
+    // Full 5-level ladder for an option token: prices (rupees) and quantities,
+    // best level first.
+    void process_depth(int token, const double bid_px[5], const uint32_t bid_qty[5],
+                       const double ask_px[5], const uint32_t ask_qty[5], const ContractInfo& info);
+
 private:
     ChainBuilder* chain_builder_ = nullptr;
 };

@@ -51,6 +51,18 @@ func (s *Service) runMonitor(rt *RuntimeTrade) {
 		interval = 5 * time.Second
 	}
 
+	// Start ticking on a whole-interval boundary (e.g. hh:mm:ss.000 for 1s),
+	// not whenever this runtime happened to start: the minute-end
+	// HEDGE/SL/TP/TIME check runs on the first tick of a new minute, so an
+	// unaligned ticker let it fire anywhere up to a full interval late.
+	if wait := time.Until(time.Now().Truncate(interval).Add(interval)); wait > 0 {
+		select {
+		case <-rt.StopCh:
+			return
+		case <-time.After(wait):
+		}
+	}
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 

@@ -62,6 +62,18 @@ const (
 	// missed it, so the reconciler was silently dropping every fill this
 	// frame represents. See docs/greeksoft-integration-architecture.md.
 	StreamingTypeTradeResponse = "TradeResponse"
+	// StreamingTypeRmsRejection is a distinct push frame GreekSoft sends
+	// when an order that was already accepted (NewOrderRequestResponse
+	// ErrorCode=0, ack'd) is subsequently rejected by risk management --
+	// e.g. "Scrip Banned by Admin" -- confirmed live 2026-09-23. This is
+	// NOT the same as a synchronous IRIS rejection at submission time
+	// (that comes back in the original HTTP response, handled separately).
+	// Before this was recognized, the reconciler silently dropped it
+	// (fell through Dispatch's default case), so the order stayed stuck at
+	// SUBMITTED forever -- BUILD-CHASE then failed its modify/cancel calls
+	// with "order is not in pending or not found" and gave up, leaving the
+	// trade stranded in RECONCILIATION_REQUIRED with no automatic way out.
+	StreamingTypeRmsRejection = "RmsRejectionResponse"
 	// The following Apollo (market-data) frame types were confirmed live
 	// on 2026-09-15 via cmd/apolloprobe against account 147, not just
 	// inferred from docs.

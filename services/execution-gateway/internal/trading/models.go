@@ -1,6 +1,9 @@
 package trading
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type OptionChainRow struct {
 	Strike   float64 `json:"strike"`
@@ -8,6 +11,10 @@ type OptionChainRow struct {
 	PEToken  int64   `json:"pe_token"`
 	CELtp    float64 `json:"ce_ltp"`
 	PELtp    float64 `json:"pe_ltp"`
+	CEBid    float64 `json:"ce_bid"`
+	CEAsk    float64 `json:"ce_ask"`
+	PEBid    float64 `json:"pe_bid"`
+	PEAsk    float64 `json:"pe_ask"`
 	CEDelta  float64 `json:"ce_delta"`
 	PEDelta  float64 `json:"pe_delta"`
 	CEGamma  float64 `json:"ce_gamma"`
@@ -21,6 +28,42 @@ type OptionChainRow struct {
 	IsATM    bool    `json:"is_atm"`
 	CESymbol string  `json:"ce_symbol,omitempty"`
 	PESymbol string  `json:"pe_symbol,omitempty"`
+
+	// L1-L5 exchange depth (published for strikes near the ATM on the
+	// nearest expiries only); nil when not published / not yet received.
+	CEDepth *DepthBook `json:"ce_depth,omitempty"`
+	PEDepth *DepthBook `json:"pe_depth,omitempty"`
+}
+
+// DepthBook is one option's 5-level book, best level first. Each level is
+// [price, qty] on the wire.
+type DepthBook struct {
+	Bids  []DepthLevel `json:"b"`
+	Asks  []DepthLevel `json:"a"`
+	AgeMs int64        `json:"age_ms"`
+}
+
+// DepthLevel is one book level.
+type DepthLevel struct {
+	Price float64
+	Qty   int64
+}
+
+// UnmarshalJSON accepts the compact [price, qty] wire form.
+func (l *DepthLevel) UnmarshalJSON(b []byte) error {
+	var pair []float64
+	if err := json.Unmarshal(b, &pair); err != nil {
+		return err
+	}
+	if len(pair) >= 2 {
+		l.Price, l.Qty = pair[0], int64(pair[1])
+	}
+	return nil
+}
+
+// MarshalJSON writes the same compact form back out.
+func (l DepthLevel) MarshalJSON() ([]byte, error) {
+	return json.Marshal([]float64{l.Price, float64(l.Qty)})
 }
 
 type OptionChainSnapshot struct {
@@ -59,6 +102,7 @@ type DeployStraddleRequest struct {
 	ExitTime string  `json:"exit_time,omitempty"`
 	SlBps    float64 `json:"sl_bps,omitempty"`
 	TpBps    float64 `json:"tp_bps,omitempty"`
+	WingPct  float64 `json:"wing_pct,omitempty"`
 
 	// Risk is applied to the new trade's monitor config before any order is
 	// sent. Set only by the automated/config build path; takes precedence
@@ -99,6 +143,7 @@ type ConfigBuildRequest struct {
 	StraddleFilter   float64 `json:"straddle_filter"`
 	SlBps            float64 `json:"sl_bps"`
 	TpBps            float64 `json:"tp_bps"`
+	WingPct          float64 `json:"wing_pct"`
 	BuyBuffer        float64 `json:"buy_buffer"`
 	SellBuffer       float64 `json:"sell_buffer"`
 	HedgeDiv         float64 `json:"hedge_div"`
@@ -217,6 +262,30 @@ type MonitorConfig struct {
 	// an explicit 0 disables the floor.
 	HedgeMinThresholdBps *float64 `json:"hedge_min_threshold_bps,omitempty"`
 
+	// WingPct > 0 enables wings: long far-OTM options bought purely for
+	// margin (RM). Each wing sits WingPct% of the action's strike away
+	// (strike -/+ strike*WingPct/100, rounded to the chain's strike step),
+	// sized to the quantity that action sold, so at every point net CE and
+	// net PE across all strikes are zero. Wing delta/PnL never enter
+	// PointsOut, SL/TP, hedge sizing or realized PnL. 0 disables wings.
+	WingPct float64 `json:"wing_pct,omitempty"`
+
+	// PartialFill marks an "ACTIVE (partial)" trade: its build stopped
+	// before the full size (e.g. margin rejection) and it is tracked --
+	// monitors, hedge, exits -- at the quantity that really filled.
+	// RequestedCEQty/PEQty keep what the build originally asked for.
+	PartialFill    bool `json:"partial_fill,omitempty"`
+	RequestedCEQty int  `json:"requested_ce_qty,omitempty"`
+	RequestedPEQty int  `json:"requested_pe_qty,omitempty"`
+
+	// ExitHalted: a square-off stopped because some exit orders were
+	// unconfirmed. Never auto-resumed or auto-exited again -- a human
+	// checks the broker position first.
+	ExitHalted bool `json:"exit_halted,omitempty"`
+
+	// Modifications: every Modify Config change (time, field, from -> to).
+	Modifications []ConfigChange `json:"modifications,omitempty"`
+
 	// === ENTRY MODES (mutually exclusive: scheduled vs price-trigger vs manual) ===
 	// Scheduled entry: fire at this exact time (e.g., 09:20:00)
 	EntryScheduledTime time.Time `json:"entry_scheduled_time,omitempty"`
@@ -265,8 +334,10 @@ type OrderIntent struct {
 	ExchangeSegment string   `json:"exchange_segment,omitempty"`
 	Side            string   `json:"side"`
 	Quantity        int64    `json:"quantity"`
+	LotSize         int64    `json:"lot_size,omitempty"`
 	OrderType       string   `json:"order_type"`
 	LimitPrice      *float64 `json:"limit_price,omitempty"`
+	TimeInForce     string   `json:"time_in_force,omitempty"` // "" / DAY (default) or IOC
 	ProductType     string   `json:"product_type"`
 	LegType         string   `json:"leg_type"`
 	Phase           string   `json:"phase"`
@@ -292,6 +363,8 @@ type TradeLegSnapshot struct {
 	Gamma      float64 `json:"gamma"`
 	Theta      float64 `json:"theta"`
 	Vega       float64 `json:"vega"`
+	// Wing marks a margin-only wing leg: shown, never in the totals.
+	Wing bool `json:"wing,omitempty"`
 }
 
 type TradeSnapshot struct {
@@ -314,6 +387,29 @@ type TradeSnapshot struct {
 	PointsOut        float64            `json:"points_out"`
 	PointsAllowed    float64            `json:"points_allowed"`
 	LivePositions    []TradeLegSnapshot `json:"live_positions"`
+
+	// The two candidates PointsAllowed is the minimum of, and the strike
+	// whose straddle/IV they were computed from, so both can be checked
+	// against the live chain.
+	PointsAllowedStraddle float64 `json:"points_allowed_straddle"` // straddle / straddle_div
+	PointsAllowedIV       float64 `json:"points_allowed_iv"`       // spot * IV / hedge_div
+	AllowedStrike         float64 `json:"allowed_strike"`
+
+	// BuildOrdersSubmitted/BuildOrdersTotal drive a live "Building X/Y
+	// orders placed" progress indicator on the UI trade card while
+	// Status == "BUILDING". Pushed after every order submission during
+	// executeBuild so the UI reflects real-time progress over the
+	// existing straddle_update websocket, not just a stale poll.
+	BuildOrdersSubmitted int `json:"build_orders_submitted,omitempty"`
+	BuildOrdersTotal     int `json:"build_orders_total,omitempty"`
+
+	// Wings (margin-only, excluded from every total above). WingNetCE /
+	// WingNetPE are net signed CE / PE quantity across ALL strikes,
+	// wings included -- both 0 when the wings exactly cover the shorts.
+	WingPct   float64 `json:"wing_pct,omitempty"`
+	WingPNL   float64 `json:"wing_pnl,omitempty"`
+	WingNetCE int64   `json:"wing_net_ce"`
+	WingNetPE int64   `json:"wing_net_pe"`
 }
 type PartialSquareOffRequest struct {
 	Percentage float64 `json:"percentage"`

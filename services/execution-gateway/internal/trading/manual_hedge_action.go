@@ -53,18 +53,11 @@ type ManualHedgeTestResponse struct {
 	Executions []ManualHedgeExecutionResult `json:"executions,omitempty"`
 }
 
+// HedgeQuantityFromDeltaFloor is the hedge quantity for netDelta in whole
+// lots of this scrip's own lot size, rounded DOWN -- the same rule as the
+// real hedge (hedgeLotsFloor), so this preview and the live hedge agree.
 func HedgeQuantityFromDeltaFloor(netDelta float64, lotSize int) int {
-	if lotSize <= 0 {
-		return 0
-	}
-
-	deltaMagnitude := math.Abs(netDelta)
-	lotsToHedge := int(deltaMagnitude / float64(lotSize))
-	if lotsToHedge <= 0 {
-		return 0
-	}
-
-	return lotsToHedge * lotSize
+	return int(hedgeLotsFloor(netDelta, int64(lotSize))) * lotSize
 }
 
 func hedgeSidesFromSignedDelta(netDelta float64) (string, string, bool) {
@@ -169,7 +162,14 @@ func (s *Service) ManualHedgeTest(ctx context.Context, req ManualHedgeTestReques
 
 	ceSide, peSide, shouldHedge := hedgeSidesFromSignedDelta(req.NetDelta)
 	if !shouldHedge || qty <= 0 {
-		return nil, fmt.Errorf("normalized quantity is 0 after floor-to-lot rounding")
+		return nil, fmt.Errorf("nothing to hedge: |net delta| is under one lot")
+	}
+
+	// This path sends ONE order per leg, so it must not exceed the live
+	// per-order max (e.g. NIFTY 1755) or the exchange rejects it. A
+	// trade-scoped hedge (ManualHedgeLots) splits into tranches instead.
+	if maxQ := int(s.resolveMaxOrderQty(req.Symbol, int64(req.LotSize))); qty > maxQ {
+		return nil, fmt.Errorf("hedge qty %d exceeds the max per order %d for %s; use a smaller qty or hedge from the trade (splits automatically)", qty, maxQ, req.Symbol)
 	}
 
 	if req.CEToken <= 0 || req.PEToken <= 0 || req.ATMStrike <= 0 {
@@ -236,6 +236,7 @@ func (s *Service) ManualHedgeTest(ctx context.Context, req ManualHedgeTestReques
 		ExchangeSegment: exchangeSegment,
 		Side:            ceSide,
 		Quantity:        int64(qty),
+		LotSize:         int64(req.LotSize),
 		OrderType:       "LIMIT",
 		LimitPrice:      &ceLimit,
 		ProductType:     productType,
@@ -255,6 +256,7 @@ func (s *Service) ManualHedgeTest(ctx context.Context, req ManualHedgeTestReques
 		ExchangeSegment: exchangeSegment,
 		Side:            peSide,
 		Quantity:        int64(qty),
+		LotSize:         int64(req.LotSize),
 		OrderType:       "LIMIT",
 		LimitPrice:      &peLimit,
 		ProductType:     productType,
@@ -316,6 +318,80 @@ func (s *Service) ManualHedgeExecute(ctx context.Context, req ManualHedgeTestReq
 		}
 		if req.AccountID == "" {
 			return nil, fmt.Errorf("account_id is required")
+		}
+	}
+
+	// Trade-scoped: delegate to ManualHedgeLots, the trade's own real
+	// hedge path, instead of running a second, independent execution
+	// path here. Confirmed live 2026-09-25: this function used to build
+	// its own intents below, which (a) traded the CURRENT live ATM
+	// row's CE/PE tokens whenever the caller didn't explicitly supply
+	// ce_token/pe_token -- silently a DIFFERENT strike than the trade's
+	// own once spot drifts off the trade's strike -- and (b) never
+	// booked the fill into the trade (no bookHedgeFills/UpdateTrade
+	// call anywhere in this function). SquareOff only ever looks at
+	// tr.CEQty/tr.PEQty/tr.CEToken/tr.PEToken, so a hedge placed this
+	// way was invisible to it: a real position went out, SquareOff
+	// closed only the original straddle legs, and the hedge stayed open
+	// as a naked, un-tracked residual position that had to be closed by
+	// hand. ManualHedgeLots always trades the trade's OWN tokens and
+	// always books the verified fill via bookHedgeFills, so a later
+	// SquareOff actually closes everything.
+	if tradeUID := strings.TrimSpace(req.TradeUID); tradeUID != "" {
+		if tr, ok := s.Store.LoadTrade(tradeUID); ok {
+			lotSize := req.LotSize
+			if lotSize <= 0 {
+				lotSize = tr.LotSize
+			}
+			if lotSize <= 0 {
+				lotSize = GetFallbackLotSize(tr.Symbol)
+			}
+			if lotSize <= 0 {
+				return nil, fmt.Errorf("invalid lot_size for symbol %s", tr.Symbol)
+			}
+
+			resp := &ManualHedgeTestResponse{
+				TradeUID: tradeUID,
+				DryRun:   false,
+				Symbol:   tr.Symbol,
+				LotSize:  lotSize,
+			}
+
+			// An explicit quantity is a deliberate manual size and is
+			// honored as-is. Otherwise ("Hedge Now") the size comes from
+			// the server's own live, hedge-inclusive delta -- req.NetDelta
+			// is ignored here: the portfolio row sends StoredTrade.NetDelta,
+			// the build-time entry delta, which is never updated and can be
+			// arbitrarily stale.
+			var lots int64
+			var hedgeErr error
+			if req.Quantity > 0 {
+				lots = req.Quantity / int64(lotSize)
+				if lots <= 0 {
+					resp.Success = true
+					resp.Message = fmt.Sprintf("manual hedge skipped: quantity %d is under one lot (%d)", req.Quantity, lotSize)
+					return resp, nil
+				}
+				hedgeErr = s.ManualHedgeLots(ctx, tradeUID, int(lots))
+			} else {
+				lots, hedgeErr = s.ManualHedgeNow(ctx, tradeUID)
+				if hedgeErr == nil && lots == 0 {
+					resp.Success = true
+					resp.Message = "nothing to hedge: live net delta is under one lot"
+					return resp, nil
+				}
+			}
+
+			resp.Quantity = lots * int64(lotSize)
+			if hedgeErr != nil {
+				resp.Success = false
+				resp.Error = hedgeErr.Error()
+				resp.Message = "manual hedge execution failed"
+			} else {
+				resp.Success = true
+				resp.Message = fmt.Sprintf("hedged %d lot(s) at the live ATM strike; booked into the trade, closeable by SquareOff", lots)
+			}
+			return resp, nil
 		}
 	}
 

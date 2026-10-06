@@ -40,11 +40,13 @@ require_index_master() {
         echo "[TOKENS] IndexTokens.csv is missing the Expiry column: $file" >&2
         exit 1
     fi
+    # Quote-agnostic: the upstream file has been written both as
+    # "NIFTY","29-SEP-26" and (since 2026-09-30) as NIFTY,06-Oct-26.
     if ! awk -F',' '
-        NR > 1 &&
-        ($4 ~ /"NIFTY"/ || $4 ~ /^"NIFTY/) &&
-        $5 != "" {
-            found = 1
+        NR > 1 {
+            sym = $4; expiry = $5
+            gsub(/"/, "", sym); gsub(/"/, "", expiry)
+            if (sym == "NIFTY" && expiry != "") found = 1
         }
         END { exit found ? 0 : 1 }
     ' "$file"; then

@@ -135,8 +135,35 @@ var _ OrderModifier = (*modifyCancelExecutor)(nil)
 
 func handlersWithExecutor(exec Executor) *Handlers {
 	store := NewMemoryStore()
-	svc := &Service{Store: store, BrokerFactory: &fakeBrokerFactory{executor: exec}}
+	svc := &Service{
+		Store:         store,
+		BrokerFactory: &fakeBrokerFactory{executor: exec},
+		// What startup loads for NIFTY from the live contract (1755 = 27
+		// lots); without it orders are capped to 1 lot each.
+		freezeQtyBySymbol: map[string]int64{"NIFTY": 1755},
+	}
 	return NewHandlers(svc, store)
+}
+
+// A manual order asking for more lots per order than the live per-order
+// max must be split at that max (NIFTY 1755 = 27 lots), never sent as
+// one oversized order the exchange would reject.
+func TestManualOrder_CapsLotsPerOrderAtLiveFreezeMax(t *testing.T) {
+	exec := &recordingExecutor{}
+	h := handlersWithExecutor(exec)
+	_, out := postJSON(t, h.ManualOrder, ManualOrderRequest{
+		BrokerName: "GREEKSOFT", AccountID: "147", Symbol: "NIFTY", Token: 56985,
+		Side: "SELL", OrderType: "MARKET", TotalLots: 30, LotsPerOrder: 30, LotSize: 65,
+	})
+	if out["success"] != true {
+		t.Fatalf("body=%v", out)
+	}
+	if len(exec.submitted) != 2 {
+		t.Fatalf("submitted %d orders, want 2 (27 + 3 lots)", len(exec.submitted))
+	}
+	if exec.submitted[0].Quantity != 1755 || exec.submitted[1].Quantity != 195 {
+		t.Fatalf("quantities = %d, %d; want 1755, 195", exec.submitted[0].Quantity, exec.submitted[1].Quantity)
+	}
 }
 
 func postJSON(t *testing.T, h http.HandlerFunc, body interface{}) (*httptest.ResponseRecorder, map[string]interface{}) {

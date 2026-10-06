@@ -124,6 +124,7 @@ func (x *xtsExecutor) ExecuteOrderIntent(ctx context.Context, intent trading.Ord
 }
 
 func main() {
+	installSplitLogs()
 	log.Println("Starting Execution Gateway...")
 
 	appConfig := LoadConfig()
@@ -152,6 +153,11 @@ func main() {
 
 	service := trading.NewService(store, appConfig.XTSClientID)
 	service.Snapshot = &trading.SnapshotClient{BaseURL: appConfig.SnapshotServiceURL}
+	// Always-on LUT entry check: PAPER only (YES/NO), never places orders.
+	service.StartLUTEngine()
+	// Straddle-target build: live straddle preview + SHADOW builds (no orders).
+	service.StartSBEngine()
+	service.StartBrokerAutoSync()
 
 	natsURL := strings.TrimSpace(os.Getenv("NATS_URL"))
 	if natsURL == "" {
@@ -194,6 +200,13 @@ func main() {
 		switch tr.Status {
 		case "ACTIVE":
 			if pgStore, ok := store.(*trading.PostgresBackedStore); ok {
+				// Re-derive legs from fills first (one count per order):
+				// legs written by the old raw-sum logic were double-counted,
+				// and resuming from them ran a 1040/910 trade as 2080/1820.
+				if err := pgStore.RecomputeTradeLegs(context.Background(), tr.TradeUID); err != nil {
+					log.Printf("[BOOT] monitor blocked trade=%s reason=leg recompute failed: %v", tr.TradeUID, err)
+					continue
+				}
 				eligibility, err := pgStore.ValidateTradeForRuntime(
 					context.Background(),
 					tr.TradeUID,
@@ -212,6 +225,20 @@ func main() {
 				// the open-leg entry prices (legacy field names). Never resume
 				// from the pre-trade quote/limit values held in the stored header:
 				// overwrite them with durable broker-fill reconciliation values.
+				if (tr.CEQty != int(eligibility.CEQty) || tr.PEQty != int(eligibility.PEQty)) && tr.LotSize > 0 {
+					// The exchange fills disagree with the stored size (e.g. two
+					// builds filed under one trade): the position is what
+					// filled -- size the trade (lots too: PnL per straddle, SL,
+					// TP and the exit all use it) to the fills, and persist it.
+					log.Printf("[BOOT] ⚠ trade=%s stored CE %d / PE %d (lots %d) but exchange fills say CE %d / PE %d -- trade resized to the fills",
+						tr.TradeUID, tr.CEQty, tr.PEQty, tr.Lots, eligibility.CEQty, eligibility.PEQty)
+					tr.CEQty = int(eligibility.CEQty)
+					tr.PEQty = int(eligibility.PEQty)
+					if lots := (tr.CEQty + tr.PEQty) / (2 * tr.LotSize); lots > 0 {
+						tr.Lots = lots
+					}
+					service.Store.UpdateTrade(tr)
+				}
 				tr.CEQty = int(eligibility.CEQty)
 				tr.PEQty = int(eligibility.PEQty)
 				tr.CELtp = eligibility.CEEntry
@@ -234,6 +261,28 @@ func main() {
 			}
 
 			service.ResumeRuntime(tr)
+
+		case "PARTIAL", "RECONCILIATION_REQUIRED":
+			// Only TODAY's trades: an older RECONCILIATION_REQUIRED record
+			// may no longer match the broker, and must never auto-start a
+			// monitor that could place orders on it.
+			if tr.Config.ExitHalted {
+				log.Printf("[BOOT] monitor not resumed trade=%s status=%s reason=exit was halted on unconfirmed orders, needs manual review", tr.TradeUID, tr.Status)
+				continue
+			}
+			if tr.Status == "RECONCILIATION_REQUIRED" && !trading.CreatedTodayIST(tr.CreatedAt) {
+				log.Printf("[BOOT] monitor not resumed trade=%s status=RECONCILIATION_REQUIRED reason=not from today, needs manual review", tr.TradeUID)
+				continue
+			}
+			// A build that stopped part-way (e.g. margin rejection) holds a
+			// real position: track it as ACTIVE (partial) at what really
+			// filled, from exchange fills, instead of leaving it unmonitored.
+			if promoted, ok := service.PromotePartialTrade(context.Background(), tr); ok {
+				log.Printf("[BOOT] resuming ACTIVE (partial) trade=%s ce_qty=%d pe_qty=%d", promoted.TradeUID, promoted.CEQty, promoted.PEQty)
+				service.ResumeRuntime(promoted)
+			} else {
+				log.Printf("[BOOT] monitor NOT resumed trade=%s status=PARTIAL reason=filled legs need manual review (see [PARTIAL] line above)", tr.TradeUID)
+			}
 
 		case "BUILDING", "ROLLING", "SQUARING_OFF", "PARTIAL-SQF":
 			log.Printf(
@@ -348,6 +397,41 @@ func main() {
 
 	service.BrokerFactory = factory
 
+	// Log in to GreekSoft now, not on the first order. The executor is
+	// created lazily and cached, so the first order after every restart
+	// used to pay the ~1s login inline -- confirmed live 2026-09-28: a
+	// minute-end hedge decided at 10:18:00 only went out at 10:18:01.
+	// Warms every GreekSoft account that has a trade, plus GREEK_ACCOUNT_ID.
+	go func() {
+		accounts := map[string]string{} // account -> user
+		if acc := strings.TrimSpace(os.Getenv("GREEK_ACCOUNT_ID")); acc != "" {
+			accounts[strings.ToUpper(acc)] = "U001"
+		}
+		for _, tr := range store.AllTrades() {
+			if strings.EqualFold(strings.TrimSpace(tr.BrokerName), "GREEKSOFT") && strings.TrimSpace(tr.AccountID) != "" {
+				accounts[strings.ToUpper(strings.TrimSpace(tr.AccountID))] = tr.UserID
+			}
+		}
+		freezeLoaded := false
+		for acc, user := range accounts {
+			exec, err := factory.GetExecutor(user, "GREEKSOFT", acc)
+			if err != nil {
+				log.Printf("[BOOT] GreekSoft warm-up login failed account=%s (first order will retry): %v", acc, err)
+				continue
+			}
+			log.Printf("[BOOT] GreekSoft executor warmed account=%s", acc)
+
+			// Freeze qty is per underlying, not per account: load it once,
+			// here at startup, so no order ever waits on the quote API.
+			if !freezeLoaded {
+				freezeLoaded = true
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				service.PreloadFreezeQty(ctx, exec, []string{"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"})
+				cancel()
+			}
+		}
+	}()
+
 	handlers := trading.NewHandlers(service, store)
 
 	go startHTTPServer(appConfig, handlers)
@@ -373,6 +457,27 @@ func startHTTPServer(cfg *Config, handlers *trading.Handlers) {
 	mux.HandleFunc("/api/trade/straddle/scheduled", handlers.ListScheduledBuilds)
 	mux.HandleFunc("/api/trade/straddle/scheduled/cancel", handlers.CancelScheduledBuild)
 	mux.HandleFunc("/api/trade/straddle/custom", handlers.CustomSell)
+	// LUT build -- SIMULATION ONLY (never places orders).
+	mux.HandleFunc("/api/lut/state", handlers.LUTStateHandler)
+	mux.HandleFunc("/api/lut/config", handlers.LUTConfigHandler)
+	mux.HandleFunc("/api/lut/start-now", handlers.LUTStartNowHandler)
+	// Paper-trade simulation off the stored minute data -- never places orders.
+	mux.HandleFunc("/api/paper/sim", handlers.PaperSimHandler)
+	mux.HandleFunc("/api/paper/start", handlers.PaperStartHandler)
+	mux.HandleFunc("/api/paper/remove", handlers.PaperRemoveHandler)
+	// Straddle-target build, SHADOW mode (no orders).
+	mux.HandleFunc("/api/sbuild/shadow/start", handlers.SBStart)
+	mux.HandleFunc("/api/sbuild/shadow/stop", handlers.SBStop)
+	mux.HandleFunc("/api/sbuild/shadow/state", handlers.SBStateHandler)
+	mux.HandleFunc("/api/sbuild/rule", handlers.SBRuleHandler)
+	mux.HandleFunc("/api/sbuild/rule/delete", handlers.SBRuleDelete)
+	mux.HandleFunc("/api/sbuild/exit", handlers.SBExit)
+	mux.HandleFunc("/api/sbuild/pause", handlers.SBPause)
+	mux.HandleFunc("/api/build/stop", handlers.StopBuild)
+	mux.HandleFunc("/api/trade/broker-sync", handlers.TradeBrokerSync)
+	mux.HandleFunc("/api/trade/open-legs", handlers.TradeOpenLegs)
+	mux.HandleFunc("/api/sbuild/expiries", handlers.SBExpiries)
+	mux.HandleFunc("/api/sbuild/quote", handlers.SBQuote)
 
 	mux.HandleFunc("/api/portfolio/today", handlers.PortfolioToday)
 	mux.HandleFunc("/api/straddles", handlers.GetStraddles)
@@ -384,11 +489,10 @@ func startHTTPServer(cfg *Config, handlers *trading.Handlers) {
 	mux.HandleFunc("/api/debug/greeksoft/fills", handlers.DebugGreeksoftFills)
 	mux.HandleFunc("/api/admin/reconcile/greeksoft-fills", handlers.ReconcileGreeksoftFills)
 	mux.HandleFunc("/api/debug/greeksoft/quote", handlers.DebugGreeksoftQuote)
+	mux.HandleFunc("/api/debug/greeksoft/marketdata", handlers.DebugGreeksoftMarketData)
 	mux.HandleFunc("/api/debug/trade/reconciliation", handlers.GetTradeReconciliation)
-	mux.HandleFunc("/api/positions", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "positions": []interface{}{}})
-	})
+	mux.HandleFunc("/api/positions", handlers.BrokerPositions)
+	mux.HandleFunc("/api/positions/check", handlers.PositionCheck)
 	mux.HandleFunc("/api/trades", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")

@@ -2,8 +2,32 @@ package greeksoft
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 )
+
+// FlexString accepts a JSON string or number (NPRequest sends numbers,
+// e.g. "netQty":-65, although the docs show strings).
+type FlexString string
+
+func (f *FlexString) UnmarshalJSON(b []byte) error {
+	t := strings.TrimSpace(string(b))
+	if t == "null" {
+		*f = ""
+		return nil
+	}
+	if strings.HasPrefix(t, "\"") {
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return err
+		}
+		*f = FlexString(s)
+		return nil
+	}
+	*f = FlexString(t)
+	return nil
+}
 
 type positionsRequestData struct {
 	Gscid string `json:"gscid"`
@@ -12,31 +36,32 @@ type positionsRequestData struct {
 // StockPosition is one row of NPRequest's response, confirmed against
 // GreekSoft's official docs example.
 type StockPosition struct {
-	NSEToken        string `json:"NSEToken"`
-	BSEToken        string `json:"BSEToken"`
-	Token           string `json:"token"`
-	NetQty          string `json:"netQty"`
-	DayNetAmt       string `json:"DayNetAmt"`
-	PreNetQty       string `json:"preNetQty"`
-	PAmt            string `json:"PAmt"`
-	ProductType     string `json:"ProductType"`
-	Symbol          string `json:"symbol"`
-	ISIN            string `json:"isin"`
-	Instrument      string `json:"instrument"`
-	Description     string `json:"description"`
-	LotQty          string `json:"lotQty"`
-	SqOffToken      string `json:"sqoffToken"`
-	Account         string `json:"account"`
-	Multiplier      string `json:"multiplier"`
-	PriceMultiplier string `json:"price_multiplier"`
+	NSEToken        FlexString `json:"NSEToken"`
+	BSEToken        FlexString `json:"BSEToken"`
+	Token           FlexString `json:"token"`
+	ExchToken       FlexString `json:"exch_Token"`
+	NetQty          FlexString `json:"netQty"`
+	DayNetAmt       FlexString `json:"DayNetAmt"`
+	PreNetQty       FlexString `json:"preNetQty"`
+	PAmt            FlexString `json:"PAmt"`
+	ProductType     FlexString `json:"ProductType"`
+	Symbol          FlexString `json:"symbol"`
+	ISIN            FlexString `json:"isin"`
+	Instrument      FlexString `json:"instrument"`
+	Description     FlexString `json:"description"`
+	LotQty          FlexString `json:"lotQty"`
+	SqOffToken      FlexString `json:"sqoffToken"`
+	Account         FlexString `json:"account"`
+	Multiplier      FlexString `json:"multiplier"`
+	PriceMultiplier FlexString `json:"price_multiplier"`
 }
 
 type NetPositionResponse struct {
 	Response struct {
 		SvcName string `json:"svcName"`
 		Data    struct {
-			NoOfRecords  string          `json:"noofrecords"`
-			IsLast       string          `json:"islast"`
+			NoOfRecords  FlexString      `json:"noofrecords"`
+			IsLast       FlexString      `json:"islast"`
 			StockDetails []StockPosition `json:"stockDetails"`
 		} `json:"data"`
 	} `json:"response"`

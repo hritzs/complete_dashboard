@@ -40,3 +40,9 @@ trading-first-dump.txt
 control-api-complete-dump.txt
 copilot_decoder_dump.txt
 
+
+# Local-only (never pushed): reference code with credentials, local data, scratch
+refernce_py_code/
+backups/
+__pycache__/
+services/execution-gateway/internal/trading/a.txt

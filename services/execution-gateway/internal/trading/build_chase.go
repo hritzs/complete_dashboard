@@ -83,10 +83,26 @@ func unfilledChaseOrders(orders []chaseOrder, filled map[string]int64) []chaseOr
 
 // chasePrice is the next limit for a resting SELL: the LIVE price less the
 // sell buffer times the round number (more aggressive each round), never more
-// than chaseMaxDiscount below live, on the 0.05 tick.
+// than chaseMaxDiscount below live, on the 0.05 tick. Fallback used only when
+// no live bid is available for the token (see chaseBidPrice).
 func chasePrice(livePrice, sellBuffer float64, round int) float64 {
 	p := livePrice - sellBuffer*float64(round)
 	if floor := livePrice * (1 - chaseMaxDiscount); p < floor {
+		p = floor
+	}
+	if p < 0.05 {
+		p = 0.05
+	}
+	return math.Round(p/0.05) * 0.05
+}
+
+// chaseBidPrice is the next limit for a resting SELL, priced off the fresh
+// live bid minus this attempt's schedule buffer (2 on the first chase, 4 on
+// the second, see bufferForAttempt), never more than chaseMaxDiscount below
+// the bid, on the 0.05 tick.
+func chaseBidPrice(bid, buffer float64) float64 {
+	p := bid - buffer
+	if floor := bid * (1 - chaseMaxDiscount); p < floor {
 		p = floor
 	}
 	if p < 0.05 {
@@ -169,6 +185,10 @@ func (s *Service) chaseUnfilledBuild(
 		if len(left) == 0 {
 			break
 		}
+		if buildStopRequested(trade.TradeUID) {
+			gaveUp = "build stopped by user"
+			break
+		}
 
 		chain, err := s.Snapshot.GetOptionChain(ctx, trade.Symbol, trade.Expiry)
 		if err != nil {
@@ -181,20 +201,29 @@ func (s *Service) chaseUnfilledBuild(
 			if o.Side != "SELL" {
 				continue
 			}
+			// Attempt 1 is the initial order (already submitted); this
+			// chase round is attempt (round+1), so round 1 -> buffer 2,
+			// round 2 -> buffer 4, matching bufferForAttempt's schedule.
+			bid, _ := bidAskForToken(chain, o.Token)
 			live := livePriceForToken(chain, o.Token)
-			if live <= 0 {
-				gaveUp = "no live price for token"
-				failed = true
-				break
+			var price float64
+			if bid > 0 {
+				price = chaseBidPrice(bid, bufferForAttempt(round+1))
+			} else {
+				if live <= 0 {
+					gaveUp = "no live price for token"
+					failed = true
+					break
+				}
+				price = chasePrice(live, sellBuffer, round)
 			}
-			price := chasePrice(live, sellBuffer, round)
 			if err := modifier.ModifyOrderPrice(ctx, o.BrokerOrderID, price, o.Quantity, trade.LotSize); err != nil {
 				gaveUp = "modify failed: " + err.Error()
 				failed = true
 				break
 			}
-			log.Printf("[BUILD-CHASE] trade=%s round=%d leg=%s order=%s re-priced to %.2f (live %.2f)",
-				trade.TradeUID, round, o.Leg, o.BrokerOrderID, price, live)
+			log.Printf("[BUILD-CHASE] trade=%s round=%d leg=%s order=%s re-priced to %.2f (bid=%.2f live=%.2f)",
+				trade.TradeUID, round, o.Leg, o.BrokerOrderID, price, bid, live)
 		}
 		if failed {
 			break

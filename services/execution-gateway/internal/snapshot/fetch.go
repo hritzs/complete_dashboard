@@ -31,6 +31,10 @@ type OptionChainRow struct {
 	PEToken int64   `json:"pe_token"`
 	CELtp   float64 `json:"ce_ltp"`
 	PELtp   float64 `json:"pe_ltp"`
+	CEBid   float64 `json:"ce_bid"`
+	CEAsk   float64 `json:"ce_ask"`
+	PEBid   float64 `json:"pe_bid"`
+	PEAsk   float64 `json:"pe_ask"`
 	CEDelta float64 `json:"ce_delta"`
 	PEDelta float64 `json:"pe_delta"`
 	IsATM   bool    `json:"is_atm"`

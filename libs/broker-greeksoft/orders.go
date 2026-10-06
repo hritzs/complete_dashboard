@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 
@@ -131,7 +132,7 @@ func (c *Client) PlaceOrder(ctx context.Context, intent *broker.OrderIntent) (*b
 				IsSqOffOrder: "false",
 				Offline:      "0",
 				IsRestAPI:    "1",
-				StrategyName: "STOCK",
+				StrategyName: orderStrategyName(intent.TradeUID),
 				Tag:          intent.IntentID,
 				UserTag:      intent.TradeUID,
 			},
@@ -258,6 +259,21 @@ func extractOrderID(data map[string]interface{}) string {
 
 // greeksoftLotSize returns the contract lot size used to derive the
 // Greeksoft `lot` request field from the actual unit quantity.
+// greeksoftLotSize is a last-resort fallback for callers that don't
+// populate intent.LotSize from the real, live contract-master-backed
+// value. NSE/BSE revise these periodically, so this table WILL go stale;
+// treat any hit here as a sign the real caller-side resolution broke, not
+// as something to keep silently patching.
+//
+// Values verified live against GreekSoft's own getAllContract scrip master
+// (2026-09-23, via libs/broker-greeksoft/cmd/lotsizeprobe), consistent
+// across every contract row per symbol. A previous version of this table
+// (BANKNIFTY=15, FINNIFTY=40, MIDCPNIFTY=65, BANKEX=15) was wrong --
+// confirmed live when IRIS rejected a real BANKNIFTY order sized off it
+// ("Lot size and Qty is Not Matched In Request"). Those numbers had been
+// copied from contract-master's DB without ever being checked against the
+// broker's own contract master. Re-verify with lotsizeprobe before
+// changing any of these again.
 func greeksoftLotSize(symbol string) int {
 	switch strings.ToUpper(strings.TrimSpace(symbol)) {
 	case "NIFTY":
@@ -268,9 +284,23 @@ func greeksoftLotSize(symbol string) int {
 		return 60
 	case "MIDCPNIFTY":
 		return 120
-	case "NIFTYNXT50":
-		return 25
+	case "SENSEX":
+		return 20
+	case "BANKEX":
+		return 30
 	default:
 		return 0
 	}
+}
+
+// orderStrategyName is the NewOrderRequest strategyName. Default "STOCK"
+// (what every live order has used). GREEKSOFT_STRATEGY_NAME=trade sends the
+// trade UID instead, so GreekSoft's strategy-wise net position report keeps
+// each trade separate -- OPT-IN: test it with one lot first (the broker may
+// only accept registered strategy names / limit the length).
+func orderStrategyName(tradeUID string) string {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("GREEKSOFT_STRATEGY_NAME")), "trade") && strings.TrimSpace(tradeUID) != "" {
+		return strings.TrimSpace(tradeUID)
+	}
+	return "STOCK"
 }

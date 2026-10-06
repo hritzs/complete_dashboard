@@ -33,7 +33,13 @@ const (
 // otherwise.
 func Dispatch(frame greeksoft.IrisFrame) (FrameKind, *normalize.GreeksoftOrderResponse, *normalize.GreeksoftTradeResponse, error) {
 	switch frame.StreamingType {
-	case greeksoft.StreamingTypeOrderResponse:
+	case greeksoft.StreamingTypeOrderResponse, greeksoft.StreamingTypeRmsRejection:
+		// RmsRejectionResponse's data payload has the exact same shape as
+		// OrderResponse's (confirmed live 2026-09-23: gorderid, order_status
+		// "Rms Rejected", reason, side, qty, ...), and normalize.MapStatus
+		// already maps any order_status containing "REJECT" to
+		// StatusRejected -- no separate decode/kind needed, it converges on
+		// the same persistence path as any other rejection.
 		payload, err := decodeOrderResponse(frame.Raw)
 		if err != nil {
 			return KindOrderResponse, nil, nil, err

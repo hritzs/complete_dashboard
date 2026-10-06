@@ -138,17 +138,116 @@ type Service struct {
 	// buildTiming paces build verification and the leftover chase; the zero
 	// value means production defaults.
 	buildTiming buildTiming
+
+	// freezeQtyBySymbol is the live broker freeze quantity per underlying
+	// (normalized symbol), loaded ONCE at startup by PreloadFreezeQty. The
+	// order path only reads it -- it never calls the broker, so a slow or
+	// failing quote API can't delay an order.
+	freezeQtyMu       sync.RWMutex
+	freezeQtyBySymbol map[string]int64
 }
 
 func NewService(store Store, clientID string) *Service {
 	return &Service{
-		Store:           store,
-		DefaultClientID: clientID,
-		BrokerFactory:   NewDefaultBrokerFactory(),
-		Snapshot:        NewSnapshotClient(),
-		LotSize:         NewLotSizeClient(),
-		OrderEvents:     NewOrderEventRegistry(),
+		Store:             store,
+		DefaultClientID:   clientID,
+		BrokerFactory:     NewDefaultBrokerFactory(),
+		Snapshot:          NewSnapshotClient(),
+		LotSize:           NewLotSizeClient(),
+		OrderEvents:       NewOrderEventRegistry(),
+		freezeQtyBySymbol: make(map[string]int64),
 	}
+}
+
+// resolveMaxOrderQty is the largest single-order quantity for symbol: the
+// live, lot-aligned broker value loaded by PreloadFreezeQty (e.g. NIFTY
+// freezQty 1801 -> 27 x 65 = 1755). No hardcoded per-symbol table: if the
+// live value isn't loaded for this symbol it returns ONE LOT -- always
+// under any freeze limit, so an order (above all an exit) is never
+// rejected or blocked by a guessed number; it just goes in more pieces.
+// Never calls the broker, so it adds no latency to an order.
+func (s *Service) resolveMaxOrderQty(symbol string, lotSize int64) int64 {
+	s.freezeQtyMu.RLock()
+	qty, ok := s.freezeQtyBySymbol[NormalizeSymbol(symbol)]
+	s.freezeQtyMu.RUnlock()
+	if ok && qty > 0 {
+		return qty
+	}
+	if lotSize <= 0 {
+		lotSize = 1
+	}
+	log.Printf("⚠️ FREEZE QTY %s not loaded -- sizing orders at 1 lot (%d) each", NormalizeSymbol(symbol), lotSize)
+	return lotSize
+}
+
+// PreloadFreezeQty fetches the live broker freeze quantity once per
+// underlying (it's set per underlying, not per strike, so any live option
+// token of that symbol works -- the nearest-expiry ATM CE is used) and
+// stores it for resolveMaxOrderQty. Called at startup, after the broker
+// login, so the order path never waits on it. Symbols that fail are
+// retried in the background every minute until they load; until then
+// orders for them go one lot at a time.
+func (s *Service) PreloadFreezeQty(ctx context.Context, executor Executor, symbols []string) {
+	provider, ok := executor.(FreezeQtyProvider)
+	if !ok {
+		log.Printf("[BOOT] FREEZE QTY preload skipped: executor has no freeze-qty lookup; orders go 1 lot at a time")
+		return
+	}
+	if s.Snapshot == nil {
+		log.Printf("[BOOT] FREEZE QTY preload skipped: no snapshot client; orders go 1 lot at a time")
+		return
+	}
+
+	pending := s.loadFreezeQty(ctx, provider, symbols)
+	if len(pending) == 0 {
+		return
+	}
+	go func() {
+		for len(pending) > 0 {
+			time.Sleep(time.Minute)
+			retryCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			pending = s.loadFreezeQty(retryCtx, provider, pending)
+			cancel()
+		}
+	}()
+}
+
+// loadFreezeQty loads each symbol's live freeze qty and returns the ones
+// that failed.
+func (s *Service) loadFreezeQty(ctx context.Context, provider FreezeQtyProvider, symbols []string) []string {
+	var failed []string
+	for _, symbol := range symbols {
+		sym := NormalizeSymbol(symbol)
+
+		chain, err := s.Snapshot.GetOptionChain(ctx, sym, "")
+		if err != nil {
+			log.Printf("[BOOT] ⚠️ FREEZE QTY %s: option chain unavailable: %v -- 1 lot per order until loaded (retrying)", sym, err)
+			failed = append(failed, sym)
+			continue
+		}
+		atm, err := FindATMRow(*chain)
+		if err != nil || atm.CEToken <= 0 {
+			log.Printf("[BOOT] ⚠️ FREEZE QTY %s: no ATM token in chain (err=%v) -- 1 lot per order until loaded (retrying)", sym, err)
+			failed = append(failed, sym)
+			continue
+		}
+
+		info, err := provider.GetFreezeQty(ctx, atm.CEToken)
+		if err != nil || info.MaxOrderQty <= 0 {
+			log.Printf("[BOOT] ⚠️ FREEZE QTY %s: live fetch failed token=%d err=%v -- 1 lot per order until loaded (retrying)", sym, atm.CEToken, err)
+			failed = append(failed, sym)
+			continue
+		}
+
+		s.freezeQtyMu.Lock()
+		s.freezeQtyBySymbol[sym] = info.MaxOrderQty
+		s.freezeQtyMu.Unlock()
+		log.Printf(
+			"[BOOT] 📏 FREEZE QTY %-10s broker freezQty=%d  lot=%d  -> max per order %d (%d lots)  [live contract, token=%d]",
+			sym, info.FreezeQty, info.LotSize, info.MaxOrderQty, info.MaxOrderQty/info.LotSize, atm.CEToken,
+		)
+	}
+	return failed
 }
 
 // lockTrade serializes exit-side actions for one trade UID. Call it first
@@ -285,9 +384,16 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 		return nil, fmt.Errorf("invalid lot size for symbol %s", req.Symbol)
 	}
 
-	// Cross-check against known current NSE lot sizes (revised periodically by exchange circular).
+	// Cross-check against known current NSE/BSE lot sizes (revised
+	// periodically by exchange circular). Verified live against
+	// GreekSoft's own getAllContract scrip master (2026-09-23, via
+	// libs/broker-greeksoft/cmd/lotsizeprobe). NIFTY was wrong here (130,
+	// should be 65) -- this cross-check had been silently firing on every
+	// NIFTY build (logging a MISMATCH) without anyone noticing, since it's
+	// only a log line, not an error.
 	knownGoodLotSize := map[string]int{
-		"NIFTY": 130, "BANKNIFTY": 30, "FINNIFTY": 60, "MIDCPNIFTY": 120, "NIFTYNXT50": 25,
+		"NIFTY": 65, "BANKNIFTY": 30, "FINNIFTY": 60, "MIDCPNIFTY": 120,
+		"SENSEX": 20, "BANKEX": 30, "NIFTYNXT50": 25,
 	}
 	if expected, ok := knownGoodLotSize[req.Symbol]; ok && lotSize != expected {
 		log.Printf("🚨 LOT SIZE MISMATCH | Symbol=%s resolved=%d expected=%d (req=%d chain=%d) — check /mnt/shared CSV freshness",
@@ -346,6 +452,12 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 
 	now := time.Now()
 	tradeUID := BuildTradeUID(req.UserID, req.BrokerName, req.AccountID, req.Symbol, chain.Expiry, selectedStrike, now)
+	// The UID has second resolution: two builds in the same second (e.g. two
+	// scheduled jobs firing together) got the SAME trade and the second
+	// overwrote the first while both positions filled. Every build gets its
+	// own trade.
+	tradeUID = s.reserveTradeUID(tradeUID)
+	defer releaseTradeUID(tradeUID)
 
 	trade := StoredTrade{
 		TradeUID:        tradeUID,
@@ -388,8 +500,8 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 	// via the raw fields below, since req.Risk itself is json:"-" and can
 	// only be set by ConfigBuild's own internal call.
 	risk := req.Risk
-	if risk == nil && (strings.TrimSpace(req.ExitTime) != "" || req.SlBps > 0 || req.TpBps > 0) {
-		risk = &BuildRiskConfig{ExitTime: req.ExitTime, SlBps: req.SlBps, TpBps: req.TpBps}
+	if risk == nil && (strings.TrimSpace(req.ExitTime) != "" || req.SlBps > 0 || req.TpBps > 0 || req.WingPct > 0) {
+		risk = &BuildRiskConfig{ExitTime: req.ExitTime, SlBps: req.SlBps, TpBps: req.TpBps, WingPct: req.WingPct}
 	}
 	// Abort before anything is persisted or sent if the requested risk config
 	// is invalid.
@@ -454,13 +566,15 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 	log.Printf("📦 Building legs for chunking: CE lots=%d, PE lots=%d", ceLots, peLots)
 	var chunks [][]ExecOrder
 
+	maxOrderQty := int(s.resolveMaxOrderQty(req.Symbol, int64(lotSize)))
+
 	if req.OrderLotsPerCall > 0 {
 		// Explicit UI clip size: use dedicated pipeline, no seven-bucket chunker.
 		clips, e := GenerateExplicitClips(
 			fmt.Sprintf("BUI_%s", tradeUID),
 			legs,
 			req.OrderLotsPerCall,
-			MaxOrderQtyForSymbol(req.Symbol),
+			maxOrderQty,
 		)
 		chunks = clips
 		err = e
@@ -470,7 +584,7 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 			fmt.Sprintf("BUI_%s", tradeUID),
 			legs,
 			req.Lots,
-			MaxOrderQtyForSymbol(req.Symbol),
+			maxOrderQty,
 			req.OrderLotsPerCall,
 		)
 	}
@@ -484,11 +598,19 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 	buildOutcome, err := s.executeBuild(ctx, executor, trade, chunks)
 	if err != nil {
 		if strings.Contains(err.Error(), "build ratio mismatch") {
-			// executeBuild already persisted RECONCILIATION_REQUIRED with
-			// the real verified quantities -- leave it there, visible, for
-			// a human to square off, instead of overwriting it with the
-			// generic FAILED status below (which would still be truthful
-			// but loses the more specific "needs reconciliation" signal).
+			// Lopsided fill (e.g. PE hit margin rejection after CE filled):
+			// still a real position -- track it as ACTIVE (partial) at what
+			// really filled, one leg or both. Only if the fills can't be
+			// validated does it stay RECONCILIATION_REQUIRED for a human.
+			if stored, ok := s.Store.LoadTrade(tradeUID); ok {
+				stored.Config.PartialFill = true
+				stored.Config.RequestedCEQty = ceQty
+				stored.Config.RequestedPEQty = peQty
+				if promoted, ok := s.PromotePartialTrade(ctx, stored); ok {
+					s.startRuntime(promoted)
+					log.Printf("[PARTIAL] trade=%s lopsided build now tracked: %v", tradeUID, err)
+				}
+			}
 			return nil, err
 		}
 		trade.Status = "FAILED"
@@ -514,16 +636,37 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 		trade.Status = "ACTIVE"
 
 	case buildOutcome.HasVerifiedExposure():
-		trade.Status = "PARTIAL"
-		// Record what actually filled, not what was intended: an exit sized
-		// from the intended quantity bought a PE that had never been sold.
+		// Part of the build filled (e.g. the rest hit a margin rejection).
+		// What filled is a real position: track it as ACTIVE (partial) at
+		// the quantity that REALLY filled -- monitors, hedge and exits all
+		// run on it -- instead of parking it in an unmonitored PARTIAL
+		// status (live 2026-09-30: a 73/72-lot position sat unmonitored).
+		trade.Config.PartialFill = true
+		trade.Config.RequestedCEQty = trade.CEQty
+		trade.Config.RequestedPEQty = trade.PEQty
 		trade.CEQty = int(buildOutcome.Summary.VerifiedCE)
 		trade.PEQty = int(buildOutcome.Summary.VerifiedPE)
+		promoted, ok := s.PromotePartialTrade(ctx, trade)
+		trade = promoted
+		if !ok {
+			trade.Status = "RECONCILIATION_REQUIRED"
+		}
 
 	case buildOutcome.HasSubmittedOrders() ||
 		buildOutcome.SubmissionErrors > 0 ||
 		buildOutcome.FirstError != nil:
-		trade.Status = "RECONCILIATION_REQUIRED"
+		// Verification saw no fills (e.g. it timed out), but orders went
+		// out: if the exchange fills are in the DB, track them as ACTIVE
+		// (partial); otherwise leave it for a human.
+		trade.Config.PartialFill = true
+		trade.Config.RequestedCEQty = trade.CEQty
+		trade.Config.RequestedPEQty = trade.PEQty
+		promoted, ok := s.PromotePartialTrade(ctx, trade)
+		trade = promoted
+		if !ok {
+			trade.Status = "RECONCILIATION_REQUIRED"
+			trade.Config.PartialFill = false
+		}
 
 	default:
 		trade.Status = "FAILED"
@@ -579,6 +722,35 @@ func (s *Service) executeBuild(
 		sellBuffer = 2.0
 	}
 
+	totalBuildOrders := 0
+	for _, chunk := range chunks {
+		totalBuildOrders += len(chunk)
+	}
+
+	// Live "Building X/Y orders placed" progress, pushed over the same
+	// websocket channel the runtime monitor already uses for PnL/greeks
+	// (straddle_update) so the UI reflects real-time progress during a
+	// build instead of only learning the outcome once it's done. Best
+	// effort: a push failure never blocks or fails the build itself.
+	pushBuildProgress := func(submitted int) {
+		if s.Snapshot == nil {
+			return
+		}
+		_ = s.Snapshot.PushSnapshot(context.Background(), TradeSnapshot{
+			TradeUID:             trade.TradeUID,
+			Timestamp:            time.Now(),
+			Status:               "BUILDING",
+			Symbol:               trade.Symbol,
+			Expiry:               trade.Expiry,
+			Strike:               trade.Strike,
+			Underlying:           trade.Underlying,
+			NetDelta:             trade.NetDelta,
+			BuildOrdersSubmitted: submitted,
+			BuildOrdersTotal:     totalBuildOrders,
+		})
+	}
+	pushBuildProgress(0)
+
 	// Collect successfully acknowledged broker order IDs for the
 	// trade-level verified-fill reconciliation introduced in Stage 4.
 	// This patch does not yet change existing execution behavior.
@@ -592,6 +764,26 @@ func (s *Service) executeBuild(
 	// has almost always already arrived (live confirm latency is ~10-30ms;
 	// see logs/4_execution.log IRIS-WS lines), so this is a free, real-time
 	// check, not a blocking one.
+	// Wings (MonitorConfig.WingPct > 0): a wing BUY goes out right after
+	// each short, same quantity, and is confirmed/trued up once the build's
+	// fills are verified (settleBuildWings).
+	wingPlan := s.planBuildWings(ctx, trade)
+	var pendingWings []pendingWing
+	wingsSettled := false
+	settleWings := func(verifiedCE, verifiedPE int64, trueUp bool) {
+		if wingsSettled {
+			return
+		}
+		wingsSettled = true
+		s.settleBuildWings(ctx, executor, trade, wingPlan, pendingWings, verifiedCE, verifiedPE, trueUp)
+	}
+	defer settleWings(0, 0, false) // any exit path not settled below
+
+	// "Stop building" (POST /api/build/stop): no new build order goes out
+	// once set; what already filled becomes the (partial) position.
+	stopFlag := registerBuildStop(trade.TradeUID)
+	defer buildStops.Delete(trade.TradeUID)
+
 	var pendingConfirmOrderID string
 	consecutiveRejections := 0
 	circuitBreakerTripped := false
@@ -641,6 +833,11 @@ chunkLoop:
 			for i := range ordersToProcess {
 				order := ordersToProcess[i]
 
+				if stopFlag.Load() {
+					log.Printf("[BUILD] trade=%s STOPPED by user: no more build orders (%d submitted); the filled part becomes the position", trade.TradeUID, outcome.SubmittedCount)
+					break chunkLoop
+				}
+
 				if order.Quantity <= 0 {
 					err := fmt.Errorf(
 						"invalid build quantity for token %d: %d",
@@ -652,8 +849,23 @@ chunkLoop:
 					return outcome, err
 				}
 
-				bufferMultiplier := float64(retryIter + 1)
-				limit := math.Max(0.05, order.ExpectedPrice-sellBuffer*bufferMultiplier)
+				// Price off the LIVE bid/ask (attempt 1 -> buffer 1) when a
+				// quote is available; the stale LTP snapshotted at deploy
+				// time (ExpectedPrice) is only a fallback for when the
+				// chain has no live quote yet.
+				limit := 0.0
+				if s.Snapshot != nil {
+					if chain, chainErr := s.Snapshot.GetOptionChain(ctx, trade.Symbol, trade.Expiry); chainErr == nil {
+						bid, ask := bidAskForToken(chain, order.Token)
+						if p, ok := bidAskLimitPrice(order.Action, bid, ask, bufferForAttempt(1)); ok {
+							limit = p
+						}
+					}
+				}
+				if limit <= 0 {
+					bufferMultiplier := float64(retryIter + 1)
+					limit = math.Max(0.05, order.ExpectedPrice-sellBuffer*bufferMultiplier)
+				}
 				order.LimitPrice = math.Round(limit/0.05) * 0.05
 
 				intent := OrderIntent{
@@ -663,6 +875,7 @@ chunkLoop:
 					Symbol:          order.Symbol,
 					Side:            order.Action,
 					Quantity:        int64(order.Quantity),
+					LotSize:         int64(trade.LotSize),
 					OrderType:       "LIMIT",
 					ProductType:     trade.ProductType,
 					ExchangeSegment: trade.ExchangeSegment,
@@ -716,6 +929,15 @@ chunkLoop:
 					Side:          order.Action,
 					Quantity:      int64(order.Quantity),
 				})
+				pushBuildProgress(outcome.SubmittedCount)
+
+				if tok := wingPlan.token[order.OptionType]; tok > 0 && strings.EqualFold(order.Action, "SELL") {
+					if pw, wErr := s.submitWingOrder(ctx, executor, trade, tok, order.OptionType, "BUY", int64(order.Quantity)); wErr != nil {
+						log.Printf("[WINGS] ⚠ trade=%s build wing BUY %s %d not sent (true-up retries after the build): %v", trade.TradeUID, order.OptionType, order.Quantity, wErr)
+					} else {
+						pendingWings = append(pendingWings, pw)
+					}
+				}
 
 				log.Printf(
 					"BUILD submitted trade=%s chunk=%d retry=%d leg=%s broker_order_id=%s status=%s fill_assumed=false",
@@ -822,6 +1044,7 @@ chunkLoop:
 				err,
 			)
 		} else {
+			settleWings(summary.VerifiedCE, summary.VerifiedPE, summary.VerificationError == nil)
 			log.Printf(
 				"✅ BUILD verification summary trade=%s verified_ce=%d/%d verified_pe=%d/%d unfilled_ce=%d unfilled_pe=%d",
 				trade.TradeUID,
@@ -858,6 +1081,70 @@ chunkLoop:
 	}
 
 	return outcome, nil
+}
+
+// PromotePartialTrade turns a partially-filled build into an ACTIVE
+// (partial) trade sized to what REALLY filled, per trade (never merged with
+// another trade on the same strike): legs are re-derived from exchange fills,
+// the trade is marked ACTIVE with Config.PartialFill, then validated (both
+// legs genuinely short). Quantities, entry prices and Lots come from the
+// validated fills. Returns ok=false (trade left for a human, not monitored)
+// if the fills don't form a valid two-legged short position.
+func (s *Service) PromotePartialTrade(ctx context.Context, trade StoredTrade) (StoredTrade, bool) {
+	pg, isPG := s.Store.(*PostgresBackedStore)
+	if !isPG {
+		return trade, false
+	}
+	if !trade.Config.PartialFill {
+		trade.Config.PartialFill = true
+		if trade.Config.RequestedCEQty == 0 && trade.Config.RequestedPEQty == 0 && trade.Lots > 0 && trade.LotSize > 0 {
+			trade.Config.RequestedCEQty = trade.CEQty
+			trade.Config.RequestedPEQty = trade.PEQty
+		}
+	}
+	if err := pg.RecomputeTradeLegs(ctx, trade.TradeUID); err != nil {
+		log.Printf("[PARTIAL] trade=%s leg recompute failed, NOT tracked automatically: %v", trade.TradeUID, err)
+		return trade, false
+	}
+
+	prevStatus := trade.Status
+	trade.Status = "ACTIVE"
+	trade.LastUpdateTime = time.Now()
+	s.Store.UpdateTrade(trade)
+
+	elig, err := pg.ValidatePartialTradeForRuntime(ctx, trade.TradeUID)
+	if err != nil {
+		log.Printf("[PARTIAL] trade=%s filled legs are not a valid short position (%v) -- left as RECONCILIATION_REQUIRED for manual review (was %s)",
+			trade.TradeUID, err, prevStatus)
+		trade.Status = "RECONCILIATION_REQUIRED"
+		trade.LastUpdateTime = time.Now()
+		s.Store.UpdateTrade(trade)
+		return trade, false
+	}
+
+	trade.CEQty = int(elig.CEQty)
+	trade.PEQty = int(elig.PEQty)
+	trade.CELtp = elig.CEEntry
+	trade.PELtp = elig.PEEntry
+	// SL/TP normalise PnL per original straddle (Lots x LotSize); for a
+	// partial build the real "original" size is what filled. The smaller
+	// leg keeps it conservative (SL fires no later than it should).
+	if trade.LotSize > 0 {
+		// Both legs: the smaller one. One leg only: that leg.
+		filledQty := minInt(trade.CEQty, trade.PEQty)
+		if filledQty == 0 {
+			filledQty = maxInt(trade.CEQty, trade.PEQty)
+		}
+		filledLots := filledQty / trade.LotSize
+		if filledLots > 0 && (trade.Lots <= 0 || filledLots < trade.Lots) {
+			trade.Lots = filledLots
+		}
+	}
+	trade.LastUpdateTime = time.Now()
+	s.Store.UpdateTrade(trade)
+	log.Printf("[PARTIAL] trade=%s tracked as ACTIVE (partial): ce=%d pe=%d (requested ce=%d pe=%d) entry ce=%.2f pe=%.2f lots=%d -- monitors/hedge/exits run on the filled quantity",
+		trade.TradeUID, trade.CEQty, trade.PEQty, trade.Config.RequestedCEQty, trade.Config.RequestedPEQty, trade.CELtp, trade.PELtp, trade.Lots)
+	return trade, true
 }
 
 // slThresholdForTrade computes the stop-loss lot count and rupee
@@ -955,11 +1242,111 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 
 	netDelta, netGamma, netTheta, netVega := shortLegGreeks(ceRow, peRow, trade.CEQty, trade.PEQty)
 
-	// Calculate PointsOut and PointsAllowed
+	// Fold in any additional leg (e.g. a hedge placed at a different,
+	// live-ATM strike -- see ManualHedgeLots) so its delta/greeks/PnL are
+	// part of the SAME totals used for PointsOut, SL/TP, and everything
+	// the UI shows -- a hedge is part of the real position, not a
+	// separate thing tracked nowhere. Confirmed live 2026-09-25: before
+	// this, a hedge leg's real delta/PnL contribution was invisible here
+	// entirely, so PointsOut/SL/TP kept reacting as if the hedge did
+	// nothing.
+	var extraLegSnapshots []TradeLegSnapshot
+	// Net signed CE/PE across ALL strikes (straddle + hedges + wings);
+	// both 0 when wings exactly cover the shorts.
+	wingNetCE, wingNetPE := -int64(trade.CEQty), -int64(trade.PEQty)
+	wingPNL := 0.0
+	if extraLegs, err := s.extraOpenLegs(tradeUID, trade); err != nil {
+		log.Printf("⚠️ extraOpenLegs failed for %s (continuing without them): %v", tradeUID, err)
+	} else {
+		for _, leg := range extraLegs {
+			var row *OptionChainRow
+			for i := range chain.Chain {
+				r := &chain.Chain[i]
+				if (leg.OptionType == "CE" && r.CEToken == leg.Token) ||
+					(leg.OptionType == "PE" && r.PEToken == leg.Token) {
+					row = r
+					break
+				}
+			}
+			if row == nil {
+				log.Printf("⚠️ extra leg trade=%s token=%d optionType=%s not found in live chain -- skipped from delta/PnL this tick", tradeUID, leg.Token, leg.OptionType)
+				continue
+			}
+
+			var rawDelta, rawGamma, rawTheta, rawVega, ltp, iv float64
+			if leg.OptionType == "CE" {
+				rawDelta, rawGamma, rawTheta, rawVega, ltp, iv = row.CEDelta, row.CEGamma, row.CETheta, row.CEVega, row.CELtp, row.CEIV
+			} else {
+				rawDelta, rawGamma, rawTheta, rawVega, ltp, iv = row.PEDelta, row.PEGamma, row.PETheta, row.PEVega, row.PELtp, row.PEIV
+			}
+
+			// Wing quantity is margin-only: shown, but never in delta,
+			// PnL, PointsOut, SL/TP or hedge sizing. A token can in rare
+			// cases carry both (a hedge landing on an old wing strike), so
+			// split it rather than classify the whole leg.
+			for _, part := range []struct {
+				qty  int64
+				wing bool
+			}{{leg.Qty - leg.WingQty, false}, {leg.WingQty, true}} {
+				if part.qty == 0 {
+					continue
+				}
+				if leg.OptionType == "CE" {
+					wingNetCE += part.qty
+				} else {
+					wingNetPE += part.qty
+				}
+				d, g, th, v, pnl := signedLegGreeksAndPNL(rawDelta, rawGamma, rawTheta, rawVega, ltp, leg.EntryPrice, part.qty)
+				if part.wing {
+					wingPNL += pnl
+				} else {
+					netDelta += d
+					netGamma += g
+					netTheta += th
+					netVega += v
+					totalPNL += pnl
+				}
+
+				// Same display convention as the straddle legs: positive
+				// quantity, direction in Action.
+				action, absQty := "SELL", -part.qty
+				if part.qty > 0 {
+					action, absQty = "BUY", part.qty
+				}
+				extraLegSnapshots = append(extraLegSnapshots, TradeLegSnapshot{
+					Token: leg.Token, Strike: row.Strike, OptionType: leg.OptionType,
+					Action: action, Quantity: absQty, EntryPrice: leg.EntryPrice, LTP: ltp, PNL: pnl,
+					IV: iv, Delta: rawDelta, Gamma: rawGamma, Theta: rawTheta, Vega: rawVega,
+					Wing: part.wing,
+				})
+			}
+		}
+	}
+	if trade.Config.WingPct > 0 && (wingNetCE != 0 || wingNetPE != 0) && trade.Status == "ACTIVE" && time.Now().Second() == 0 {
+		// Only reported: never auto-corrected with an order (a lagging
+		// fill or an in-flight action looks the same for a moment).
+		log.Printf("[WINGS] ⚠ trade=%s net across all strikes CE=%+d PE=%+d (want 0/0) -- check wings", tradeUID, wingNetCE, wingNetPE)
+	}
+
+	// Calculate PointsOut and PointsAllowed.
+	//
+	// Both PointsAllowed inputs (ATM straddle premium and IV) come from the
+	// LIVE ATM strike, not the trade's own strike: once spot moves away,
+	// the trade's strike is ITM/OTM and its straddle overstates the ATM
+	// straddle (confirmed live 2026-09-28: 23000 straddle 208.30 -> 52.08
+	// allowed while the live ATM 22900 straddle was ~187 -> ~46.9, delaying
+	// hedges by ~5 points). Falls back to the trade's own rows only if the
+	// chain has no ATM row.
+	allowedRow := ceRow
 	atmStraddle := ceRow.CELtp + peRow.PELtp
+	avgIVPercent := (ceRow.CEIV + peRow.PEIV) / 2.0
+	if atm, atmErr := FindATMRow(*chain); atmErr == nil && atm.CELtp > 0 && atm.PELtp > 0 {
+		allowedRow = atm
+		atmStraddle = atm.CELtp + atm.PELtp
+		avgIVPercent = (atm.CEIV + atm.PEIV) / 2.0
+	}
 	spot := chooseUnderlying(*chain)
 	// IV from broker is in % (e.g., 10.36 = 10.36%), convert to decimal (0.1036)
-	avgIVPercent := (ceRow.CEIV + peRow.PEIV) / 2.0
 	avgIVDecimal := avgIVPercent / 100.0
 
 	// Use config divisors (defaults: straddle_div=4, hedge_div=57)
@@ -999,19 +1386,56 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 		pnlPerStraddle = totalPNL / float64(straddleQuantity)
 	}
 
+	livePositions := []TradeLegSnapshot{
+		{
+			Token:      trade.CEToken,
+			Strike:     ceRow.Strike,
+			OptionType: "CE",
+			Action:     "SELL",
+			Quantity:   int64(trade.CEQty),
+			EntryPrice: ceEntry,
+			LTP:        ceRow.CELtp,
+			PNL:        cePNL,
+			IV:         ceRow.CEIV,
+			Delta:      ceRow.CEDelta,
+			Gamma:      ceRow.CEGamma,
+			Theta:      ceRow.CETheta,
+			Vega:       ceRow.CEVega,
+		},
+		{
+			Token:      trade.PEToken,
+			Strike:     peRow.Strike,
+			OptionType: "PE",
+			Action:     "SELL",
+			Quantity:   int64(trade.PEQty),
+			EntryPrice: peEntry,
+			LTP:        peRow.PELtp,
+			PNL:        pePNL,
+			IV:         peRow.PEIV,
+			Delta:      peRow.PEDelta,
+			Gamma:      peRow.PEGamma,
+			Theta:      peRow.PETheta,
+			Vega:       peRow.PEVega,
+		},
+	}
+	livePositions = append(livePositions, extraLegSnapshots...)
+
 	snapshot := TradeSnapshot{
-		TradeUID:         trade.TradeUID,
-		Timestamp:        time.Now(),
-		Status:           trade.Status,
-		Symbol:           trade.Symbol,
-		Expiry:           trade.Expiry,
-		Strike:           trade.Strike,
-		Underlying:       chooseUnderlying(*chain),
-		TotalPNL:         totalPNL,
-		PnLPerStraddle:   pnlPerStraddle,
-		StraddleQuantity: straddleQuantity,
-		PointsOut:        pointsOut,
-		PointsAllowed:    pointsAllowed,
+		TradeUID:              trade.TradeUID,
+		Timestamp:             time.Now(),
+		Status:                trade.Status,
+		Symbol:                trade.Symbol,
+		Expiry:                trade.Expiry,
+		Strike:                trade.Strike,
+		Underlying:            chooseUnderlying(*chain),
+		TotalPNL:              totalPNL,
+		PnLPerStraddle:        pnlPerStraddle,
+		StraddleQuantity:      straddleQuantity,
+		PointsOut:             pointsOut,
+		PointsAllowed:         pointsAllowed,
+		PointsAllowedStraddle: term1,
+		PointsAllowedIV:       term2,
+		AllowedStrike:         allowedRow.Strike,
 		RealizedPNL: func() float64 {
 			switch trade.Status {
 			case "CLOSED", "CLOSEDSQF", "CLOSED_SQF", "CLOSED_SL", "CLOSED_TP", "CLOSED_TIME", "CLOSED_MANUAL", "FAILED":
@@ -1028,42 +1452,15 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 				return totalPNL
 			}
 		}(),
-		NetDelta: netDelta,
-		NetGamma: netGamma,
-		NetTheta: netTheta,
-		NetVega:  netVega,
-		LivePositions: []TradeLegSnapshot{
-			{
-				Token:      trade.CEToken,
-				Strike:     ceRow.Strike,
-				OptionType: "CE",
-				Action:     "SELL",
-				Quantity:   int64(trade.CEQty),
-				EntryPrice: ceEntry,
-				LTP:        ceRow.CELtp,
-				PNL:        cePNL,
-				IV:         ceRow.CEIV,
-				Delta:      ceRow.CEDelta,
-				Gamma:      ceRow.CEGamma,
-				Theta:      ceRow.CETheta,
-				Vega:       ceRow.CEVega,
-			},
-			{
-				Token:      trade.PEToken,
-				Strike:     peRow.Strike,
-				OptionType: "PE",
-				Action:     "SELL",
-				Quantity:   int64(trade.PEQty),
-				EntryPrice: peEntry,
-				LTP:        peRow.PELtp,
-				PNL:        pePNL,
-				IV:         peRow.PEIV,
-				Delta:      peRow.PEDelta,
-				Gamma:      peRow.PEGamma,
-				Theta:      peRow.PETheta,
-				Vega:       peRow.PEVega,
-			},
-		},
+		NetDelta:      netDelta,
+		NetGamma:      netGamma,
+		NetTheta:      netTheta,
+		NetVega:       netVega,
+		LivePositions: livePositions,
+		WingPct:       trade.Config.WingPct,
+		WingPNL:       wingPNL,
+		WingNetCE:     wingNetCE,
+		WingNetPE:     wingNetPE,
 	}
 
 	s.Store.SaveSnapshot(snapshot)
@@ -1082,9 +1479,10 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 	// snapshot cadence.
 	now := time.Now()
 	log.Printf(
-		"[MONITOR][%s] tick=%s snapshot spot=%.2f total_pnl=%.2f pnl_per_straddle=%.2f delta=%.4f gamma=%.6f theta=%.2f vega=%.2f ce_ltp=%.2f pe_ltp=%.2f",
-		tradeUID, now.Format("15:04:05"), spot, totalPNL, pnlPerStraddle,
+		"[MONITOR][%s] tick=%s snapshot spot=%.2f syn_fut=%.2f fut_ltp=%.2f total_pnl=%.2f pnl_per_straddle=%.2f delta=%.4f gamma=%.6f theta=%.2f vega=%.2f ce_ltp=%.2f pe_ltp=%.2f strike=%.0f ce_qty=%d pe_qty=%d lot_size=%d",
+		tradeUID, now.Format("15:04:05"), spot, chain.SyntheticFuture, chain.FutureLtp, totalPNL, pnlPerStraddle,
 		netDelta, netGamma, netTheta, netVega, ceRow.CELtp, peRow.PELtp,
+		trade.Strike, trade.CEQty, trade.PEQty, trade.LotSize,
 	)
 
 	// Minute-end hedge eligibility check
@@ -1165,8 +1563,54 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 				}
 			}
 
+			// The synthetic future a hedge WOULD place right now (direction
+			// from the signed delta, size floored to whole lots) and the
+			// hedge legs already held on other strikes -- shown every minute
+			// so the hedge picture is visible without waiting for a trigger.
+			synDir, synLegs := "NONE", "-"
+			if ceSide, peSide, ok := hedgeSidesFromSignedDelta(netDelta); ok {
+				synLegs = ceSide + "_CE/" + peSide + "_PE"
+				synDir = "SHORT"
+				if ceSide == "BUY" {
+					synDir = "LONG"
+				}
+			}
+			synLots := hedgeLotsFloor(netDelta, int64(lotSize))
+			held := []string{}
+			for _, l := range extraLegSnapshots {
+				if l.Wing {
+					continue
+				}
+				signed := l.Quantity
+				if l.Action == "SELL" {
+					signed = -signed
+				}
+				held = append(held, fmt.Sprintf("%s%.0f%+d@%.2f", l.OptionType, l.Strike, signed, l.LTP))
+			}
+			// Synthetic future at the live ATM strike (the strike a hedge
+			// uses): LTP-based price, and the executable price for the
+			// direction a hedge would trade (long: buy CE at ask, sell PE
+			// at bid; short: sell CE at bid, buy PE at ask).
+			synStrike, synCE, synPE := allowedRow.Strike, allowedRow.CELtp, allowedRow.PELtp
+			synPx := synStrike + synCE - synPE
+			synExec := 0.0
+			switch synDir {
+			case "LONG":
+				if allowedRow.CEAsk > 0 && allowedRow.PEBid > 0 {
+					synExec = synStrike + allowedRow.CEAsk - allowedRow.PEBid
+				}
+			case "SHORT":
+				if allowedRow.CEBid > 0 && allowedRow.PEAsk > 0 {
+					synExec = synStrike + allowedRow.CEBid - allowedRow.PEAsk
+				}
+			}
+			heldStr := "none"
+			if len(held) > 0 {
+				heldStr = strings.Join(held, ",")
+			}
+
 			log.Printf(
-				"[MONITOR][%s] minute=%s action=%s points_out=%.4f points_allowed=%.4f min_points=%.4f net_delta=%.4f abs_delta=%.4f lot_size=%d points_crossed=%t min_points_reached=%t delta_has_one_lot=%t force_one_lot_test=%t hedge_test_executed=%t reason=%s",
+				"[MONITOR][%s] minute=%s action=%s points_out=%.4f points_allowed=%.4f min_points=%.4f net_delta=%.4f abs_delta=%.4f lot_size=%d points_crossed=%t min_points_reached=%t delta_has_one_lot=%t force_one_lot_test=%t hedge_test_executed=%t syn=%s syn_lots=%d syn_legs=%s syn_strike=%.0f syn_ce=%.2f syn_pe=%.2f syn_px=%.2f syn_exec=%.2f syn_fut=%.2f syn_spot=%.2f fut_ltp=%.2f hedge_held=%s reason=%s",
 				tradeUID,
 				currentMinute.Format("15:04"),
 				hedgeAction,
@@ -1181,30 +1625,60 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 				deltaHasOneLot,
 				forceOneLotTest,
 				trade.Config.HedgeTestExecuted,
+				synDir,
+				synLots,
+				synLegs,
+				synStrike,
+				synCE,
+				synPE,
+				synPx,
+				synExec,
+				chain.SyntheticFuture,
+				chain.SyntheticSpot,
+				chain.FutureLtp,
+				heldStr,
 				hedgeReason,
 			)
 
 			// SL/TP/TIME are only enforced once per minute, together with the
 			// minute-end hedge evaluation, to match the live reference behavior.
+			// slThreshold is logged every tick, breached or not (matching
+			// tpThreshold below) -- previously it stayed 0.0 until the
+			// instant SL actually breached, so every "OK" tick logged
+			// "threshold +0.00" even with a real, actively-checked
+			// threshold configured. Display-only: the breach check itself
+			// always used the correctly-computed local `threshold`.
 			slBreached, slThreshold, slSource := false, 0.0, ""
 			if trade.Config.SLPointsPerLot > 0 {
 				lots, threshold := slThresholdForTrade(trade)
+				slThreshold = threshold
+				slSource = fmt.Sprintf("points_per_lot lots=%.2f", lots)
 				if totalPNL <= threshold {
-					slBreached, slThreshold = true, threshold
-					slSource = fmt.Sprintf("points_per_lot lots=%.2f", lots)
+					slBreached = true
 				}
 			}
 			if !slBreached && trade.Config.SLPnLBpsOfSpot > 0 {
 				threshold := -bpsOfSpotThreshold(spot, trade.Config.SLPnLBpsOfSpot)
+				slThreshold = threshold
+				slSource = fmt.Sprintf("bps_of_spot spot=%.2f bps=%.2f", spot, trade.Config.SLPnLBpsOfSpot)
 				if pnlPerStraddle <= threshold {
-					slBreached, slThreshold = true, threshold
-					slSource = fmt.Sprintf("bps_of_spot spot=%.2f bps=%.2f", spot, trade.Config.SLPnLBpsOfSpot)
+					slBreached = true
 				}
 			}
+			// Trigger lines carry the same PnL/Greeks snapshot fields as the
+			// per-tick "snapshot" line above, so a real exit event is
+			// self-contained -- an operator reading just this one line gets
+			// full context (spot, greeks, CE/PE LTP) instead of having to
+			// cross-reference the nearest snapshot line by timestamp.
+			snapshotFields := fmt.Sprintf(
+				"spot=%.2f delta=%.4f gamma=%.6f theta=%.2f vega=%.2f ce_ltp=%.2f pe_ltp=%.2f",
+				spot, netDelta, netGamma, netTheta, netVega, ceRow.CELtp, peRow.PELtp,
+			)
+
 			if slBreached {
 				log.Printf(
-					"[RISK] SL_TRIGGER trade=%s source=%s pnl=%.2f pnl_per_straddle=%.2f threshold=%.2f",
-					tradeUID, slSource, totalPNL, pnlPerStraddle, slThreshold,
+					"[RISK] SL_TRIGGER trade=%s source=%s pnl=%.2f pnl_per_straddle=%.2f threshold=%.2f %s",
+					tradeUID, slSource, totalPNL, pnlPerStraddle, slThreshold, snapshotFields,
 				)
 				s.executeAutoExit(tradeUID, "SL", "CLOSED_SL")
 			}
@@ -1214,8 +1688,8 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 				tpThreshold = bpsOfSpotThreshold(spot, trade.Config.TPPnLBpsOfSpot)
 				if pnlPerStraddle >= tpThreshold {
 					log.Printf(
-						"[RISK] TP_TRIGGER trade=%s pnl_per_straddle=%.2f threshold=%.2f spot=%.2f bps=%.2f",
-						tradeUID, pnlPerStraddle, tpThreshold, spot, trade.Config.TPPnLBpsOfSpot,
+						"[RISK] TP_TRIGGER trade=%s pnl_per_straddle=%.2f threshold=%.2f bps=%.2f %s",
+						tradeUID, pnlPerStraddle, tpThreshold, trade.Config.TPPnLBpsOfSpot, snapshotFields,
 					)
 					s.executeAutoExit(tradeUID, "TP", "CLOSED_TP")
 				}
@@ -1223,8 +1697,8 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 
 			if !trade.Config.SquareOffHardTime.IsZero() && !time.Now().Before(trade.Config.SquareOffHardTime) {
 				log.Printf(
-					"[RISK] TIME_TRIGGER trade=%s now=%s target=%s",
-					tradeUID, time.Now().Format(time.RFC3339), trade.Config.SquareOffHardTime.Format(time.RFC3339),
+					"[RISK] TIME_TRIGGER trade=%s now=%s target=%s %s",
+					tradeUID, time.Now().Format(time.RFC3339), trade.Config.SquareOffHardTime.Format(time.RFC3339), snapshotFields,
 				)
 				s.executeAutoExit(tradeUID, "TIME", "CLOSED_TIME")
 			}
@@ -1317,7 +1791,13 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 	// are the INTENDED ones. Sizing the exit from them bought back a leg that
 	// had never been sold (2026-09-21: a NOV PE), leaving an unintended long
 	// position. Size it from what the orders actually filled instead.
-	if tr.Status == "PARTIAL" || tr.Status == "RECONCILIATION_REQUIRED" {
+	// ACTIVE (partial) too: exit exactly what was EXECUTED, re-read from the
+	// exchange fills right before sizing, never the requested build size.
+	// Every status: exit what the exchange fills say is open, never the
+	// stored size (2026-10-06: two builds filed under one trade -- stored
+	// 260/260, really 520/520; sizing from the stored header would have left
+	// half the position open).
+	{
 		if p, ok := s.Store.(interface {
 			TradeOpenQuantities(ctx context.Context, tradeUID string) (int64, int64, error)
 		}); ok {
@@ -1325,16 +1805,56 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 			if err != nil {
 				return fmt.Errorf("cannot square off %s: unable to verify open quantities from orders: %w", tradeUID, err)
 			}
-			if int64(tr.CEQty) != ce || int64(tr.PEQty) != pe {
-				log.Printf("⚠️ SquareOff %s status=%s: stored quantity CE=%d PE=%d differs from filled orders CE=%d PE=%d -- using the filled orders",
-					tradeUID, tr.Status, tr.CEQty, tr.PEQty, ce, pe)
+			partial := tr.Status == "PARTIAL" || tr.Status == "RECONCILIATION_REQUIRED" || tr.Config.PartialFill
+			if ce == 0 && pe == 0 && !partial && (tr.CEQty > 0 || tr.PEQty > 0) {
+				// No fills recorded at all for a normal ACTIVE trade (fills
+				// not persisted yet): keep the stored size rather than refuse
+				// to exit.
+				log.Printf("⚠️ SquareOff %s: no exchange fills recorded on its CE/PE tokens -- exiting the stored CE=%d PE=%d", tradeUID, tr.CEQty, tr.PEQty)
+			} else {
+				if int64(tr.CEQty) != ce || int64(tr.PEQty) != pe {
+					log.Printf("⚠️ SquareOff %s status=%s: stored quantity CE=%d PE=%d differs from filled orders CE=%d PE=%d -- using the filled orders",
+						tradeUID, tr.Status, tr.CEQty, tr.PEQty, ce, pe)
+				}
+				tr.CEQty, tr.PEQty = int(ce), int(pe)
 			}
-			tr.CEQty, tr.PEQty = int(ce), int(pe)
 		}
 	}
 
 	if tr.CEQty <= 0 && tr.PEQty <= 0 {
-		return fmt.Errorf("cannot square off %s: no open CE/PE quantity found", tradeUID)
+		// The straddle itself is already flat, but an additional leg (e.g.
+		// an ATM hedge) can still be open -- most importantly when an
+		// earlier SquareOff flattened the straddle and then failed to close
+		// the hedge, which leaves the trade in its prior status with
+		// CEQty=PEQty=0. Refusing here would make every retry (manual, or
+		// the monitor's own SL/TP/TIME exit) bail out before ever reaching
+		// that hedge, leaving it open indefinitely.
+		extra, err := s.extraOpenLegs(tradeUID, tr)
+		if err != nil {
+			return fmt.Errorf("cannot square off %s: unable to check additional open legs: %w", tradeUID, err)
+		}
+		if len(extra) == 0 {
+			return fmt.Errorf("cannot square off %s: no open CE/PE quantity found", tradeUID)
+		}
+
+		prevStatus := tr.Status
+		tr.Status = "SQUARING_OFF"
+		tr.LastUpdateTime = time.Now()
+		s.Store.UpdateTrade(tr)
+
+		if err := s.closeExtraLegsThenWings(tradeUID, tr, "SQF-"+reason); err != nil {
+			tr.Status = prevStatus
+			tr.LastUpdateTime = time.Now()
+			s.Store.UpdateTrade(tr)
+			return fmt.Errorf("square-off of remaining additional legs failed for %s: %w", tradeUID, err)
+		}
+
+		tr.Status = closedStatusForReason(reason)
+		tr.ClosedAt = time.Now()
+		tr.LastUpdateTime = time.Now()
+		s.Store.UpdateTrade(tr)
+		log.Printf("✅ Square-off completed for %s reason=%s status=%s (straddle already flat; closed %d additional leg(s))", tradeUID, reason, tr.Status, len(extra))
+		return nil
 	}
 
 	executor, err := s.BrokerFactory.GetExecutor(tr.UserID, tr.BrokerName, tr.AccountID)
@@ -1373,7 +1893,7 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 		return cause
 	}
 
-	maxOrderQty := 1755
+	maxOrderQty := int(s.resolveMaxOrderQty(tr.Symbol, lotSize))
 	baseLots := int(targetCE / lotSize)
 	if peLots := int(targetPE / lotSize); peLots > baseLots {
 		baseLots = peLots
@@ -1384,9 +1904,17 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 	var allVerifiedFills []BrokerFill
 
 	const maxExecutionAttempts = 4
+	// Orders whose outcome is unknown (no terminal confirmation). A retry
+	// round re-sends the "remaining" quantity, and an unconfirmed order may
+	// well have filled -- so while any exist, NOTHING more is sent (live
+	// 2026-09-30: unconfirmed exits were re-sent and over-bought).
+	var unconfirmedOrders []string
 
 	for executionAttempt := 1; executionAttempt <= maxExecutionAttempts; executionAttempt++ {
 		if remainingCE <= 0 && remainingPE <= 0 {
+			break
+		}
+		if len(unconfirmedOrders) > 0 {
 			break
 		}
 
@@ -1430,12 +1958,20 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 				maxOrderQty,
 			)
 		} else {
+			// One lot per leg per order ("65-65") for a non-SL square-off,
+			// verifying each order's real, live-confirmed outcome before
+			// deciding what (if anything) still needs squaring off --
+			// never batching the whole remaining quantity into fewer,
+			// larger orders and guessing at completion from a timed poll.
+			// SL keeps the aggressive (fewest-orders, max-lots-per-order)
+			// path above: a real stop-loss still needs to exit fast, not
+			// lot-by-lot.
 			chunks, err = GenerateChunkedOrders(
 				fmt.Sprintf("S%sA%d", tradeUID, executionAttempt),
 				legs,
 				baseLots,
 				maxOrderQty,
-				0,
+				1,
 			)
 		}
 		if err != nil {
@@ -1449,7 +1985,7 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 		progressBefore := remainingCE + remainingPE
 
 		for chunkIndex, chunk := range chunks {
-			submitted := make(map[string]struct{})
+			submitted := make(map[string]submittedOrderMeta)
 			requestedCE := int64(0)
 			requestedPE := int64(0)
 
@@ -1467,6 +2003,7 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 					ExchangeSegment: tr.ExchangeSegment,
 					Side:            order.Action,
 					Quantity:        int64(order.Quantity),
+					LotSize:         int64(tr.LotSize),
 					OrderType:       "MARKET",
 					ProductType:     tr.ProductType,
 					LegType:         order.OptionType,
@@ -1497,7 +2034,11 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 					continue
 				}
 
-				submitted[res.BrokerOrderID] = struct{}{}
+				submitted[res.BrokerOrderID] = submittedOrderMeta{
+					Token:    order.Token,
+					Leg:      order.OptionType,
+					Quantity: int64(order.Quantity),
+				}
 				if order.OptionType == "CE" {
 					requestedCE += int64(order.Quantity)
 				} else if order.OptionType == "PE" {
@@ -1520,20 +2061,22 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 				continue
 			}
 
-			verifyCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			summary := waitForVerifiedFills(
+			verifyCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			summary := waitForVerifiedFillsLive(
 				verifyCtx,
+				s.OrderEvents,
 				provider,
+				tradeUID,
 				submitted,
 				tr.CEToken,
 				tr.PEToken,
 				requestedCE,
 				requestedPE,
-				6,
-				800*time.Millisecond,
+				15*time.Second,
 			)
 			cancel()
 
+			unconfirmedOrders = append(unconfirmedOrders, summary.Unconfirmed...)
 			if len(summary.Fills) > 0 {
 				log.Printf("🔍 DEBUG SQF summary.Fills=%d allVerifiedFills=%d before append", len(summary.Fills), len(allVerifiedFills))
 				allVerifiedFills = append(allVerifiedFills, summary.Fills...)
@@ -1591,6 +2134,26 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 		}
 	}
 
+	if len(unconfirmedOrders) > 0 && (remainingCE > 0 || remainingPE > 0) {
+		// Stop here: the true remaining position is unknown. Never send a
+		// retry, and stop the monitor so a TIME/SL/TP re-trigger can't
+		// either. A human checks the broker position and closes the rest.
+		tr.CEQty = int(remainingCE)
+		tr.PEQty = int(remainingPE)
+		tr.Status = "RECONCILIATION_REQUIRED"
+		tr.Config.ExitHalted = true
+		tr.LastUpdateTime = time.Now()
+		s.Store.UpdateTrade(tr)
+		if rt, ok := s.Store.LoadRuntime(tradeUID); ok {
+			close(rt.StopCh)
+			s.Store.DeleteRuntime(tradeUID)
+		}
+		log.Printf("🚫 SQF STOPPED trade=%s reason=%s: %d order(s) unconfirmed %v -- NOT re-sending; confirmed so far CE=%d/%d PE=%d/%d; monitor stopped, status=RECONCILIATION_REQUIRED -- check the broker position",
+			tradeUID, reason, len(unconfirmedOrders), unconfirmedOrders,
+			targetCE-remainingCE, targetCE, targetPE-remainingPE, targetPE)
+		return fmt.Errorf("square-off stopped: %d order(s) unconfirmed, not re-sending; check broker position", len(unconfirmedOrders))
+	}
+
 	verifiedCE := targetCE - remainingCE
 	verifiedPE := targetPE - remainingPE
 
@@ -1599,20 +2162,25 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 	tr.LastUpdateTime = time.Now()
 
 	if remainingCE == 0 && remainingPE == 0 {
-		switch reason {
-		case "SL":
-			// Preserves the audit distinction between a real
-			// stop-loss-triggered close and a manual/other square-off --
-			// CLOSED_SL is already a recognized terminal status
-			// elsewhere in this file (see the status-guard switches).
-			tr.Status = "CLOSED_SL"
-		case "TP":
-			tr.Status = "CLOSED_TP"
-		case "TIME":
-			tr.Status = "CLOSED_TIME"
-		default:
-			tr.Status = "CLOSEDSQF"
+		// Close any additional open legs (e.g. a hedge placed at a
+		// different, live-ATM strike -- see ManualHedgeLots) BEFORE
+		// declaring the trade closed. Confirmed live 2026-09-25: a real
+		// hedge leg on a neighboring strike was left open after
+		// SquareOff, because SquareOff only ever closed tr.CEQty/tr.PEQty
+		// on tr.CEToken/tr.PEToken and had no way to know that leg
+		// existed. A failure here must not mark the trade closed --
+		// better to leave it in its prior status (so the monitor keeps
+		// watching it and a retry is possible) than to falsely report a
+		// real open position as CLOSEDSQF.
+		if extraErr := s.closeExtraLegsThenWings(tradeUID, tr, "SQF-"+reason); extraErr != nil {
+			log.Printf("⚠️ SQF extra-leg close failed for %s: %v -- trade NOT marked closed", tradeUID, extraErr)
+			tr.Status = prevStatus
+			tr.LastUpdateTime = time.Now()
+			s.Store.UpdateTrade(tr)
+			return fmt.Errorf("square-off closed the straddle but failed to close additional open legs: %w", extraErr)
 		}
+
+		tr.Status = closedStatusForReason(reason)
 		tr.ClosedAt = time.Now()
 	} else {
 		tr.Status = prevStatus
@@ -1660,6 +2228,216 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 
 	log.Printf("✅ Square-off completed for %s reason=%s status=%s", tradeUID, reason, tr.Status)
 	return nil
+}
+
+// closeExtraOpenLegs closes any trade_legs row still OPEN on a token
+// OTHER than the trade's own CE/PE (e.g. a hedge placed at a different,
+// live-ATM strike -- see ManualHedgeLots' live-ATM resolution). It reads
+// from the durable trade_legs table (LoadOpenLegs), not the in-memory
+// tr.CEQty/tr.PEQty, as the source of truth for what's genuinely still
+// open, so this correctly finds and closes a hedge leg even if the
+// process restarted between the hedge and this square-off. Best-effort
+// per leg in the sense that it stops and returns an error on the first
+// failure rather than silently leaving a later leg unclosed.
+// extraOpenLegs returns this trade's currently-OPEN trade_legs rows that
+// are on neither tr.CEToken nor tr.PEToken -- i.e. any additional leg
+// such as a hedge placed at a different (live ATM) strike. Returns
+// (nil, nil) for a MemoryStore, which has no trade_legs concept.
+func (s *Service) extraOpenLegs(tradeUID string, tr StoredTrade) ([]OpenLeg, error) {
+	pgStore, ok := s.Store.(*PostgresBackedStore)
+	if !ok {
+		return nil, nil
+	}
+
+	legs, err := pgStore.LoadOpenLegs(tradeUID)
+	if err != nil {
+		return nil, fmt.Errorf("load open legs: %w", err)
+	}
+
+	var extra []OpenLeg
+	for _, leg := range legs {
+		if leg.Token != tr.CEToken && leg.Token != tr.PEToken {
+			extra = append(extra, leg)
+		}
+	}
+	return extra, nil
+}
+
+// closedStatusForReason preserves the audit distinction between a real
+// stop-loss/take-profit/time-triggered close and a manual/other
+// square-off -- each is already a recognized terminal status elsewhere
+// in this file (see the status-guard switches).
+func closedStatusForReason(reason string) string {
+	switch reason {
+	case "SL":
+		return "CLOSED_SL"
+	case "TP":
+		return "CLOSED_TP"
+	case "TIME":
+		return "CLOSED_TIME"
+	default:
+		return "CLOSEDSQF"
+	}
+}
+
+// closeExtraOpenLegs fully closes every additional open leg (100%). Used
+// by a full SquareOff.
+// Wings are NOT closed here -- the caller closes them last, after every
+// short is flat (closeAllWings), so no short is ever left without its wing.
+func (s *Service) closeExtraOpenLegs(tradeUID string, tr StoredTrade) error {
+	_, _, err := s.reduceExtraOpenLegs(tradeUID, tr, 100, "SQFX", "SQF")
+	return err
+}
+
+// closeExtraLegsThenWings is the full-exit tail: hedge legs first, then
+// every wing held (net target 0 once nothing else is open).
+func (s *Service) closeExtraLegsThenWings(tradeUID string, tr StoredTrade, reason string) error {
+	if err := s.closeExtraOpenLegs(tradeUID, tr); err != nil {
+		return err
+	}
+	if err := s.closeAllWings(context.Background(), tr, reason); err != nil {
+		return fmt.Errorf("close wings: %w", err)
+	}
+	return nil
+}
+
+// reduceExtraOpenLegs closes `percentage` of every additional open leg
+// (e.g. a hedge at a different, live-ATM strike -- see ManualHedgeLots),
+// lot-aligned, in the direction that shrinks it. Used by both a full
+// SquareOff (percentage=100, via closeExtraOpenLegs) and a
+// PartialSquareOff (percentage matching the straddle's own trim), so a
+// partial exit reduces the hedge by the SAME proportion instead of
+// leaving all of it open to cover a position that's now smaller, or
+// closing all of it when only part of the straddle was meant to exit.
+//
+// Only the NON-wing part of each leg is traded (wings are adjusted by the
+// caller). Returns how much the net SHORT per type changed (negative =
+// shrank), from confirmed orders only, so the caller can move the wings by
+// exactly that much.
+func (s *Service) reduceExtraOpenLegs(tradeUID string, tr StoredTrade, percentage float64, tagPrefix, phase string) (shortChangeCE, shortChangePE int64, retErr error) {
+	if percentage <= 0 {
+		return 0, 0, nil
+	}
+
+	extra, err := s.extraOpenLegs(tradeUID, tr)
+	if err != nil {
+		return 0, 0, err
+	}
+	hasReal := false
+	for _, leg := range extra {
+		if leg.Qty-leg.WingQty != 0 {
+			hasReal = true
+		}
+	}
+	if !hasReal {
+		return 0, 0, nil
+	}
+
+	executor, err := s.BrokerFactory.GetExecutor(tr.UserID, tr.BrokerName, tr.AccountID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("get executor: %w", err)
+	}
+	record := func(optionType, side string, qty int64) {
+		if optionType == "CE" {
+			shortChangeCE += shortChangeFromFill(side, qty)
+		} else {
+			shortChangePE += shortChangeFromFill(side, qty)
+		}
+	}
+
+	lotSize := int64(tr.LotSize)
+	if lotSize <= 0 {
+		lotSize = 1
+	}
+
+	for idx, leg := range extra {
+		realQty := leg.Qty - leg.WingQty
+		side := "SELL"
+		absQty := realQty
+		if realQty < 0 {
+			side = "BUY"
+			absQty = -realQty
+		}
+		if absQty <= 0 {
+			continue
+		}
+
+		qty := absQty
+		if percentage < 100 {
+			lots := int64(math.Round(float64(absQty) * (percentage / 100.0) / float64(lotSize)))
+			if lots <= 0 && absQty > 0 {
+				lots = 1
+			}
+			qty = lots * lotSize
+			if qty > absQty {
+				qty = absQty
+			}
+		}
+		if qty <= 0 {
+			continue
+		}
+
+		// Split into orders no bigger than the live per-order max (e.g.
+		// NIFTY 1755): a hedge built in several tranches can be larger than
+		// one order is allowed to be, and a single oversized exit order
+		// would be rejected by the exchange.
+		maxPer := s.resolveMaxOrderQty(tr.Symbol, lotSize)
+		for piece, remaining := 0, qty; remaining > 0; piece++ {
+			pieceQty := remaining
+			if pieceQty > maxPer {
+				pieceQty = maxPer
+			}
+
+			intentID := BuildShortOrderUID(tr.Symbol, fmt.Sprintf("%s%dP%d", tagPrefix, leg.Token, piece), time.Now(), idx)
+			intent := OrderIntent{
+				IntentID:        intentID,
+				TradeUID:        tradeUID,
+				Token:           leg.Token,
+				Symbol:          tr.Symbol,
+				ExchangeSegment: leg.Exchange,
+				Side:            side,
+				Quantity:        pieceQty,
+				LotSize:         lotSize,
+				OrderType:       "MARKET",
+				ProductType:     tr.ProductType,
+				Phase:           phase,
+				OrderUID:        intentID,
+				BrokerName:      tr.BrokerName,
+				AccountID:       tr.AccountID,
+			}
+
+			log.Printf(
+				"📝 Persisting %s extra-leg order to DB before execution: trade=%s token=%d side=%s qty=%d (piece %d, %.0f%% of open %d, max/order %d)",
+				phase, tradeUID, leg.Token, side, pieceQty, piece+1, percentage, absQty, maxPer,
+			)
+			brokerOrderID, _, err := s.submitOrderIntent(context.Background(), executor, tradeUID, intent)
+			if err != nil {
+				return shortChangeCE, shortChangePE, fmt.Errorf("reduce extra leg token=%d: %w", leg.Token, err)
+			}
+
+			waitCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			upd, err := s.OrderEvents.WaitTerminal(waitCtx, tradeUID, brokerOrderID, pieceQty, 15*time.Second)
+			cancel()
+			if upd.FilledQty > 0 {
+				got := upd.FilledQty
+				if got > pieceQty {
+					got = pieceQty
+				}
+				record(leg.OptionType, side, got)
+			}
+			if err != nil {
+				return shortChangeCE, shortChangePE, fmt.Errorf("reduce extra leg token=%d order=%s: no terminal confirmation: %w", leg.Token, brokerOrderID, err)
+			}
+
+			log.Printf(
+				"✅ %s extra leg reduced trade=%s token=%d side=%s qty=%d broker_order_id=%s",
+				phase, tradeUID, leg.Token, side, pieceQty, brokerOrderID,
+			)
+			remaining -= pieceQty
+		}
+	}
+
+	return shortChangeCE, shortChangePE, nil
 }
 
 func verifiedQuantityForToken(fills []BrokerFill, token int64) int64 {
@@ -1753,6 +2531,22 @@ func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
 	if tr.CEToken <= 0 && tr.PEToken <= 0 {
 		return fmt.Errorf("cannot partially square off %s: missing CE/PE tokens", tradeUID)
 	}
+	// ACTIVE (partial): the percentage is of what was EXECUTED, re-read from
+	// the exchange fills, never of the requested build size.
+	if tr.Config.PartialFill {
+		if p, ok := s.Store.(interface {
+			TradeOpenQuantities(ctx context.Context, tradeUID string) (int64, int64, error)
+		}); ok {
+			ce, pe, err := p.TradeOpenQuantities(context.Background(), tradeUID)
+			if err != nil {
+				return fmt.Errorf("cannot partially square off %s: unable to verify executed quantities: %w", tradeUID, err)
+			}
+			if int64(tr.CEQty) != ce || int64(tr.PEQty) != pe {
+				log.Printf("⚠️ PartialSquareOff %s (partial): stored CE=%d PE=%d differs from executed CE=%d PE=%d -- using executed", tradeUID, tr.CEQty, tr.PEQty, ce, pe)
+			}
+			tr.CEQty, tr.PEQty = int(ce), int(pe)
+		}
+	}
 	if tr.CEQty <= 0 && tr.PEQty <= 0 {
 		return fmt.Errorf("cannot partially square off %s: no open CE/PE quantity found", tradeUID)
 	}
@@ -1778,11 +2572,19 @@ func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
 	tr.LastUpdateTime = time.Now()
 	s.Store.UpdateTrade(tr)
 
-	// Calculate partial quantities aligned with LotSize multiples
-	lotSize := int64(65)
-	if tr.LotSize > 0 {
-		lotSize = int64(tr.LotSize)
+	// Calculate partial quantities aligned with LotSize multiples. No
+	// hardcoded fallback here -- lot sizes differ a lot across symbols
+	// (NIFTY 65, BANKNIFTY 15, SENSEX 20, FINNIFTY 40 as of 2026-09-23) and
+	// silently guessing 65 for a trade whose real LotSize wasn't persisted
+	// would size a REAL partial-exit order wrong. Matches the same
+	// refuse-to-guess stance as GetFallbackLotSize.
+	if tr.LotSize <= 0 {
+		tr.Status = prevStatus
+		tr.LastUpdateTime = time.Now()
+		s.Store.UpdateTrade(tr)
+		return fmt.Errorf("cannot partially square off %s: trade has no resolved lot size", tradeUID)
 	}
+	lotSize := int64(tr.LotSize)
 
 	rawCeQty := float64(tr.CEQty) * (percentage / 100.0)
 	rawPeQty := float64(tr.PEQty) * (percentage / 100.0)
@@ -1841,7 +2643,7 @@ func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
 	}
 
 	// Generate seven chunks
-	maxOrderQty := 1800 // Broker max
+	maxOrderQty := int(s.resolveMaxOrderQty(tr.Symbol, lotSize))
 	chunks, err := GenerateChunkedOrders(
 		fmt.Sprintf("PSQF_%s", tradeUID),
 		legs,
@@ -1865,7 +2667,7 @@ func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
 	var allVerifiedFills []BrokerFill
 
 	for chunkIdx, chunk := range chunks {
-		submitted := make(map[string]struct{})
+		submitted := make(map[string]submittedOrderMeta)
 		requestedCE := int64(0)
 		requestedPE := int64(0)
 
@@ -1881,6 +2683,7 @@ func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
 				Symbol:          order.Symbol,
 				Side:            order.Action,
 				Quantity:        int64(order.Quantity),
+				LotSize:         lotSize,
 				OrderType:       "MARKET",
 				ProductType:     tr.ProductType,
 				ExchangeSegment: tr.ExchangeSegment,
@@ -1903,7 +2706,11 @@ func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
 				continue
 			}
 
-			submitted[res.BrokerOrderID] = struct{}{}
+			submitted[res.BrokerOrderID] = submittedOrderMeta{
+				Token:    order.Token,
+				Leg:      order.OptionType,
+				Quantity: int64(order.Quantity),
+			}
 			if order.OptionType == "CE" {
 				requestedCE += int64(order.Quantity)
 			} else if order.OptionType == "PE" {
@@ -1921,11 +2728,11 @@ func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
 			continue
 		}
 
-		verifyCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		summary := waitForVerifiedFills(
-			verifyCtx, provider, submitted,
+		verifyCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		summary := waitForVerifiedFillsLive(
+			verifyCtx, s.OrderEvents, provider, tradeUID, submitted,
 			tr.CEToken, tr.PEToken, requestedCE, requestedPE,
-			6, 800*time.Millisecond,
+			15*time.Second,
 		)
 		cancel()
 
@@ -1967,6 +2774,47 @@ func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
 	tr.CEQty = int(math.Max(0, float64(tr.CEQty)-float64(verifiedCE)))
 	tr.PEQty = int(math.Max(0, float64(tr.PEQty)-float64(verifiedPE)))
 	tr.LastUpdateTime = time.Now()
+
+	// Reduce any additional leg (e.g. a hedge at a different, live-ATM
+	// strike) by the SAME percentage, once the straddle's own trim has
+	// actually fully verified -- a partial exit shrinks the whole
+	// position proportionally, hedge included, rather than leaving the
+	// hedge at its old size covering a now-smaller position. If the
+	// straddle's own trim wasn't fully verified, leave the hedge alone
+	// (don't partially unwind a hedge for an exit that didn't happen).
+	// If this fully closed the straddle (100%, or CE/PE otherwise hit
+	// zero), close the extra legs fully too, same as SquareOff.
+	if remainingCE == 0 && remainingPE == 0 {
+		extraPct := percentage
+		if tr.CEQty == 0 && tr.PEQty == 0 {
+			extraPct = 100
+		}
+		extraCE, extraPE, extraErr := s.reduceExtraOpenLegs(tradeUID, tr, extraPct, "PSQFX", "PSQF")
+		// Wings follow whatever net short was actually removed (the
+		// straddle's verified trim plus the hedge trim), LIFO -- or all of
+		// them once nothing short is left.
+		var wingErr error
+		if tr.CEQty == 0 && tr.PEQty == 0 && extraErr == nil {
+			wingErr = s.closeAllWings(context.Background(), tr, "PSQF")
+		} else {
+			wingErr = s.adjustWings(context.Background(), executor, tr,
+				-verifiedCE+extraCE, -verifiedPE+extraPE, tr.Strike, tr.Strike, "PSQF")
+		}
+		if wingErr != nil {
+			log.Printf("[WINGS] ⚠ PSQF wing reduction for %s: %v", tradeUID, wingErr)
+		}
+		if extraErr != nil {
+			log.Printf("⚠️ PSQF extra-leg reduction failed for %s: %v -- trade NOT marked closed", tradeUID, extraErr)
+			tr.Status = prevStatus
+			s.Store.UpdateTrade(tr)
+			return fmt.Errorf("partial square-off trimmed the straddle but failed to reduce additional open legs by the same %%: %w", extraErr)
+		}
+		if wingErr != nil && tr.CEQty == 0 && tr.PEQty == 0 {
+			tr.Status = prevStatus
+			s.Store.UpdateTrade(tr)
+			return fmt.Errorf("partial square-off closed the position but failed to close wings: %w", wingErr)
+		}
+	}
 
 	if tr.CEQty == 0 && tr.PEQty == 0 {
 		tr.Status = "CLOSEDSQF"
@@ -2020,27 +2868,234 @@ func bookHedgeFills(ceQty, peQty int, ceSide, peSide string, filledCE, filledPE 
 	return newCE, newPE, nil
 }
 
-// ManualHedge places one synthetic-future hedge (1 lot CE + 1 lot PE in
-// opposite directions, ~+/-1 lot of delta at any strike) on the trade's OWN
-// CE/PE tokens, verifies the fills against the broker order book, persists
-// them, and books the verified quantities into the trade so a later
-// SquareOff closes exactly what is really open.
-//
-// It previously (a) traded whatever the current ATM row was, which the
-// single-strike trade model cannot represent once ATM moves off the trade's
-// strike, (b) sent LIMIT orders with no limit price (price 0.00), and
-// (c) never verified or booked the fills -- so a hedge followed by an exit
-// could leave a residual real position at the broker. Orders are MARKET,
-// like SquareOff's, and are never retried on error: an order that errored
-// may still have been accepted, and a retry could double it.
+// ManualHedge is "Hedge Now": neutralize the position's complete current
+// delta. See ManualHedgeNow.
 func (s *Service) ManualHedge(ctx context.Context, tradeUID string) error {
-	return s.ManualHedgeLots(ctx, tradeUID, 1)
+	_, err := s.ManualHedgeNow(ctx, tradeUID)
+	return err
 }
 
-// maxHedgeOrderQty is the per-order quantity ceiling a hedge leg is held to
-// (the same 1800 the chunker used for hedges); larger requests are trimmed
-// to whole lots under it rather than split.
-const maxHedgeOrderQty = 1800
+// ManualHedgeNow hedges the position's COMPLETE current net delta -- the
+// server's own live snapshot delta, which already includes any earlier
+// hedge legs (runMonitorCycle folds them in) -- in whole lots rounded
+// DOWN (hedgeLotsFloor), so it never overshoots to the other side. Unlike
+// the minute-end check it has no points-out/allowed gate: it's an
+// explicit manual instruction. Returns the number of lots actually
+// requested; 0 with a nil error means |delta| is under one lot and
+// nothing was placed.
+//
+// Never sized from a caller-supplied delta: the UI's portfolio row carried
+// StoredTrade.NetDelta, which is the entry delta from build time and is
+// never updated, so a UI-supplied value can be arbitrarily stale.
+func (s *Service) ManualHedgeNow(ctx context.Context, tradeUID string) (int64, error) {
+	tr, ok := s.Store.LoadTrade(tradeUID)
+	if !ok {
+		return 0, fmt.Errorf("trade not found")
+	}
+	if tr.Status != "ACTIVE" {
+		return 0, fmt.Errorf("hedge requires an ACTIVE trade, status=%s", tr.Status)
+	}
+	if tr.LotSize <= 0 {
+		return 0, fmt.Errorf("cannot hedge %s: trade has no resolved lot size", tradeUID)
+	}
+	snap, ok := s.Store.LoadSnapshot(tradeUID)
+	if !ok {
+		return 0, fmt.Errorf("snapshot not found")
+	}
+
+	lots := hedgeLotsFloor(snap.NetDelta, int64(tr.LotSize))
+	if lots <= 0 {
+		log.Printf("[HEDGE] manual hedge trade=%s: net delta %.3f is under one lot (%d) -- nothing placed", tradeUID, snap.NetDelta, tr.LotSize)
+		return 0, nil
+	}
+	log.Printf("[HEDGE] manual hedge trade=%s: net delta %.3f -> %d lot(s) of %d", tradeUID, snap.NetDelta, lots, tr.LotSize)
+	return lots, s.ManualHedgeLots(ctx, tradeUID, int(lots))
+}
+
+// hedgeLegState tracks one leg's resting order across a tranche's
+// modify-until-filled attempts.
+//
+// GreekSoft's FilledQty (qty_filled_today, see normalize.go) is CUMULATIVE
+// per broker order for the day, not a per-push delta -- and ModifyOrderPrice
+// genuinely changes the order's requested quantity at the broker (verified
+// against executor.go's real ModifyOrder call), it does not just re-price
+// while silently keeping the old quantity. So a resting order's own target
+// (orderTargetQty) must stay FIXED across every modify (matching chase's
+// own established, production-proven pattern of always re-sending the same
+// quantity) -- shrinking it on every attempt would ask the broker to reduce
+// an order below what it may have already filled, which is invalid. Each
+// leg's real total is filledBeforeCurrent (from an earlier order on this
+// leg that went terminal-but-short, e.g. cancelled after a partial fill)
+// plus currentOrderFilled (the live, cumulative fill of whatever order is
+// resting right now) -- never summed by adding successive push values.
+type hedgeLegState struct {
+	leg                 string
+	token               int64
+	side                string
+	brokerOrderID       string
+	orderTargetQty      int64 // the CURRENT resting order's own fixed quantity
+	filledBeforeCurrent int64 // baseline from a prior, now-dead order on this leg
+	currentOrderFilled  int64 // latest known cumulative fill of the current order
+	done                bool
+}
+
+func (l *hedgeLegState) totalFilled() int64 { return l.filledBeforeCurrent + l.currentOrderFilled }
+
+// executeHedgeTranche submits one LIMIT order per leg (CE, PE) targeting
+// trancheQty in total, live-verifies each via the real-time IRIS event
+// feed, and -- if a leg's order is still resting but short -- modifies
+// that SAME order's price (never its quantity, never a second order while
+// the first might still be alive) with the same escalating live-bid/ask
+// buffer schedule (1, 2, 4 rupees) used for build-side chasing. Only when
+// an order comes back genuinely terminal-but-short (CANCELLED/REJECTED,
+// not just a timeout) does the leg get a fresh order, sized to the real
+// remainder, since the old order is confirmed dead rather than possibly
+// still resolving. Gives up and cancels a leg's resting remainder after
+// the buffer schedule is exhausted. Returns each leg's real,
+// broker-confirmed filled quantity and whether both legs fully reached
+// trancheQty.
+func (s *Service) executeHedgeTranche(
+	ctx context.Context,
+	executor Executor,
+	modifier OrderModifier,
+	canceller OrderCanceller,
+	canCancel bool,
+	tr StoredTrade,
+	tradeUID string,
+	trancheIdx int,
+	ceSide, peSide string,
+	ceToken, peToken int64,
+	trancheQty int64,
+) (filledCE, filledPE int64, complete bool) {
+	const maxAttempts = 3 // buffer schedule: 1 (initial), 2 (1st modify), 4 (2nd modify)
+	const perOrderTimeout = 8 * time.Second
+
+	// ceToken/peToken are the LIVE ATM strike's tokens (resolved by the
+	// caller, ManualHedgeLots), NOT tr.CEToken/tr.PEToken -- a hedge is a
+	// synthetic future and must be built at the current ATM strike to
+	// best approximate delta-1 exposure, which is a different strike
+	// than the trade's own build strike once spot has moved. See
+	// closeExtraOpenLegs for how SquareOff finds and closes a hedge leg
+	// that ends up on a different token than the trade's own CE/PE.
+	legs := []*hedgeLegState{
+		{leg: "CE", token: ceToken, side: ceSide},
+		{leg: "PE", token: peToken, side: peSide},
+	}
+
+	stamp := time.Now().UnixNano()
+	group := fmt.Sprintf("HDG_%s_T%d_%d", tradeUID, trancheIdx, stamp)
+
+	fetchQuote := func(token int64) (bid, ask float64) {
+		if s.Snapshot == nil {
+			return 0, 0
+		}
+		chain, err := s.Snapshot.GetOptionChain(ctx, tr.Symbol, tr.Expiry)
+		if err != nil {
+			return 0, 0
+		}
+		return bidAskForToken(chain, token)
+	}
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		for _, l := range legs {
+			if l.done {
+				continue
+			}
+			remaining := trancheQty - l.totalFilled()
+			if remaining <= 0 {
+				l.done = true
+				continue
+			}
+
+			bid, ask := fetchQuote(l.token)
+			price, ok := bidAskLimitPrice(l.side, bid, ask, bufferForAttempt(attempt))
+			if !ok {
+				log.Printf("[HEDGE] trade=%s tranche=%d attempt=%d leg=%s: no live quote, skipping this round", tradeUID, trancheIdx, attempt, l.leg)
+				continue
+			}
+
+			if l.brokerOrderID == "" {
+				// Fresh order (first attempt for this leg, or restarted
+				// after a prior order on this leg went terminal short)
+				// targets exactly the real remainder.
+				l.orderTargetQty = remaining
+				l.currentOrderFilled = 0
+				intentID := fmt.Sprintf("%s_%s_%d", group, l.leg, attempt)
+				intent := OrderIntent{
+					IntentID: intentID, TradeUID: tradeUID, Token: l.token,
+					Symbol: strings.TrimSpace(tr.Symbol), ExchangeSegment: tr.ExchangeSegment,
+					Side: l.side, Quantity: l.orderTargetQty, LotSize: int64(tr.LotSize),
+					OrderType: "LIMIT", LimitPrice: &price, ProductType: tr.ProductType,
+					LegType: l.leg, Phase: "HEDGE", HedgeGroupID: group, OrderUID: intentID,
+					BrokerName: tr.BrokerName, AccountID: tr.AccountID,
+				}
+				brokerOrderID, _, err := s.submitOrderIntent(ctx, executor, tradeUID, intent)
+				if err != nil {
+					log.Printf("[HEDGE] trade=%s tranche=%d leg=%s: submit failed: %v", tradeUID, trancheIdx, l.leg, err)
+					continue
+				}
+				l.brokerOrderID = brokerOrderID
+			} else if modifier != nil {
+				// Same resting order, re-priced more aggressively, SAME
+				// quantity it was created with -- never a second order,
+				// never a shrunk one (the exchange already knows what's
+				// still pending on it).
+				if err := modifier.ModifyOrderPrice(ctx, l.brokerOrderID, price, l.orderTargetQty, int(tr.LotSize)); err != nil {
+					log.Printf("[HEDGE] trade=%s tranche=%d leg=%s: modify failed: %v", tradeUID, trancheIdx, l.brokerOrderID, err)
+					continue
+				}
+			}
+
+			waitCtx, cancel := context.WithTimeout(ctx, perOrderTimeout)
+			u, err := s.OrderEvents.WaitTerminal(waitCtx, tradeUID, l.brokerOrderID, l.orderTargetQty, perOrderTimeout)
+			cancel()
+			if err != nil {
+				log.Printf("[HEDGE] trade=%s tranche=%d leg=%s order=%s: no terminal confirmation within %s: %v -- will re-price the same order next round", tradeUID, trancheIdx, l.leg, l.brokerOrderID, perOrderTimeout, err)
+				continue
+			}
+
+			l.currentOrderFilled = u.FilledQty // cumulative for THIS order -- set, never added
+			switch strings.ToUpper(strings.TrimSpace(u.Status)) {
+			case "FILLED":
+				l.done = true
+			case "CANCELLED", "CANCELED", "REJECTED":
+				// This order is dead. Whatever it filled becomes a
+				// permanent baseline; the next attempt (if any) gets a
+				// genuinely fresh order for the real remainder, never a
+				// modify on an order that no longer exists at the broker.
+				l.filledBeforeCurrent += l.currentOrderFilled
+				l.currentOrderFilled = 0
+				l.brokerOrderID = ""
+				if l.totalFilled() >= trancheQty {
+					l.done = true
+				}
+			default:
+				// Still resting (ACKED/PARTIAL_FILL/etc) -- next attempt
+				// modifies this same order.
+			}
+		}
+
+		if legs[0].done && legs[1].done {
+			break
+		}
+	}
+
+	allDone := true
+	for _, l := range legs {
+		if !l.done {
+			allDone = false
+			if canCancel && l.brokerOrderID != "" {
+				if err := canceller.CancelOrder(ctx, l.brokerOrderID); err != nil {
+					log.Printf("[HEDGE] trade=%s tranche=%d leg=%s order=%s: cancel of unfilled remainder failed: %v -- it may still be working at the broker", tradeUID, trancheIdx, l.leg, l.brokerOrderID, err)
+				} else {
+					log.Printf("[HEDGE] trade=%s tranche=%d leg=%s order=%s: cancelled unfilled remainder (filled %d/%d)", tradeUID, trancheIdx, l.leg, l.brokerOrderID, l.totalFilled(), trancheQty)
+				}
+			}
+		}
+	}
+
+	return legs[0].totalFilled(), legs[1].totalFilled(), allDone
+}
 
 // ManualHedgeLots is ManualHedge for an explicit number of synthetic lots.
 func (s *Service) ManualHedgeLots(ctx context.Context, tradeUID string, lots int) error {
@@ -2069,6 +3124,28 @@ func (s *Service) ManualHedgeLots(ctx context.Context, tradeUID string, lots int
 		return nil
 	}
 
+	// A hedge is a synthetic future (buy CE + sell PE, or the reverse)
+	// and must be built at the CURRENT live ATM strike to best
+	// approximate delta-1 exposure -- NOT the trade's own build strike,
+	// which drifts away from ATM as spot moves and is nowhere near ATM
+	// by the time a real hedge is usually needed. Resolved fresh on
+	// every call, never cached, since ATM itself moves.
+	if s.Snapshot == nil {
+		return fmt.Errorf("hedge refused, nothing placed: snapshot client not available to resolve live ATM strike")
+	}
+	chain, err := s.Snapshot.GetOptionChain(ctx, tr.Symbol, tr.Expiry)
+	if err != nil {
+		return fmt.Errorf("hedge refused, nothing placed: resolve live ATM strike: %w", err)
+	}
+	atmRow, err := FindATMRow(*chain)
+	if err != nil {
+		return fmt.Errorf("hedge refused, nothing placed: resolve live ATM strike: %w", err)
+	}
+	hedgeCEToken, hedgePEToken := atmRow.CEToken, atmRow.PEToken
+	if hedgeCEToken <= 0 || hedgePEToken <= 0 {
+		return fmt.Errorf("hedge refused, nothing placed: live ATM row missing CE/PE tokens")
+	}
+
 	lotSize := tr.LotSize
 	if lotSize <= 0 {
 		lotSize = GetFallbackLotSize(tr.Symbol)
@@ -2076,129 +3153,137 @@ func (s *Service) ManualHedgeLots(ctx context.Context, tradeUID string, lots int
 	if lotSize <= 0 {
 		return fmt.Errorf("invalid hedge quantity for symbol %s", tr.Symbol)
 	}
-	if maxLots := maxHedgeOrderQty / lotSize; lots > maxLots {
-		if maxLots <= 0 {
-			return fmt.Errorf("lot size %d exceeds the hedge order quantity ceiling", lotSize)
-		}
-		lots = maxLots
-	}
-	qty := lotSize * lots
+	// The FULL delta-neutralizing quantity -- the per-order max below is a
+	// per-tranche ceiling, not a cap on this total (this used to silently
+	// truncate the whole hedge to whatever fit in one order, e.g. capping
+	// a required 3445 qty down to 1755 and stopping there, leaving the
+	// position under-hedged with no error).
+	totalQty := int64(lotSize) * int64(lots)
 
 	// Refuse before placing anything if the booked result is unrepresentable.
-	if _, _, err := bookHedgeFills(tr.CEQty, tr.PEQty, ceSide, peSide, int64(qty), int64(qty)); err != nil {
-		return fmt.Errorf("hedge refused, nothing placed: %w", err)
+	// Only meaningful when the hedge actually lands on the trade's OWN
+	// tokens (ATM coincides with the build strike) -- this checks that a
+	// BUY hedge doesn't exceed what's open on tr.CEQty/tr.PEQty
+	// specifically, which says nothing about a hedge on a different (live
+	// ATM) token, an independent position with no such constraint.
+	if hedgeCEToken == tr.CEToken && hedgePEToken == tr.PEToken {
+		if _, _, err := bookHedgeFills(tr.CEQty, tr.PEQty, ceSide, peSide, totalQty, totalQty); err != nil {
+			return fmt.Errorf("hedge refused, nothing placed: %w", err)
+		}
 	}
 
 	executor, err := s.BrokerFactory.GetExecutor(tr.UserID, tr.BrokerName, tr.AccountID)
 	if err != nil {
 		return err
 	}
-	provider, ok := executor.(VerifiedFillsProvider)
-	if !ok {
+	if _, ok := executor.(VerifiedFillsProvider); !ok {
 		return fmt.Errorf("hedge refused, nothing placed: broker executor cannot verify fills")
 	}
-
-	stamp := time.Now().UnixNano()
-	group := fmt.Sprintf("HDG_%d", stamp)
-	uidTail := tradeUID
-	if len(uidTail) > 14 {
-		uidTail = uidTail[len(uidTail)-14:]
+	modifier, canModify := executor.(OrderModifier)
+	canceller, canCancel := executor.(OrderCanceller)
+	if !canModify {
+		return fmt.Errorf("hedge refused, nothing placed: broker executor cannot modify orders")
 	}
 
-	type hedgeLeg struct {
-		legType string
-		token   int64
-		side    string
-	}
-	legs := []hedgeLeg{
-		{"CE", tr.CEToken, ceSide},
-		{"PE", tr.PEToken, peSide},
-	}
+	// Per-order max from the live contract, loaded at startup (e.g. NIFTY
+	// 1755); one lot per order if it isn't loaded. Never hardcoded.
+	maxOrderQty := s.resolveMaxOrderQty(tr.Symbol, int64(lotSize))
 
-	submitted := map[string]struct{}{}
-	var requestedCE, requestedPE int64
-	var submitErrs []string
-
-	for _, leg := range legs {
-		intentID := fmt.Sprintf("HDG%s_%s_%d", uidTail, leg.legType, stamp)
-		intent := OrderIntent{
-			IntentID:        intentID,
-			TradeUID:        tradeUID,
-			Token:           leg.token,
-			Symbol:          strings.TrimSpace(tr.Symbol),
-			ExchangeSegment: tr.ExchangeSegment,
-			Side:            leg.side,
-			Quantity:        int64(qty),
-			OrderType:       "MARKET",
-			ProductType:     tr.ProductType,
-			LegType:         leg.legType,
-			Phase:           "HEDGE",
-			HedgeGroupID:    group,
-			OrderUID:        intentID,
-			BrokerName:      tr.BrokerName,
-			AccountID:       tr.AccountID,
-		}
-
-		brokerOrderID, _, err := s.submitOrderIntent(ctx, executor, tradeUID, intent)
-		if err != nil {
-			log.Printf("❌ HEDGE leg=%s side=%s not placed: %v", leg.legType, leg.side, err)
-			submitErrs = append(submitErrs, fmt.Sprintf("%s: %v", leg.legType, err))
-			continue
-		}
-
-		submitted[brokerOrderID] = struct{}{}
-		if leg.legType == "CE" {
-			requestedCE = int64(qty)
-		} else {
-			requestedPE = int64(qty)
-		}
+	maxTrancheLots := maxOrderQty / int64(lotSize)
+	if maxTrancheLots <= 0 {
+		return fmt.Errorf("lot size %d exceeds the hedge per-tranche quantity ceiling", lotSize)
 	}
 
-	if len(submitted) == 0 {
-		return fmt.Errorf("hedge failed, no leg placed: %s", strings.Join(submitErrs, "; "))
-	}
-
-	summary, persistErr := s.verifyAndPersistTradeFills(
-		ctx, provider, tr.BrokerName, tr.AccountID,
-		submitted, tr.CEToken, tr.PEToken, requestedCE, requestedPE,
-		8, 500*time.Millisecond,
-	)
-	if persistErr != nil {
-		log.Printf("⚠️ HEDGE fill persistence failed for %s: %v", tradeUID, persistErr)
-	}
-
-	// Book from broker-verified fills only, on a freshly loaded trade.
+	remaining := totalQty
+	var totalVerifiedCE, totalVerifiedPE int64
 	var bookErr error
-	if latest, ok := s.Store.LoadTrade(tradeUID); ok {
-		newCE, newPE, err := bookHedgeFills(latest.CEQty, latest.PEQty, ceSide, peSide, summary.VerifiedCE, summary.VerifiedPE)
-		if err != nil {
-			bookErr = err
-		} else {
-			latest.CEQty, latest.PEQty = newCE, newPE
-			latest.LastUpdateTime = time.Now()
-			s.Store.UpdateTrade(latest)
-		}
-	} else {
-		bookErr = fmt.Errorf("trade vanished while booking hedge")
-	}
+	trancheIdx := 0
+	incomplete := false
 
-	log.Printf(
-		"HEDGE result trade=%s ce=%s verified=%d/%d pe=%s verified=%d/%d submit_errors=%d book_err=%v persist_err=%v",
-		tradeUID, ceSide, summary.VerifiedCE, requestedCE, peSide, summary.VerifiedPE, requestedPE,
-		len(submitErrs), bookErr, persistErr,
-	)
+	for remaining > 0 {
+		trancheIdx++
+		trancheLots := remaining / int64(lotSize)
+		if trancheLots > maxTrancheLots {
+			trancheLots = maxTrancheLots
+		}
+		trancheQty := trancheLots * int64(lotSize)
+		if trancheQty <= 0 {
+			break
+		}
+
+		filledCE, filledPE, complete := s.executeHedgeTranche(
+			ctx, executor, modifier, canceller, canCancel,
+			tr, tradeUID, trancheIdx, ceSide, peSide, hedgeCEToken, hedgePEToken, trancheQty,
+		)
+		totalVerifiedCE += filledCE
+		totalVerifiedPE += filledPE
+
+		// Book this tranche's real, broker-confirmed fill immediately --
+		// a later tranche failing must never lose track of an earlier
+		// tranche that genuinely executed. Only merged into
+		// tr.CEQty/tr.PEQty when the hedge actually traded the trade's
+		// OWN tokens (ATM happens to coincide with the build strike);
+		// tr.CEQty/tr.PEQty represent quantity AT tr.CEToken/tr.PEToken
+		// specifically, so merging a different token's fill into them
+		// would misrepresent what's open on the ORIGINAL strike. When
+		// the hedge lands on a different (live ATM) token, its real
+		// position is already durably tracked in trade_legs (every order
+		// here goes through submitOrderIntent -> insertOrderIntent ->
+		// persistVerifiedFill -> ensureTradeLeg for its own token) and
+		// closeExtraOpenLegs finds and closes it during SquareOff.
+		if hedgeCEToken == tr.CEToken && hedgePEToken == tr.PEToken {
+			if latest, loaded := s.Store.LoadTrade(tradeUID); loaded {
+				newCE, newPE, err := bookHedgeFills(latest.CEQty, latest.PEQty, ceSide, peSide, filledCE, filledPE)
+				if err != nil {
+					bookErr = err
+				} else {
+					latest.CEQty, latest.PEQty = newCE, newPE
+					latest.LastUpdateTime = time.Now()
+					s.Store.UpdateTrade(latest)
+					tr = latest
+				}
+			} else {
+				bookErr = fmt.Errorf("trade vanished while booking hedge tranche %d", trancheIdx)
+			}
+		} else {
+			log.Printf(
+				"[HEDGE] trade=%s tranche=%d hedge traded live-ATM tokens ce=%d pe=%d (trade's own tokens are ce=%d pe=%d) -- tracked via trade_legs, not tr.CEQty/tr.PEQty",
+				tradeUID, trancheIdx, hedgeCEToken, hedgePEToken, tr.CEToken, tr.PEToken,
+			)
+		}
+
+		log.Printf(
+			"HEDGE tranche result trade=%s tranche=%d ce=%s filled=%d pe=%s filled=%d of %d complete=%t book_err=%v",
+			tradeUID, trancheIdx, ceSide, filledCE, peSide, filledPE, trancheQty, complete, bookErr,
+		)
+
+		// Wings follow this tranche's CONFIRMED fills right away: a short
+		// that grew gets a new wing at the hedge's own ATM -/+ WingPct%;
+		// a short that shrank sells that much from wings already held
+		// (LIFO, never a new strike). A wing problem is logged, never
+		// allowed to undo or block the hedge itself.
+		if wingErr := s.adjustWings(ctx, executor, tr,
+			shortChangeFromFill(ceSide, filledCE), shortChangeFromFill(peSide, filledPE),
+			atmRow.Strike, atmRow.Strike, fmt.Sprintf("HEDGE tranche %d", trancheIdx)); wingErr != nil {
+			log.Printf("[WINGS] ⚠ trade=%s hedge tranche %d: %v", tradeUID, trancheIdx, wingErr)
+		}
+
+		if bookErr != nil || !complete {
+			incomplete = !complete
+			break
+		}
+		remaining -= trancheQty
+	}
 
 	switch {
 	case bookErr != nil:
 		return fmt.Errorf("hedge orders placed but booking failed (check broker position): %w", bookErr)
-	case len(submitErrs) > 0:
-		return fmt.Errorf("hedge partially placed, booked to verified fills only: %s", strings.Join(submitErrs, "; "))
-	case !summary.Complete():
-		return fmt.Errorf("hedge not fully filled, booked to verified fills only: ce=%d/%d pe=%d/%d",
-			summary.VerifiedCE, requestedCE, summary.VerifiedPE, requestedPE)
+	case incomplete:
+		return fmt.Errorf("hedge not fully filled after tranche %d, booked to verified fills only: ce=%d pe=%d of %d total",
+			trancheIdx, totalVerifiedCE, totalVerifiedPE, totalQty)
 	}
 
-	log.Printf("✅ Manual Hedge completed for Trade %s", tradeUID)
+	log.Printf("✅ Manual Hedge completed for Trade %s: %d tranche(s), ce=%d pe=%d", tradeUID, trancheIdx, totalVerifiedCE, totalVerifiedPE)
 	return nil
 }
 

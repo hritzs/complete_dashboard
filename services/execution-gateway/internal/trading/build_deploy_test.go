@@ -77,8 +77,14 @@ func TestDeployStraddle_AppliesRiskFromRawFieldsWhenRiskIsNil(t *testing.T) {
 	}
 
 	resp, err := svc.DeployStraddle(context.Background(), DeployStraddleRequest{
+		// 23:59, not 15:37 -- a fixed clock time earlier in the day is a
+		// ticking time bomb here (BuildRiskConfig.Validate requires
+		// exit_time to be after entry_time, i.e. "now"): this test started
+		// failing for real once the wall clock passed 15:37, unrelated to
+		// anything it's actually testing. See the Risk-based test above,
+		// which already uses 23:59:00 for the same reason.
 		BrokerName: "GREEKSOFT", AccountID: "147", Symbol: "NIFTY", Lots: 1,
-		ExitTime: "15:37:00", SlBps: 14, TpBps: 14,
+		ExitTime: "23:59:00", SlBps: 14, TpBps: 14,
 	})
 	if err != nil {
 		t.Fatalf("DeployStraddle: %v", err)
@@ -98,7 +104,7 @@ func TestDeployStraddle_AppliesRiskFromRawFieldsWhenRiskIsNil(t *testing.T) {
 	if c.SLPnLBpsOfSpot != 14 || c.TPPnLBpsOfSpot != 14 {
 		t.Fatalf("SL/TP not applied from raw fields: %+v", c)
 	}
-	if c.SquareOffHardTime.IsZero() || c.SquareOffHardTime.Hour() != 15 || c.SquareOffHardTime.Minute() != 37 {
+	if c.SquareOffHardTime.IsZero() || c.SquareOffHardTime.Hour() != 23 || c.SquareOffHardTime.Minute() != 59 {
 		t.Fatalf("exit time not applied from raw fields: %v", c.SquareOffHardTime)
 	}
 }

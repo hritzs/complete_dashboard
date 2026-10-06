@@ -346,22 +346,55 @@ func ensureTradeLeg(
 	return nil
 }
 
+// perOrderFillsSQL is a CTE ("per_order") giving each order's REAL filled
+// quantity and value exactly once. The same fill is written to `fills` by
+// up to three writers with different fill_ids -- the reconciler (per-push
+// DELTAS: exchange trade id or "<order>:<ts>:<qty>") and this gateway
+// (cumulative snapshots: "<BROKER>:<order>" and
+// "<BROKER>:<order>:<qty>:<price>") -- so ON CONFLICT(fill_id, order_id)
+// can't dedupe them, and summing raw rows counted every fill 2-3 times.
+// Confirmed live 2026-09-28: a 1040 CE / 910 PE position was recorded in
+// trade_legs as 2080 / 1820 and resumed at double size on restart.
+// Per order: reconciler deltas (real exchange fills) are SUMMED and are
+// authoritative whenever present; gateway snapshots (their MAX) are only a
+// fallback for an order the reconciler hasn't recorded yet. "Larger wins"
+// used to let an inflated gateway snapshot override the exchange -- live
+// 2026-09-30 a 4745/4680 trade was recorded as 9490/9360 that way.
+const perOrderFillsSQL = `
+	WITH per_order_raw AS (
+		SELECT
+			o.id AS order_id,
+			f.trade_id,
+			o.contract_id,
+			o.side,
+			COALESCE(SUM(f.fill_quantity) FILTER (WHERE NOT gw.is_gw), 0) AS r_qty,
+			COALESCE(SUM(f.fill_quantity * f.fill_price) FILTER (WHERE NOT gw.is_gw), 0) AS r_val,
+			COALESCE(MAX(f.fill_quantity) FILTER (WHERE gw.is_gw), 0) AS g_qty,
+			(ARRAY_AGG(f.fill_price ORDER BY f.fill_quantity DESC, f.id DESC) FILTER (WHERE gw.is_gw))[1] AS g_px
+		FROM fills f
+		JOIN orders o ON o.id = f.order_id
+		CROSS JOIN LATERAL (
+			SELECT COALESCE(o.broker_name, '') <> ''
+			   AND UPPER(f.fill_id) LIKE UPPER(o.broker_name) || ':%' AS is_gw
+		) gw
+		GROUP BY o.id, f.trade_id, o.contract_id, o.side
+	), per_order AS (
+		SELECT
+			order_id, trade_id, contract_id, side,
+			CASE WHEN r_qty > 0 THEN r_qty ELSE g_qty END AS qty,
+			(CASE WHEN r_qty > 0 THEN r_val ELSE g_qty * COALESCE(g_px, 0) END)::float8 AS value
+		FROM per_order_raw
+	)
+`
+
 func recomputeTradeLegFromPersistedFills(
 	ctx context.Context,
 	tx *sql.Tx,
 	tradeID int64,
 	contractID int64,
 ) error {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT
-			o.side,
-			f.fill_quantity,
-			f.fill_price
-		FROM fills f
-		JOIN orders o ON o.id = f.order_id
-		WHERE f.trade_id = $1
-		  AND o.contract_id = $2
-		ORDER BY f.fill_timestamp, f.id
+	rows, err := tx.QueryContext(ctx, perOrderFillsSQL+`
+		SELECT side, qty, value FROM per_order WHERE trade_id = $1 AND contract_id = $2
 	`,
 		tradeID,
 		contractID,
@@ -385,20 +418,20 @@ func recomputeTradeLegFromPersistedFills(
 		var (
 			side  string
 			qty   int64
-			price float64
+			value float64
 		)
 
-		if err := rows.Scan(&side, &qty, &price); err != nil {
+		if err := rows.Scan(&side, &qty, &value); err != nil {
 			return fmt.Errorf("scan leg fill: %w", err)
 		}
 
 		switch strings.ToUpper(strings.TrimSpace(side)) {
 		case "BUY":
 			buyQty += qty
-			buyValue += float64(qty) * price
+			buyValue += value
 		case "SELL":
 			sellQty += qty
-			sellValue += float64(qty) * price
+			sellValue += value
 		}
 	}
 	if err := rows.Err(); err != nil {

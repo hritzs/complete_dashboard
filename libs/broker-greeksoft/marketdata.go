@@ -111,7 +111,10 @@ type QuoteResponse struct {
 			Lot          int64   `json:"lot"`
 			Low          float64 `json:"low"`
 			LowRange     float64 `json:"lowRange"`
-			LTT          int64   `json:"ltt"`
+			// A string like "28-9-2026 10:35:21", not epoch seconds -- declaring
+			// it int64 made every quote response fail to decode (confirmed
+			// live 2026-09-28), which is why the live freeze qty never loaded.
+			LTT          string  `json:"ltt"`
 			OI           int64   `json:"oi"`
 			OIPercentChg float64 `json:"oi_pChange"`
 			Open         float64 `json:"open"`

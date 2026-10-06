@@ -24,6 +24,10 @@ func MapOrderIntent(intent trading.OrderIntent) *broker.OrderIntent {
 	if intent.LimitPrice != nil {
 		limitPrice = *intent.LimitPrice
 	}
+	tif := strings.ToUpper(strings.TrimSpace(intent.TimeInForce))
+	if tif != "IOC" {
+		tif = "DAY"
+	}
 
 	return &broker.OrderIntent{
 		TradeUID:        intent.TradeUID,
@@ -33,9 +37,10 @@ func MapOrderIntent(intent trading.OrderIntent) *broker.OrderIntent {
 		ExchangeSegment: intent.ExchangeSegment,
 		Side:            intent.Side,
 		Quantity:        int(intent.Quantity),
+		LotSize:         int(intent.LotSize),
 		OrderType:       intent.OrderType,
 		ProductType:     intent.ProductType,
-		TimeInForce:     "DAY",
+		TimeInForce:     tif,
 		ClientID:        intent.AccountID,
 		LimitPrice:      limitPrice,
 		StopPrice:       0,

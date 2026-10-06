@@ -130,6 +130,7 @@ func (s *PostgresBackedStore) LoadTrade(tradeUID string) (StoredTrade, bool) {
 	// limit prices. Hydrate them from broker-fill-reconciled leg state.
 	legRows, err := s.db.QueryContext(ctx, `
 		SELECT
+			c.broker_token,
 			c.option_type,
 			tl.current_quantity,
 			tl.avg_entry_price
@@ -152,21 +153,32 @@ func (s *PostgresBackedStore) LoadTrade(tradeUID string) (StoredTrade, bool) {
 
 	for legRows.Next() {
 		var (
+			token      int64
 			optionType string
 			quantity   int64
 			entryPrice float64
 		)
 
-		if err := legRows.Scan(&optionType, &quantity, &entryPrice); err != nil {
+		if err := legRows.Scan(&token, &optionType, &quantity, &entryPrice); err != nil {
 			log.Printf("[SQL STORE] scan trade leg failed trade_uid=%s err=%v", dbTradeUID, err)
 			continue
 		}
 
+		// Match by the straddle's OWN tokens, not just option_type: an
+		// ATM hedge is also an open CE/PE leg of this trade (on a
+		// different strike), and matching on option_type alone would let
+		// the hedge's entry price overwrite the straddle's -- corrupting
+		// every PnL tick computed from CELtp/PELtp. Falls back to
+		// option_type only for a legacy record with no tokens stored.
 		switch strings.ToUpper(strings.TrimSpace(optionType)) {
 		case "CE":
-			tr.CELtp = entryPrice
+			if tr.CEToken <= 0 || token == tr.CEToken {
+				tr.CELtp = entryPrice
+			}
 		case "PE":
-			tr.PELtp = entryPrice
+			if tr.PEToken <= 0 || token == tr.PEToken {
+				tr.PELtp = entryPrice
+			}
 		}
 	}
 
@@ -278,6 +290,23 @@ func (s *PostgresBackedStore) upsertTrade(tr StoredTrade) {
 	if err != nil {
 		log.Printf("[SQL STORE] upsert trade failed trade_uid=%s err=%v", tr.TradeUID, err)
 	}
+}
+
+// IntentOwner returns the trade_uid an intent_id is persisted under
+// (found=false if it isn't persisted at all).
+func (s *PostgresBackedStore) IntentOwner(ctx context.Context, intentID string) (string, bool, error) {
+	if s == nil || s.db == nil {
+		return "", false, fmt.Errorf("postgres store unavailable")
+	}
+	var owner sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT trade_uid FROM orders WHERE intent_id = $1`, strings.TrimSpace(intentID)).Scan(&owner)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return owner.String, true, nil
 }
 
 func (s *PostgresBackedStore) insertOrderIntent(tradeUID string, intent OrderIntent) {
@@ -788,6 +817,25 @@ func (s *PostgresBackedStore) ValidateTradeForRuntime(
 	ctx context.Context,
 	tradeUID string,
 ) (RuntimeEligibility, error) {
+	return s.validateTradeForRuntime(ctx, tradeUID, false)
+}
+
+// ValidatePartialTradeForRuntime is ValidateTradeForRuntime for an ACTIVE
+// (partial) trade: a leg that never filled (zero quantity) is allowed and
+// returned as 0, so a build where only one leg filled is still tracked.
+// Every leg that DID fill must still be a real, reconciled SHORT position.
+func (s *PostgresBackedStore) ValidatePartialTradeForRuntime(
+	ctx context.Context,
+	tradeUID string,
+) (RuntimeEligibility, error) {
+	return s.validateTradeForRuntime(ctx, tradeUID, true)
+}
+
+func (s *PostgresBackedStore) validateTradeForRuntime(
+	ctx context.Context,
+	tradeUID string,
+	allowUnfilledLeg bool,
+) (RuntimeEligibility, error) {
 	var result RuntimeEligibility
 
 	if s == nil || s.db == nil {
@@ -820,6 +868,17 @@ func (s *PostgresBackedStore) ValidateTradeForRuntime(
 		WHERE t.trade_uid = $1
 		  AND t.status = 'ACTIVE'
 		  AND tl.status = 'OPEN'
+		  -- Only the straddle's OWN CE/PE legs. An open ATM hedge is also
+		  -- a CE/PE leg of this trade (different strike); pooling it by
+		  -- option_type would load the hedge's quantity/entry into the
+		  -- straddle on restart, or fail the CE/PE checks below and block
+		  -- the monitor (no SL/TP) for a perfectly valid hedged trade.
+		  -- The hedge itself is picked up by runMonitorCycle via
+		  -- extraOpenLegs once the runtime resumes.
+		  AND c.broker_token IN (
+			(t.config->>'ce_token')::bigint,
+			(t.config->>'pe_token')::bigint
+		  )
 		GROUP BY
 			c.option_type,
 			tl.current_quantity,
@@ -861,6 +920,11 @@ func (s *PostgresBackedStore) ValidateTradeForRuntime(
 
 		optionType = strings.ToUpper(strings.TrimSpace(optionType))
 		if optionType != "CE" && optionType != "PE" {
+			continue
+		}
+
+		if quantity == 0 && allowUnfilledLeg {
+			// Partial build: this leg never filled -- nothing open here.
 			continue
 		}
 
@@ -907,6 +971,22 @@ func (s *PostgresBackedStore) ValidateTradeForRuntime(
 	ce, ceOK := legs["CE"]
 	pe, peOK := legs["PE"]
 
+	if allowUnfilledLeg {
+		if !ceOK && !peOK {
+			return result, fmt.Errorf("no filled CE or PE leg to track")
+		}
+		if (ceOK && ce.qty >= 0) || (peOK && pe.qty >= 0) {
+			return result, fmt.Errorf("expected every filled leg net short: ce=%d pe=%d", ce.qty, pe.qty)
+		}
+		return RuntimeEligibility{
+			TradeUID: tradeUID,
+			CEQty:    absInt64(ce.qty),
+			PEQty:    absInt64(pe.qty),
+			CEEntry:  ce.entry,
+			PEEntry:  pe.entry,
+		}, nil
+	}
+
 	if !ceOK || !peOK || len(legs) != 2 {
 		return result, fmt.Errorf(
 			"expected exactly one reconciled CE and PE open leg; found CE=%t PE=%t total=%d",
@@ -916,26 +996,29 @@ func (s *PostgresBackedStore) ValidateTradeForRuntime(
 		)
 	}
 
-	if absInt64(ce.qty) != absInt64(pe.qty) {
+	// No CE==PE quantity requirement: a delta-neutral build deliberately
+	// sells unequal CE/PE lots (e.g. 1040/910), and hedges on the same
+	// strike change them further. Requiring equality blocked the monitor
+	// on restart for a perfectly valid live trade -- no SL/TP/TIME/hedge
+	// (confirmed live 2026-09-28). What must hold is that both legs are
+	// SHORT: that's the only shape runMonitorCycle/SquareOff model.
+	if ce.qty >= 0 || pe.qty >= 0 {
 		return result, fmt.Errorf(
-			"CE/PE quantity mismatch: ce=%d pe=%d",
+			"expected both straddle legs net short: ce=%d pe=%d",
 			ce.qty,
 			pe.qty,
 		)
 	}
 
-	if (ce.qty < 0) != (pe.qty < 0) {
-		return result, fmt.Errorf(
-			"CE/PE direction mismatch: ce=%d pe=%d",
-			ce.qty,
-			pe.qty,
-		)
-	}
-
+	// trade_legs.current_quantity is signed (negative = short), but
+	// StoredTrade.CEQty/PEQty are short-side MAGNITUDES everywhere else
+	// (shortLegGreeks, PnL, SquareOff's "no open quantity" check). Returning
+	// the signed value here would resume the trade with negative
+	// quantities, inverting its greeks/PnL and making SquareOff refuse it.
 	return RuntimeEligibility{
 		TradeUID: tradeUID,
-		CEQty:    ce.qty,
-		PEQty:    pe.qty,
+		CEQty:    absInt64(ce.qty),
+		PEQty:    absInt64(pe.qty),
 		CEEntry:  ce.entry,
 		PEEntry:  pe.entry,
 	}, nil
@@ -1019,6 +1102,14 @@ func (s *PostgresBackedStore) LoadActivePortfolio(
 		  AND tl.current_quantity <> 0
 		  AND tl.avg_entry_price IS NOT NULL
 		  AND tl.avg_entry_price > 0
+		  -- Only the straddle's OWN CE/PE legs: an open ATM hedge is a
+		  -- second CE and PE leg on another strike, which would fail the
+		  -- HAVING "exactly one CE and one PE" check below and silently
+		  -- drop a hedged trade from the active portfolio altogether.
+		  AND c.broker_token IN (
+			(t.config->>'ce_token')::bigint,
+			(t.config->>'pe_token')::bigint
+		  )
 		GROUP BY
 			t.trade_uid,
 			t.user_id,

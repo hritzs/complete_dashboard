@@ -122,8 +122,8 @@ func TestApplyOrderUpdate_Integration(t *testing.T) {
 		t.Fatalf("order_events count = %d, want 1", eventCount)
 	}
 
-	if err := store.RecordConfirmationLatencyIfFirst(ctx, result.OrderID, result.TradeUID, brokerOrderID, 42*time.Millisecond); err != nil {
-		t.Fatalf("RecordConfirmationLatencyIfFirst (first push) failed: %v", err)
+	if err := store.RecordLatency(ctx, StageIrisConfirmation, result.OrderID, result.TradeUID, brokerOrderID, 42*time.Millisecond); err != nil {
+		t.Fatalf("RecordLatency (first push) failed: %v", err)
 	}
 	var latencyCount int
 	var latencyUS int64
@@ -176,8 +176,8 @@ func TestApplyOrderUpdate_Integration(t *testing.T) {
 	// The anti-skew gate: a second push for the same order (this fill)
 	// must NOT add a second latency_samples row, even though
 	// ApplyOrderUpdate returns a (larger) ConfirmationLatency for it too.
-	if err := store.RecordConfirmationLatencyIfFirst(ctx, result.OrderID, result.TradeUID, brokerOrderID, 9*time.Second); err != nil {
-		t.Fatalf("RecordConfirmationLatencyIfFirst (second push) failed: %v", err)
+	if err := store.RecordLatency(ctx, StageIrisConfirmation, result.OrderID, result.TradeUID, brokerOrderID, 9*time.Second); err != nil {
+		t.Fatalf("RecordLatency (second push) failed: %v", err)
 	}
 	if err := db.QueryRowContext(ctx, `SELECT count(*), COALESCE(SUM(latency_us),0) FROM latency_samples WHERE order_id = $1`, orderID).Scan(&latencyCount, &latencyUS); err != nil {
 		t.Fatalf("re-query latency_samples: %v", err)
@@ -197,6 +197,102 @@ func TestApplyOrderUpdate_Integration(t *testing.T) {
 	}
 	if fillCount != 1 {
 		t.Fatalf("fills count after redelivery = %d, want still 1 (idempotent)", fillCount)
+	}
+}
+
+// TestApplyOrderUpdate_LateOutOfOrderPushCannotRegressATerminalOrder
+// confirmed live 2026-09-23: a 154-order build (77 lots x 2 legs, fired in
+// well under a second) caused Iris pushes to arrive out of order for many
+// orders -- a late "Pending"/ACKED push landing after the order's real
+// FILLED push had already been applied silently overwrote status back to
+// ACKED and filled_qty back to 0, even though the order had genuinely
+// filled. 104 of 154 orders ended up permanently stuck showing
+// SUBMITTED/ACKED in the DB. The fills/trade_legs accounting was never
+// affected (it's driven by the separate, idempotent fills table), but the
+// order row itself became a false "stuck order" the reconciler's recovery
+// poller kept re-polling forever, and any caller trusting
+// orders.filled_qty directly (like TradeOpenQuantities before it was
+// switched to read from fills) would have under-counted a real position.
+func TestApplyOrderUpdate_LateOutOfOrderPushCannotRegressATerminalOrder(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	testUID := fmt.Sprintf("RECONCILER_TEST_REGRESSION_%d", time.Now().UnixNano())
+	brokerOrderID := fmt.Sprintf("998%d", time.Now().Unix()%1000000)
+
+	var contractID int64
+	if err := db.QueryRowContext(ctx, `SELECT id FROM contracts LIMIT 1`).Scan(&contractID); err != nil {
+		t.Skipf("no contracts row available to test against: %v", err)
+	}
+
+	var tradeID int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO trades (trade_uid, symbol, status, created_at)
+		VALUES ($1, 'TESTSYM', 'ACTIVE', NOW())
+		RETURNING id
+	`, testUID).Scan(&tradeID); err != nil {
+		t.Fatalf("insert test trade: %v", err)
+	}
+
+	var orderID int64
+	if err := db.QueryRowContext(ctx, `
+		INSERT INTO orders (trade_id, contract_id, broker_order_id, side, quantity, order_type, status, created_at, updated_at, filled_qty, pending_qty, trade_uid)
+		VALUES ($1, $2, $3, 'BUY', 65, 'MARKET', 'SUBMITTED', NOW(), NOW(), 0, 65, $4)
+		RETURNING id
+	`, tradeID, contractID, brokerOrderID, testUID).Scan(&orderID); err != nil {
+		t.Fatalf("insert test order: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM fills WHERE trade_id = $1`, tradeID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM order_events WHERE order_id = $1`, orderID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM trade_legs WHERE trade_id = $1`, tradeID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM orders WHERE id = $1`, orderID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM trades WHERE id = $1`, tradeID)
+	})
+
+	store := NewStore(db)
+
+	// The order fills in full first (as it really did at the broker).
+	fillUpdate := normalize.Parse(&normalize.GreeksoftOrderResponse{
+		GOrderID: brokerOrderID, OrderStatus: "Traded",
+		QtyFilledToday: "65", PendingQty: "0", Price: "100.00",
+		LuTime: fmt.Sprintf("%d", time.Now().Unix()),
+	})
+	if _, err := store.ApplyOrderUpdate(ctx, fillUpdate, []byte(`{"test":"fill"}`)); err != nil {
+		t.Fatalf("ApplyOrderUpdate (fill) failed: %v", err)
+	}
+
+	// A late, out-of-order ACKED push arrives afterward (as if Iris's own
+	// earlier ack got delayed in transit past the fill). Must NOT regress
+	// the order.
+	lateAck := normalize.Parse(&normalize.GreeksoftOrderResponse{
+		GOrderID: brokerOrderID, OrderStatus: "Pending",
+		QtyFilledToday: "0", PendingQty: "65", Price: "100.00",
+		LuTime: fmt.Sprintf("%d", time.Now().Unix()),
+	})
+	if _, err := store.ApplyOrderUpdate(ctx, lateAck, []byte(`{"test":"late-ack"}`)); err != nil {
+		t.Fatalf("ApplyOrderUpdate (late ack) failed: %v", err)
+	}
+
+	var status string
+	var filledQty, pendingQty int64
+	if err := db.QueryRowContext(ctx, `SELECT status, filled_qty, pending_qty FROM orders WHERE id = $1`, orderID).Scan(&status, &filledQty, &pendingQty); err != nil {
+		t.Fatalf("re-read order: %v", err)
+	}
+	if status != "FILLED" || filledQty != 65 || pendingQty != 0 {
+		t.Fatalf("after late out-of-order ACKED push: status=%q filled_qty=%d pending_qty=%d, want FILLED/65/0 (must stay as it was after the real fill)",
+			status, filledQty, pendingQty)
+	}
+
+	// The late push must still be recorded for audit purposes, just not
+	// applied to the order row itself.
+	var eventCount int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM order_events WHERE order_id = $1`, orderID).Scan(&eventCount); err != nil {
+		t.Fatalf("count order_events: %v", err)
+	}
+	if eventCount != 2 {
+		t.Fatalf("order_events count = %d, want 2 (fill + late ack, both recorded)", eventCount)
 	}
 }
 

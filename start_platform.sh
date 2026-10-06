@@ -3,6 +3,7 @@ set -e
 
 BASE_DIR=$(cd "$(dirname "$0")" && pwd)
 LOG_DIR="$BASE_DIR/logs"
+export LOG_DIR  # the gateway writes per-area copies to $LOG_DIR/exec/
 BUILD_DIR="$BASE_DIR/build"
 
 mkdir -p "$LOG_DIR"
@@ -103,12 +104,12 @@ start_if_needed() {
   # stdin so a detached process never blocks trying to read from a terminal
   # it no longer has.
   if command -v setsid >/dev/null 2>&1; then
-    setsid bash -c "$CMD" > "$LOG_FILE" 2>&1 < /dev/null &
+    setsid bash -c "$CMD" >> "$LOG_FILE" 2>&1 < /dev/null &
   else
     echo "WARNING: setsid not found -- $NAME will NOT survive Ctrl+C on this viewer" >&2
     (
       eval "$CMD"
-    ) > "$LOG_FILE" 2>&1 &
+    ) >> "$LOG_FILE" 2>&1 &
   fi
 }
 
@@ -137,9 +138,30 @@ if [ "$MODE" = "normal" ]; then
   sleep 1
 fi
 
-if [ "$CLEAR_LOGS" = "1" ]; then
-  rm -f "$LOG_DIR"/*.log || true
+# One continuous log per service per DAY: every restart APPENDS to the same
+# files (with a "===== START" marker line), nothing is cleared. When the
+# date changes, the previous day's files move to logs/archive/YYYY-MM-DD/.
+# Archives older than 30 days are removed. (CLEAR_LOGS is no longer used.)
+LOG_DAY_FILE="$LOG_DIR/.log_day"
+TODAY="$(date +%F)"
+LOG_DAY="$(cat "$LOG_DAY_FILE" 2>/dev/null || true)"
+if [ -z "$LOG_DAY" ] && compgen -G "$LOG_DIR/*.log" > /dev/null; then
+  LOG_DAY="$(date -r "$(ls -t "$LOG_DIR"/*.log | head -1)" +%F)"
 fi
+if [ -n "$LOG_DAY" ] && [ "$LOG_DAY" != "$TODAY" ]; then
+  if compgen -G "$LOG_DIR/*.log" > /dev/null || compgen -G "$LOG_DIR/exec/*.log" > /dev/null; then
+    mkdir -p "$LOG_DIR/archive/$LOG_DAY/exec"
+    mv "$LOG_DIR"/*.log "$LOG_DIR/archive/$LOG_DAY"/ 2>/dev/null || true
+    mv "$LOG_DIR"/exec/*.log "$LOG_DIR/archive/$LOG_DAY"/exec/ 2>/dev/null || true
+    echo "Logs of $LOG_DAY archived to $LOG_DIR/archive/$LOG_DAY"
+  fi
+fi
+echo "$TODAY" > "$LOG_DAY_FILE"
+mkdir -p "$LOG_DIR/exec"
+for f in 1_contract-master 2_feed-decoder 3_snapshot 4_execution 6_reconciler 7_greeksoft-feed-bridge 8_ui 9_latency-dashboard exec/trading exec/lut exec/sbuild_shadow exec/paper; do
+  echo "===== $(date '+%F %T') START (start_platform.sh $MODE) =====" >> "$LOG_DIR/$f.log"
+done
+find "$LOG_DIR/archive" -mindepth 1 -maxdepth 1 -type d -mtime +30 -exec rm -rf {} + 2>/dev/null || true
 
 echo "Loading environment variables"
 
@@ -186,6 +208,11 @@ if [ "$MODE" != "fast" ]; then
   echo "Building execution-gateway (Go)"
   if ! (cd "$BASE_DIR/services/execution-gateway" && go build -o "$BUILD_DIR/execution-gateway" .); then
     echo "ERROR: execution-gateway build failed; refusing to start a stale binary." >&2
+    exit 1
+  fi
+  echo "Building snapshot-service (Go)"
+  if ! (cd "$BASE_DIR/services/snapshot-service" && go build -o "$BUILD_DIR/snapshot-service" ./cmd); then
+    echo "ERROR: snapshot-service build failed; refusing to start a stale binary." >&2
     exit 1
   fi
 fi
@@ -305,7 +332,7 @@ else
       cd "'"$BASE_DIR"'/ui"
       if [ ! -d node_modules ]; then npm install; fi
       npm run dev -- --host
-    ' > "$LOG_DIR/8_ui.log" 2>&1 < /dev/null &
+    ' >> "$LOG_DIR/8_ui.log" 2>&1 < /dev/null &
   else
     (
       cd "$BASE_DIR/ui"
@@ -313,7 +340,7 @@ else
         npm install
       fi
       npm run dev -- --host
-    ) > "$LOG_DIR/8_ui.log" 2>&1 &
+    ) >> "$LOG_DIR/8_ui.log" 2>&1 &
   fi
 fi
 

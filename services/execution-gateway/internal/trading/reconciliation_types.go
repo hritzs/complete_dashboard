@@ -120,3 +120,25 @@ func AggregateLegFromFills(fills []BrokerFill, token int64) LegReconciliation {
 type VerifiedFillsProvider interface {
 	GetVerifiedFills(ctx context.Context) ([]BrokerFill, error)
 }
+
+// BrokerOrderBookFillsProvider reads fills from the broker's own order book
+// (not from the reconciler DB).
+type BrokerOrderBookFillsProvider interface {
+	GetBrokerOrderBookFills(ctx context.Context) ([]BrokerFill, error)
+}
+
+// BrokerPosition is one net position as the broker reports it.
+type BrokerPosition struct {
+	Token        int64   `json:"token"`      // broker (global) token
+	ExchToken    int64   `json:"exch_token"` // exchange token (= our contract token)
+	Symbol       string  `json:"symbol"`
+	NetQty       int64   `json:"net_qty"`        // signed: short < 0
+	DayNetAmount float64 `json:"day_net_amount"` // broker's day net amount
+	ProductType  string  `json:"product_type"`
+	Account      string  `json:"account"`
+}
+
+// BrokerPositionsProvider returns the account's real net positions.
+type BrokerPositionsProvider interface {
+	GetBrokerPositions(ctx context.Context) ([]BrokerPosition, error)
+}

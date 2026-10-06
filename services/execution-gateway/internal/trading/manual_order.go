@@ -179,7 +179,17 @@ func (h *Handlers) ManualOrder(w http.ResponseWriter, r *http.Request) {
 	resp := ManualOrderResponse{Success: true, Tag: tag}
 	submitted := map[string]struct{}{}
 
-	for i, lots := range manualOrderChunks(req.TotalLots, req.LotsPerOrder) {
+	// Never send more lots in one order than the live per-order max allows
+	// (e.g. NIFTY 1755 = 27 lots), whatever lots-per-order the UI asked for.
+	lotsPerOrder := req.LotsPerOrder
+	if req.LotSize > 0 {
+		if maxLots := int(h.Service.resolveMaxOrderQty(req.Symbol, int64(req.LotSize)) / int64(req.LotSize)); maxLots >= 1 && lotsPerOrder > maxLots {
+			log.Printf("[MANUAL ORDER] lots per order %d capped to %d (live per-order max for %s)", lotsPerOrder, maxLots, req.Symbol)
+			lotsPerOrder = maxLots
+		}
+	}
+
+	for i, lots := range manualOrderChunks(req.TotalLots, lotsPerOrder) {
 		qty := int64(lots * req.LotSize)
 		intentID := fmt.Sprintf("%s_C%d", tag, i+1)
 		var limitPrice *float64
@@ -194,6 +204,7 @@ func (h *Handlers) ManualOrder(w http.ResponseWriter, r *http.Request) {
 			ExchangeSegment: exchangeSegment,
 			Side:            side,
 			Quantity:        qty,
+			LotSize:         int64(req.LotSize),
 			OrderType:       orderType,
 			LimitPrice:      limitPrice,
 			ProductType:     productType,

@@ -34,6 +34,66 @@ func NewExecutor(client *gs.Client) *Executor {
 	}
 }
 
+// GetFreezeQty implements trading.FreezeQtyProvider. It reads the
+// exchange freeze quantity (the max quantity allowed in one order) live
+// from GreekSoft's getQuoteForSingleSymbol_V2 for the given token,
+// assetType "option" per GreekSoft's own documented example. Freeze
+// quantities are revised periodically by exchange circular, so this is
+// sourced live rather than trusted from a build-time constant; callers
+// cache the result themselves (see trading.Service's daily freeze-qty
+// cache) rather than calling this on every order.
+//
+// token is our internal/contract-master short token (e.g. 73910) -- the
+// same one every other caller in this package passes in. GreekSoft's own
+// quote API needs its own "gtoken" (e.g. 102073910), exactly like
+// MapOrderIntent already resolves via resolveGreeksoftGToken before
+// placing a real order (confirmed live: passing the short token directly
+// here made every single call fail with "quote returned no freeze qty").
+func (e *Executor) GetFreezeQty(ctx context.Context, token int64) (trading.FreezeInfo, error) {
+	var info trading.FreezeInfo
+	if e == nil || e.Client == nil || e.Client.Session == nil {
+		return info, fmt.Errorf("greeksoft client/session not available")
+	}
+
+	gcidValue, ok := e.Client.Session.BrokerSpecific["gcid"]
+	if !ok || fmt.Sprintf("%v", gcidValue) == "" {
+		return info, fmt.Errorf("greeksoft session missing gcid")
+	}
+	gcid := fmt.Sprintf("%v", gcidValue)
+
+	gtoken := resolveGreeksoftGToken("", token)
+
+	resp, err := e.Client.GetQuoteForSingleSymbolV2(ctx, strconv.FormatInt(gtoken, 10), "option", gcid)
+	if err != nil {
+		return info, fmt.Errorf("greeksoft quote fetch failed for token %d (gtoken %d): %w", token, gtoken, err)
+	}
+
+	info.FreezeQty = resp.Response.Data.FreezeQty
+	info.LotSize = resp.Response.Data.Lot
+	if info.FreezeQty <= 1 {
+		// Say WHICH instrument the broker resolved this token to: for BSE
+		// (SENSEX/BANKEX) the quote comes back without freezQty, and whether
+		// that's "wrong instrument looked up" or "no freeze qty published"
+		// can only be told from these fields.
+		d := resp.Response.Data
+		return info, fmt.Errorf("greeksoft quote returned no freeze qty for token %d (gtoken %d): resolved to description=%q instrument=%q assetToken=%d lot=%d expiryDate=%d last=%.2f bid=%.2f ask=%.2f",
+			token, gtoken, d.Description, d.Instrument, d.AssetToken, d.Lot, d.ExpiryDate, d.Last, d.Bid, d.Ask)
+	}
+	if info.LotSize <= 0 {
+		return info, fmt.Errorf("greeksoft quote returned no lot size for token %d (gtoken %d)", token, gtoken)
+	}
+
+	// freezQty is the quantity at which the exchange FREEZES an order
+	// (NIFTY 1801 live 2026-09-28), so the ceiling is one less (1800), and
+	// an order must be whole lots of the broker's own lot size: NIFTY
+	// 1800 -> 27 x 65 = 1755, MIDCPNIFTY 2800 -> 23 x 120 = 2760.
+	info.MaxOrderQty = ((info.FreezeQty - 1) / info.LotSize) * info.LotSize
+	if info.MaxOrderQty <= 0 {
+		return info, fmt.Errorf("greeksoft freeze qty %d is below one lot (%d) for token %d", info.FreezeQty, info.LotSize, token)
+	}
+	return info, nil
+}
+
 func (e *Executor) ExecuteOrderIntent(
 	ctx context.Context,
 	intent trading.OrderIntent,
@@ -779,3 +839,54 @@ var (
 	_ trading.OrderModifier  = (*Executor)(nil)
 	_ trading.OrderCanceller = (*Executor)(nil)
 )
+
+var _ trading.BrokerOrderBookFillsProvider = (*Executor)(nil)
+var _ trading.BrokerPositionsProvider = (*Executor)(nil)
+
+// GetBrokerOrderBookFills reads fills straight from GreekSoft's REST order
+// book -- the broker's own record -- skipping the reconciler DB (which only
+// knows what the Iris push feed delivered and misses a push lost while the
+// feed reconnects).
+func (e *Executor) GetBrokerOrderBookFills(ctx context.Context) ([]trading.BrokerFill, error) {
+	if e == nil || e.Client == nil {
+		return nil, fmt.Errorf("greeksoft executor client is nil")
+	}
+	book, err := e.Client.GetOrderBook(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get Greeksoft order book: %w", err)
+	}
+	fills := make([]trading.BrokerFill, 0)
+	collectGreeksoftVerifiedFills(book, &fills, make(map[string]struct{}))
+	return fills, nil
+}
+
+// GetBrokerPositions returns the account's real net positions (NPRequest).
+func (e *Executor) GetBrokerPositions(ctx context.Context) ([]trading.BrokerPosition, error) {
+	if e == nil || e.Client == nil {
+		return nil, fmt.Errorf("greeksoft executor client is nil")
+	}
+	resp, err := e.Client.NPRequest(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []trading.BrokerPosition
+	for _, p := range resp.Response.Data.StockDetails {
+		q, _ := strconv.ParseInt(strings.TrimSpace(string(p.NetQty)), 10, 64)
+		amt, _ := strconv.ParseFloat(strings.TrimSpace(string(p.DayNetAmt)), 64)
+		tok, _ := strconv.ParseInt(strings.TrimSpace(string(p.Token)), 10, 64)
+		exch, _ := strconv.ParseInt(strings.TrimSpace(string(p.ExchToken)), 10, 64)
+		name := strings.TrimSpace(string(p.Description))
+		if name == "" {
+			name = strings.TrimSpace(string(p.Symbol))
+		}
+		product := string(p.ProductType)
+		if product == "1" {
+			product = "NRML (1)"
+		}
+		out = append(out, trading.BrokerPosition{
+			Token: tok, ExchToken: exch, Symbol: name, NetQty: q, DayNetAmount: amt,
+			ProductType: product, Account: string(p.Account),
+		})
+	}
+	return out, nil
+}

@@ -2,6 +2,7 @@ package trading
 
 import (
 	"math"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -10,7 +11,7 @@ import (
 type OrderExecution struct {
 	OrderID       int64     `json:"order_id"`
 	Time          time.Time `json:"time"`
-	Kind          string    `json:"kind"` // ENTRY | HEDGE | EXIT | OTHER
+	Kind          string    `json:"kind"` // ENTRY | HEDGE | EXIT | WING | OTHER
 	Leg           string    `json:"leg"`  // CE | PE
 	Strike        float64   `json:"strike"`
 	Side          string    `json:"side"`
@@ -22,11 +23,26 @@ type OrderExecution struct {
 
 	intentID string
 	phase    string
+	token    int64
+}
+
+// legKey identifies one instrument for PnL accounting: option type plus
+// token. Keying on option type alone pooled an ATM hedge (a different
+// strike's CE/PE) into the straddle's own CE/PE average cost, which
+// misstates realized PnL whenever the two aren't both flat. Token 0
+// (legacy rows, tests) falls back to the plain option type.
+func legKey(leg string, token int64) string {
+	if token <= 0 {
+		return leg
+	}
+	return leg + ":" + strconv.FormatInt(token, 10)
 }
 
 // LegPnL is the average-cost accounting of one option leg of a trade.
 type LegPnL struct {
 	Leg         string  `json:"leg"`
+	Token       int64   `json:"token,omitempty"`
+	Strike      float64 `json:"strike,omitempty"`
 	SoldQty     int64   `json:"sold_qty"`
 	BoughtQty   int64   `json:"bought_qty"`
 	SoldAvg     float64 `json:"sold_avg"`
@@ -47,6 +63,8 @@ func classifyExecutionKind(phase, intentID string) string {
 		return "HEDGE"
 	case "SQF", "PSQF":
 		return "EXIT"
+	case wingPhase:
+		return "WING"
 	}
 	id := strings.ToUpper(strings.TrimSpace(intentID))
 	switch {
@@ -71,7 +89,33 @@ func round2(v float64) float64 { return math.Round(v*100) / 100 }
 // doubles quantities and PnL. Each order row carries its own filled
 // quantity and average price, so nothing is counted twice.
 func computeLegPnL(execs []OrderExecution) map[string]*LegPnL {
+	return computeLegPnLWhere(execs, func(e OrderExecution) bool { return !isWingExecution(e) })
+}
+
+// computeWingLegPnL is computeLegPnL for the wing orders only -- reported
+// separately, never part of the trade's realized PnL.
+func computeWingLegPnL(execs []OrderExecution) map[string]*LegPnL {
+	return computeLegPnLWhere(execs, isWingExecution)
+}
+
+func isWingExecution(e OrderExecution) bool {
+	return strings.EqualFold(strings.TrimSpace(e.phase), wingPhase)
+}
+
+// pnlPerStraddle is PnL per unit of the trade's original size (lots x lot
+// size), the same normalization the live monitor uses. 0 if size unknown.
+func pnlPerStraddle(pnl float64, lots, lotSize int) float64 {
+	if lots <= 0 || lotSize <= 0 {
+		return 0
+	}
+	return round2(pnl / float64(lots*lotSize))
+}
+
+func computeLegPnLWhere(execs []OrderExecution, keep func(OrderExecution) bool) map[string]*LegPnL {
 	type acc struct {
+		leg         string
+		token       int64
+		strike      float64
 		buyQ, sellQ int64
 		buyV, sellV float64
 	}
@@ -80,10 +124,14 @@ func computeLegPnL(execs []OrderExecution) map[string]*LegPnL {
 		if e.FilledQty <= 0 || e.AvgPrice <= 0 || e.Leg == "" {
 			continue
 		}
-		a := legs[e.Leg]
+		if !keep(e) {
+			continue
+		}
+		k := legKey(e.Leg, e.token)
+		a := legs[k]
 		if a == nil {
-			a = &acc{}
-			legs[e.Leg] = a
+			a = &acc{leg: e.Leg, token: e.token, strike: e.Strike}
+			legs[k] = a
 		}
 		switch strings.ToUpper(e.Side) {
 		case "BUY":
@@ -96,8 +144,8 @@ func computeLegPnL(execs []OrderExecution) map[string]*LegPnL {
 	}
 
 	out := map[string]*LegPnL{}
-	for leg, a := range legs {
-		p := &LegPnL{Leg: leg, SoldQty: a.sellQ, BoughtQty: a.buyQ, NetShortQty: a.sellQ - a.buyQ}
+	for k, a := range legs {
+		p := &LegPnL{Leg: a.leg, Token: a.token, Strike: a.strike, SoldQty: a.sellQ, BoughtQty: a.buyQ, NetShortQty: a.sellQ - a.buyQ}
 		if a.sellQ > 0 {
 			p.SoldAvg = round2(a.sellV / float64(a.sellQ))
 		}
@@ -107,7 +155,7 @@ func computeLegPnL(execs []OrderExecution) map[string]*LegPnL {
 		if matched := minInt64(a.sellQ, a.buyQ); matched > 0 {
 			p.Realized = round2((a.sellV/float64(a.sellQ) - a.buyV/float64(a.buyQ)) * float64(matched))
 		}
-		out[leg] = p
+		out[k] = p
 	}
 	return out
 }
@@ -130,6 +178,8 @@ func closeReasonForStatus(status string) string {
 		return "TIME EXIT"
 	case "CLOSEDSQF", "CLOSED_SQF", "CLOSED", "CLOSED_MANUAL":
 		return "MANUAL SQUARE-OFF"
+	case sbStatusClosed:
+		return "STRADDLE BUILD EXIT"
 	}
 	return ""
 }

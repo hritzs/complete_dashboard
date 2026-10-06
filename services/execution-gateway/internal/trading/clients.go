@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 type SnapshotClient struct {
@@ -160,3 +161,25 @@ func (c *LotSizeClient) GetLotSize(ctx context.Context, symbol string, expiry st
 
 	return result.LotSize, nil
 }
+
+// PushEvent broadcasts a typed live event to UI websocket clients via the
+// snapshot service (best effort, short timeout).
+func (c *SnapshotClient) PushEvent(ctx context.Context, eventType string, data interface{}) error {
+	body, err := json.Marshal(map[string]interface{}{"type": eventType, "data": data})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.BaseURL, "/")+"/api/push-event", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := lutPushClient.Do(req)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
+var lutPushClient = &http.Client{Timeout: 500 * time.Millisecond}
