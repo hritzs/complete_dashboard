@@ -349,7 +349,23 @@ func main() {
 	var apolloFrameCount atomic.Int64
 	apolloLatency := &latencyTracker{}
 
+	forwardTokens := make(map[string]bool, len(tokens))
+	for _, t := range tokens {
+		forwardTokens[t] = true
+	}
+
+	recorder := newApolloRecorder()
+	if recorder != nil {
+		strikes, _ := strconv.Atoi(envOrDefault("FEEDREC_STRIKES", "6"))
+		go recorder.resolveTokens(envOrDefault("SNAPSHOT_URL", "http://127.0.0.1:8003"), envOrDefault("FEEDREC_SYMBOL", "NIFTY"), strikes, ctx.Done())
+	}
+
 	resubscribe := func(apollo *greeksoft.ApolloMarketDataClient) error {
+		if recTokens := recorder.attach(apollo); len(recTokens) > 0 {
+			if err := apollo.Subscribe(recTokens); err != nil {
+				return err
+			}
+		}
 		if len(tokens) == 0 {
 			return nil
 		}
@@ -363,6 +379,7 @@ func main() {
 	var loggedStaleTransition atomic.Bool
 
 	handler := func(frame greeksoft.ApolloFrame) {
+		recorder.record(time.Now(), frame) // first: receive time before any decoding
 		apolloFrameCount.Add(1)
 
 		// Measured unconditionally, every frame, regardless of whether the
@@ -398,6 +415,9 @@ func main() {
 			}
 			if err := decodeApolloData(frame.Raw, &tick); err != nil || tick.Symbol == "" || tick.LTP == "" {
 				return
+			}
+			if !forwardTokens[tick.Symbol] {
+				return // subscribed only for the feed recorder, not as backup
 			}
 			publisher.publishInstrumentTick(tick.Symbol, tick.LTP)
 		case greeksoft.StreamingTypeIndex:

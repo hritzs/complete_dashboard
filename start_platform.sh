@@ -134,6 +134,7 @@ if [ "$MODE" = "normal" ]; then
   pkill -9 -f "services/reconciler" || true
   pkill -9 -f "services/greeksoft-feed-bridge" || true
   pkill -9 -f "services/latency-dashboard" || true
+  pkill -9 -f "feedrec_nse.sh|nse-feedrec" || true
 
   sleep 1
 fi
@@ -158,7 +159,7 @@ if [ -n "$LOG_DAY" ] && [ "$LOG_DAY" != "$TODAY" ]; then
 fi
 echo "$TODAY" > "$LOG_DAY_FILE"
 mkdir -p "$LOG_DIR/exec"
-for f in 1_contract-master 2_feed-decoder 3_snapshot 4_execution 6_reconciler 7_greeksoft-feed-bridge 8_ui 9_latency-dashboard exec/trading exec/lut exec/sbuild_shadow exec/paper; do
+for f in 1_contract-master 2_feed-decoder 3_snapshot 4_execution 6_reconciler 7_greeksoft-feed-bridge 8_ui 9_latency-dashboard 10_feedrec-nse exec/trading exec/lut exec/sbuild_shadow exec/paper; do
   echo "===== $(date '+%F %T') START (start_platform.sh $MODE) =====" >> "$LOG_DIR/$f.log"
 done
 find "$LOG_DIR/archive" -mindepth 1 -maxdepth 1 -type d -mtime +30 -exec rm -rf {} + 2>/dev/null || true
@@ -302,6 +303,20 @@ start_if_needed \
   "$LOG_DIR/9_latency-dashboard.log"
 
 sleep 2
+
+# NSE feed recorder for feed audits (scripts/feed_compare.py): per-packet
+# timestamps of the NSE multicast for the ATM strikes, read-only on its own
+# socket. The Apollo side is recorded inside the GreekSoft feed bridge.
+# Waits for a live chain, runs until 15:40. FEEDREC=0 in .env disables both.
+if [ "$FORCE_RESTART" = "1" ]; then
+  kill_by_match "feedrec_nse.sh|nse-feedrec"
+fi
+if is_proc_running "feedrec_nse.sh|nse-feedrec"; then
+  echo "NSE Feed Recorder already running"
+else
+  echo "Starting NSE Feed Recorder"
+  setsid bash -c "BUILD_DIR='$BUILD_DIR' '$BASE_DIR/scripts/feedrec_nse.sh'" >> "$LOG_DIR/10_feedrec-nse.log" 2>&1 < /dev/null &
+fi
 
 if [ "$FORCE_RESTART" = "1" ]; then
   kill_by_match "trade-worker"

@@ -45,6 +45,67 @@ type TradeSummary struct {
 	OpenCEQty  int64            `json:"open_ce_qty"`
 	OpenPEQty  int64            `json:"open_pe_qty"`
 	Executions []OrderExecution `json:"executions"`
+
+	// LastReject: the trade's latest broker-rejected order with the
+	// broker's own reason; RejectCount: all rejected orders of the trade.
+	LastReject  *TradeReject `json:"last_reject,omitempty"`
+	RejectCount int          `json:"reject_count,omitempty"`
+}
+
+// TradeReject is one broker-rejected order, reason verbatim.
+type TradeReject struct {
+	Time          time.Time `json:"time"`
+	Side          string    `json:"side"`
+	Leg           string    `json:"leg"`
+	Strike        float64   `json:"strike"`
+	LimitPrice    float64   `json:"limit_price"`
+	Phase         string    `json:"phase"`
+	BrokerOrderID string    `json:"broker_order_id"`
+	Reason        string    `json:"reason"`
+}
+
+// lastRejectsSQL: per trade created in [$1, $2), its latest REJECTED order
+// with the broker's reason text (the generic BROKER_* markers skipped) and
+// how many of its orders were rejected.
+const lastRejectsSQL = `
+WITH rej AS (
+	SELECT o.trade_uid, o.id, o.updated_at, o.side, o.limit_price, o.phase, o.broker_order_id, o.contract_id,
+	       (SELECT oe.reason_text FROM order_events oe
+	         WHERE oe.order_id = o.id AND oe.status = 'REJECTED'
+	           AND COALESCE(oe.reason_text, '') NOT IN ('', 'BROKER_EXECUTION', 'BROKER_RESPONSE')
+	         ORDER BY length(oe.reason_text) DESC LIMIT 1) AS reason
+	FROM orders o
+	WHERE o.status = 'REJECTED'
+	  AND o.trade_uid IN (SELECT trade_uid FROM trades WHERE created_at >= $1 AND created_at < $2)
+)
+SELECT DISTINCT ON (r.trade_uid) r.trade_uid, r.updated_at, r.side, COALESCE(r.limit_price, 0), COALESCE(r.phase, ''),
+       COALESCE(c.option_type, ''), COALESCE(c.strike_price, 0), COALESCE(r.broker_order_id, ''),
+       COUNT(*) OVER (PARTITION BY r.trade_uid), COALESCE(r.reason, '')
+FROM rej r LEFT JOIN contracts c ON c.id = r.contract_id
+ORDER BY r.trade_uid, r.updated_at DESC, r.id DESC`
+
+func (s *PostgresBackedStore) lastRejects(ctx context.Context, from, to time.Time) (map[string]*TradeReject, map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx, lastRejectsSQL, from, to)
+	if err != nil {
+		return nil, nil, fmt.Errorf("query rejects: %w", err)
+	}
+	defer rows.Close()
+	last, count := map[string]*TradeReject{}, map[string]int{}
+	for rows.Next() {
+		var (
+			uid string
+			n   int
+			r   TradeReject
+		)
+		if err := rows.Scan(&uid, &r.Time, &r.Side, &r.LimitPrice, &r.Phase, &r.Leg, &r.Strike, &r.BrokerOrderID, &n, &r.Reason); err != nil {
+			return nil, nil, fmt.Errorf("scan reject: %w", err)
+		}
+		if strings.TrimSpace(r.Reason) == "" {
+			r.Reason = "rejected by the broker (no reason text received)"
+		}
+		last[uid], count[uid] = &r, n
+	}
+	return last, count, rows.Err()
 }
 
 const executionsSelect = `
@@ -127,6 +188,11 @@ func (s *PostgresBackedStore) TradeSummaries(ctx context.Context, from, to time.
 		return nil, err
 	}
 
+	rejects, rejectCount, err := s.lastRejects(ctx, from, to)
+	if err != nil {
+		return nil, err
+	}
+
 	tradeRows, err := s.db.QueryContext(ctx, `
 		SELECT trade_uid, COALESCE(user_id,''), COALESCE(broker_name,''), COALESCE(account_id,''),
 		       symbol, status, created_at, closed_at, COALESCE(config, '{}'::jsonb)
@@ -164,6 +230,7 @@ func (s *PostgresBackedStore) TradeSummaries(ctx context.Context, from, to time.
 			RealizedPnL: totalRealizedPnL(legs), CE: legs[ceKey], PE: legs[peKey],
 			Executions: list,
 			Config:     stored.Config,
+			LastReject: rejects[uid], RejectCount: rejectCount[uid],
 		}
 		sum.PnLPerStraddle = pnlPerStraddle(sum.RealizedPnL, stored.Lots, stored.LotSize)
 		sum.WingRealizedPnL = totalRealizedPnL(computeWingLegPnL(list))

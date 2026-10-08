@@ -3,15 +3,15 @@ package trading
 // Straddle-target build -- LIVE OMS. Real GreekSoft orders, only for a run
 // the user started in LIVE mode with the typed confirmation.
 //
-// Entry: one lot per order, IOC LIMIT. Each lot's limit is the higher of
-//   - the tranche's depth floor for that leg, and
-//   - the lowest tick that keeps (avg CE sold + avg PE sold) STRICTLY above
-//     the target after this lot fills (sbLotLimit),
-// so the build can never sell its straddle at or below the target. An IOC
-// limit sell fills at the limit or better, or is cancelled.
+// Entry: one lot per order, IOC LIMIT at the tranche plan's own price for
+// the leg (the deepest bid level its depth walk authorised, after the
+// plan's VWAP test above target) -- never a price derived from earlier
+// fills (sbPlanLimits). An IOC limit sell fills at the best bids at or
+// above the limit, or is cancelled.
 // A lot counts only once the exchange confirms it (reconciler -> order
-// events); then it is pushed to PMS. Rejected -> building stops (position
-// stays monitored). No confirmation -> the run HALTS (nothing more is
+// events); then it is pushed to PMS. Rejected -> the tranche ends and the
+// run re-plans (sbMaxRejects in a row stop building; position stays
+// monitored). No confirmation -> the run HALTS (nothing more is
 // sent) because the position is no longer known.
 // Hedge / exit: MARKET orders (must fill), freeze-qty sized, each
 // confirmed before the next.
@@ -24,7 +24,6 @@ import (
 	"log"
 	"math"
 	"os"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -52,63 +51,10 @@ func sbLiveAccount() string {
 	return "147"
 }
 
-// sbLiveMaxLots caps a LIVE run's size per leg (env SBUILD_LIVE_MAX_LOTS).
-func sbLiveMaxLots() int64 {
-	if v, err := strconv.ParseInt(strings.TrimSpace(os.Getenv("SBUILD_LIVE_MAX_LOTS")), 10, 64); err == nil && v > 0 {
-		return v
-	}
-	return 10
-}
-
 // sbLiveWindow: orders only in the broker session (09:15-15:40 IST).
 func sbLiveWindow(now time.Time) bool {
 	hm := now.Hour()*100 + now.Minute()
 	return hm >= 915 && hm < 1540
-}
-
-// sbLotLimit returns the lowest tick price for ONE more lot of a leg that
-// keeps legAvg' + otherAvg STRICTLY above target, never below floor.
-// legQty/legAvg: what this leg has sold so far; otherAvg: the other leg's
-// average (or its planned floor when it has nothing yet).
-func sbLotLimit(target float64, legQty int64, legAvg, otherAvg float64, lot int64, floor float64) float64 {
-	if lot <= 0 {
-		return floor
-	}
-	bound := ((target-otherAvg)*float64(legQty+lot) - float64(legQty)*legAvg) / float64(lot)
-	// Strictly above the bound: a bound on (or within float noise of) a
-	// tick steps to the next tick, so the straddle can never equal target.
-	limit := (math.Floor(bound/sbTick+1e-6) + 1) * sbTick
-	if limit < floor {
-		limit = floor
-	}
-	return math.Round(limit*100) / 100
-}
-
-// sbNextLotLimit computes the limit for the next lot of leg from the
-// run's current PMS averages. Caller holds r.mu.
-func (r *sbRunner) sbNextLotLimit(leg string, plan DepthEntryPlan, otherBestBid float64) float64 {
-	ceQty, peQty := r.pms.BuildLegQty()
-	ceAvg, peAvg := r.pms.BuildAverages()
-	lot := int64(r.lotSize)
-	target := r.cfg.TargetStraddle
-	if leg == "CE" {
-		other := peAvg
-		if peQty == 0 {
-			other = plan.PEWorst
-			if other <= 0 {
-				other = otherBestBid
-			}
-		}
-		return sbLotLimit(target, ceQty, ceAvg, other, lot, plan.CEWorst)
-	}
-	other := ceAvg
-	if ceQty == 0 {
-		other = plan.CEWorst
-		if other <= 0 {
-			other = otherBestBid
-		}
-	}
-	return sbLotLimit(target, peQty, peAvg, other, lot, plan.PEWorst)
 }
 
 // sbPendingOrder is written to the run file BEFORE an order is sent and
@@ -307,64 +253,76 @@ func sbRounds(ceLots, peLots int) [][]string {
 	return out
 }
 
-// sbPairLimits prices one CE lot + one PE lot sent together so the build's
-// avg CE + avg PE stays STRICTLY above target whatever price each fills at
-// (an IOC sell fills at its limit or better). The slack above target is
-// split between the legs (limits below the bid fill more reliably).
-// ok=false: the best bids themselves don't keep the build above target.
-func sbPairLimits(target float64, ceQ int64, ceAvg float64, peQ int64, peAvg float64, lot int64, bCE, bPE float64) (float64, float64, bool) {
-	if lot <= 0 || bCE <= 0 || bPE <= 0 {
-		return 0, 0, false
+// sbPlanLimits: each lot's IOC limit is the tranche plan's own price for
+// its leg -- the deepest bid level the plan's depth walk (shown in the UI)
+// authorised, so the lot fills at the best bids at or above it. No cushion
+// from earlier fills ever lowers it (2026-10-08 12:44: a cushion priced CE
+// at 116.05 vs LTP 145 -> broker RMS reject). A leg whose fresh best bid
+// has fallen below the plan's price stops the tranche: re-plan, never sell
+// lower than planned.
+func sbPlanLimits(legs []string, plan DepthEntryPlan, bestBid map[string]float64) (map[string]float64, string) {
+	limits := map[string]float64{}
+	for _, leg := range legs {
+		lim := plan.CEWorst
+		if leg == "PE" {
+			lim = plan.PEWorst
+		}
+		if lim <= 0 {
+			return limits, fmt.Sprintf("no planned %s price", leg)
+		}
+		if bestBid[leg] > 0 && bestBid[leg] < lim-1e-9 {
+			return limits, fmt.Sprintf("%s best bid %.2f fell below the planned price %.2f", leg, bestBid[leg], lim)
+		}
+		limits[leg] = lim
 	}
-	a := float64(lot) / float64(ceQ+lot)
-	b := float64(lot) / float64(peQ+lot)
-	need := target - float64(ceQ)*ceAvg/float64(ceQ+lot) - float64(peQ)*peAvg/float64(peQ+lot)
-	minY := func(x float64) float64 { // lowest tick y with a*x + b*y > need
-		return (math.Floor((need-a*x)/b/sbTick+1e-6) + 1) * sbTick
-	}
-	if minY(bCE) > bPE+1e-9 {
-		return 0, 0, false
-	}
-	slack := a*bCE + b*bPE - need
-	x := math.Ceil((bCE-slack/(2*a))/sbTick-1e-6) * sbTick
-	if x > bCE {
-		x = bCE
-	}
-	y := minY(x)
-	if y > bPE+1e-9 {
-		x, y = bCE, minY(bCE)
-	}
-	if y < sbTick {
-		y = sbTick
-	}
-	return math.Round(x*100) / 100, math.Round(y*100) / 100, true
+	return limits, ""
 }
 
-// sbFreshBids re-reads the best bids of one strike (falls back to old).
-func (s *Service) sbFreshBids(symbol, expiry string, strike float64, old map[string]float64) map[string]float64 {
+// sbMaxRejects: consecutive rejected build orders (no fill between) that
+// stop building -- a rejection that will not clear (margin) must not loop.
+const sbMaxRejects = 3
+
+// sbRejectLocked: a rejected build order ends only its tranche; the run
+// re-plans after the tranche gap and keeps building. Caller holds r.mu.
+func (r *sbRunner) sbRejectLocked(what, reason string) {
+	r.rejects++
+	r.lastReject = &SBReject{Time: time.Now().In(lutIST()).Format("15:04:05"), What: what, Reason: reason, Streak: r.rejects, Max: sbMaxRejects, Stopped: r.rejects >= sbMaxRejects}
+	if r.rejects < sbMaxRejects {
+		r.event("ORDER", "LIVE %s REJECTED (%s) -- rejection %d/%d in a row: re-planning, building continues", what, reason, r.rejects, sbMaxRejects)
+		return
+	}
+	if r.phase == "BUILDING" {
+		r.phase = "COMPLETE"
+	}
+	r.event("ORDER", "LIVE %s REJECTED (%s) -- %d rejections in a row: building stopped; position stays monitored", what, reason, r.rejects)
+}
+
+// sbFreshBids re-reads the best bids and L5 limits of one strike (each
+// falls back to the old value).
+func (s *Service) sbFreshBids(symbol, expiry string, strike float64, old, oldL5 map[string]float64) (map[string]float64, map[string]float64) {
 	out := map[string]float64{"CE": old["CE"], "PE": old["PE"]}
+	l5 := map[string]float64{"CE": oldL5["CE"], "PE": oldL5["PE"]}
 	if s.Snapshot == nil {
-		return out
+		return out, l5
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	c, err := s.Snapshot.GetOptionChain(ctx, symbol, expiry)
 	if err != nil || c == nil {
-		return out
+		return out, l5
 	}
 	for _, row := range c.Chain {
 		if math.Abs(row.Strike-strike) > 1e-6 {
 			continue
 		}
-		bb := sbRowBids(row)
-		if bb["CE"] > 0 {
-			out["CE"] = bb["CE"]
-		}
-		if bb["PE"] > 0 {
-			out["PE"] = bb["PE"]
+		bb, low := sbRowBids(row), sbRowL5(row)
+		for _, leg := range []string{"CE", "PE"} {
+			if bb[leg] > 0 && low[leg] > 0 {
+				out[leg], l5[leg] = bb[leg], low[leg]
+			}
 		}
 	}
-	return out
+	return out, l5
 }
 
 func sbRowBids(row OptionChainRow) map[string]float64 {
@@ -376,6 +334,26 @@ func sbRowBids(row OptionChainRow) map[string]float64 {
 		bb["PE"] = row.PEDepth.Bids[0].Price
 	}
 	return bb
+}
+
+// sbL5Levels: build orders are limited at the lowest of the top 5 bids.
+const sbL5Levels = 5
+
+// sbRowL5 returns each leg's L5 limit: the LOWEST of the top 5 bid levels
+// (fewer levels shown -> the deepest one; no depth -> the best bid).
+func sbRowL5(row OptionChainRow) map[string]float64 {
+	out := sbRowBids(row)
+	for leg, d := range map[string]*DepthBook{"CE": row.CEDepth, "PE": row.PEDepth} {
+		if d == nil {
+			continue
+		}
+		for i := 0; i < len(d.Bids) && i < sbL5Levels; i++ {
+			if p := d.Bids[i].Price; p > 0 && p < out[leg] {
+				out[leg] = p
+			}
+		}
+	}
+	return out
 }
 
 // sbCompleteRetries: how many times a leg whose partner already filled is
@@ -393,7 +371,7 @@ func (s *Service) sbExecuteLiveAsync(r *sbRunner, plan DepthEntryPlan, atm Optio
 	lot := int64(r.lotSize)
 	rounds := sbRounds(int(plan.CEQty/lot), int(plan.PEQty/lot))
 	tranche, tradeUID, symbol, expiry := r.tranches, r.tradeUID, r.cfg.Symbol, r.expiry
-	bestBid := sbRowBids(atm)
+	bestBid, l5 := sbRowBids(atm), sbRowL5(atm)
 	token := map[string]int64{"CE": atm.CEToken, "PE": atm.PEToken}
 	go func() {
 		filled := map[string]int64{}
@@ -435,11 +413,10 @@ func (s *Service) sbExecuteLiveAsync(r *sbRunner, plan DepthEntryPlan, atm Optio
 					s.sbLiveHaltLocked(r, fmt.Sprintf("%s lot order unconfirmed: %s", o.leg, o.res.Reason))
 					stopWhy = "halted"
 				case o.res.Status == "REJECTED":
-					if r.phase == "BUILDING" {
-						r.phase = "COMPLETE"
-					}
-					r.event("ORDER", "LIVE %s order REJECTED (%s) -- building stopped; position stays monitored", o.leg, o.res.Reason)
+					r.sbRejectLocked(o.leg+" order", o.res.Reason)
 					stopWhy = "rejected"
+				case o.res.Filled > 0:
+					r.rejects = 0
 				}
 				got[o.leg] = o.res.Filled >= lot
 			}
@@ -464,28 +441,10 @@ func (s *Service) sbExecuteLiveAsync(r *sbRunner, plan DepthEntryPlan, atm Optio
 				break
 			}
 			if i > 0 {
-				bestBid = s.sbFreshBids(symbol, expiry, atm.Strike, bestBid)
+				bestBid, l5 = s.sbFreshBids(symbol, expiry, atm.Strike, bestBid, l5)
 			}
-			limits := map[string]float64{}
-			r.mu.Lock()
-			if len(legs) == 2 {
-				ceQ, peQ := r.pms.BuildLegQty()
-				ceA, peA := r.pms.BuildAverages()
-				x, y, ok := sbPairLimits(r.cfg.TargetStraddle, ceQ, ceA, peQ, peA, lot, bestBid["CE"], bestBid["PE"])
-				if !ok {
-					stopWhy = fmt.Sprintf("best bids CE %.2f + PE %.2f no longer keep the build above target %.2f", bestBid["CE"], bestBid["PE"], r.cfg.TargetStraddle)
-				}
-				limits["CE"], limits["PE"] = x, y
-			} else {
-				leg := legs[0]
-				other := map[string]string{"CE": "PE", "PE": "CE"}[leg]
-				lim := r.sbNextLotLimit(leg, plan, bestBid[other])
-				if bestBid[leg] > 0 && lim > bestBid[leg]+1e-9 {
-					stopWhy = fmt.Sprintf("%s limit %.2f needed to stay above target is over the best bid %.2f (the completion step finishes it if it cuts delta)", leg, lim, bestBid[leg])
-				}
-				limits[leg] = lim
-			}
-			r.mu.Unlock()
+			limits, why := sbPlanLimits(legs, plan, bestBid)
+			stopWhy = why
 			if stopWhy != "" {
 				break
 			}
@@ -500,14 +459,14 @@ func (s *Service) sbExecuteLiveAsync(r *sbRunner, plan DepthEntryPlan, atm Optio
 				}
 				done := false
 				for k := 0; k < sbCompleteRetries && !done && canSend(); k++ {
-					bestBid = s.sbFreshBids(symbol, expiry, atm.Strike, bestBid)
-					if bestBid[miss] <= 0 {
+					bestBid, l5 = s.sbFreshBids(symbol, expiry, atm.Strike, bestBid, l5)
+					if l5[miss] <= 0 {
 						continue
 					}
 					r.mu.Lock()
-					r.event("COMPLETE", "LIVE pair leg %s missed (partner filled) -- completing at best bid %.2f (attempt %d/%d)", miss, bestBid[miss], k+1, sbCompleteRetries)
+					r.event("COMPLETE", "LIVE pair leg %s missed (partner filled) -- completing at the L5 bid %.2f (best %.2f, attempt %d/%d)", miss, l5[miss], bestBid[miss], k+1, sbCompleteRetries)
 					r.mu.Unlock()
-					done = send(map[string]float64{miss: bestBid[miss]}, "COMPLETE ")[miss]
+					done = send(map[string]float64{miss: l5[miss]}, "COMPLETE ")[miss]
 				}
 				if !done && stopWhy == "" {
 					stopWhy = fmt.Sprintf("%s pair leg not filled after %d completion attempts", miss, sbCompleteRetries)
@@ -574,8 +533,8 @@ func (s *Service) sbCompleteLocked(r *sbRunner, leg string, atm OptionChainRow, 
 	r.tranches++
 	r.lastTranche = time.Now()
 	r.addStrike(atm.Strike)
-	r.event("COMPLETE", "build lopsided (CE %d / PE %d, net delta %+.2f): completing 1 lot %s @%.0f at best bid %.2f -- not held to the target",
-		view.BuildCE, view.BuildPE, view.NetDelta, leg, atm.Strike, bid)
+	r.event("COMPLETE", "build lopsided (CE %d / PE %d, net delta %+.2f): completing 1 lot %s @%.0f, limit the L5 bid %.2f (best %.2f) -- not held to the target",
+		view.BuildCE, view.BuildPE, view.NetDelta, leg, atm.Strike, sbRowL5(atm)[leg], bid)
 	if !r.isLive {
 		r.pms.ApplyFill(PMSFill{Token: tok, Strike: atm.Strike, OptionType: leg, Side: "SELL", Qty: lot, Price: bid, Role: "BUILD", Tranche: r.tranches})
 		r.dirty = true
@@ -583,12 +542,14 @@ func (s *Service) sbCompleteLocked(r *sbRunner, leg string, atm OptionChainRow, 
 	}
 	r.busy = true
 	tranche, tradeUID, symbol := r.tranches, r.tradeUID, r.cfg.Symbol
+	l5 := sbRowL5(atm)[leg] // the L5 bid is the limit (fills at the best bids above it)
 	go func() {
-		lim := bid
+		lim := l5
 		res := s.sbLiveSendOne(r, tradeUID, symbol, lot, tok, atm.Strike, leg, "SELL", lot, &lim, "BUILD")
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		if res.Filled > 0 {
+			r.rejects = 0
 			r.pms.ApplyFill(PMSFill{Token: tok, Strike: atm.Strike, OptionType: leg, Side: "SELL", Qty: res.Filled, Price: res.AvgPrice, Role: "BUILD", Tranche: tranche})
 			ceA, peA := r.pms.BuildAverages()
 			r.event("FILL", "LIVE COMPLETE %s SELL %d @%.2f (IOC limit %.2f) -- build avg CE %.2f + PE %.2f = %.2f vs target %.2f",
@@ -598,10 +559,7 @@ func (s *Service) sbCompleteLocked(r *sbRunner, leg string, atm OptionChainRow, 
 		case res.Unknown:
 			s.sbLiveHaltLocked(r, fmt.Sprintf("%s completion order unconfirmed: %s", leg, res.Reason))
 		case res.Status == "REJECTED":
-			if r.phase == "BUILDING" {
-				r.phase = "COMPLETE"
-			}
-			r.event("ORDER", "LIVE %s completion REJECTED (%s) -- building stopped; position stays monitored", leg, res.Reason)
+			r.sbRejectLocked(leg+" completion", res.Reason)
 		case res.Filled < lot:
 			r.event("COMPLETE", "%s completion lot not filled at %.2f (IOC cancelled) -- retrying next cycle", leg, lim)
 		}

@@ -151,7 +151,7 @@ func (s *Service) SaveSBRule(c SBConfig) (SBConfig, []string, error) {
 		if len(changes) > 0 {
 			r.event("RULE", "changed live: %s", strings.Join(changes, "; "))
 		}
-		if v := r.pms.View(nil); r.phase == "COMPLETE" && 2*c.Straddles-(v.BuildCE+v.BuildPE) >= int64(r.lotSize) {
+		if v := r.pms.View(nil); r.phase == "COMPLETE" && !r.noEntries && 2*c.Straddles-(v.BuildCE+v.BuildPE) >= int64(r.lotSize) {
 			r.phase = "BUILDING"
 			r.event("RULE", "target raised -- building resumed")
 		}

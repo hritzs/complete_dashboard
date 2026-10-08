@@ -65,19 +65,26 @@ func TestPlanDepthEntry_FitsRemaining(t *testing.T) {
 	}
 }
 
-// Section 10: one price test -- if the pair's VWAP is not above target,
-// nothing is sent and nothing smaller is tried.
-func TestPlanDepthEntry_PriceTestFailsNoSearch(t *testing.T) {
+// The full size's VWAP misses the target: the size steps down until the
+// pair's VWAP is above target (fill only as deep as the VWAP allows); each
+// leg's limit is the deepest bid that size reaches.
+func TestPlanDepthEntry_PriceTestStepsSizeDown(t *testing.T) {
 	in := baseEntry()
 	in.CEBids = lv(144.20, 100, 144.00, 1000)
 	in.PEBids = lv(134.40, 100, 134.10, 1000)
 	in.TargetStraddle = 278.25
 	p := PlanDepthEntry(in)
-	if p.Authorized {
-		t.Fatalf("should fail the weighted test: %s", p)
+	if !p.Authorized || p.CEQty != 260 || p.PEQty != 325 {
+		t.Fatalf("want the largest pair whose VWAP clears the target (CE 260 / PE 325): %s", p)
 	}
-	if p.CEQty == 0 || p.Weighted == 0 || p.Weighted > 278.25 {
-		t.Fatalf("expected one evaluated pair below target, got %d/%d weighted %.4f", p.CEQty, p.PEQty, p.Weighted)
+	if p.Weighted <= 278.25 || p.CEWorst != 144.00 || p.PEWorst != 134.10 {
+		t.Fatalf("VWAP %.4f, limits CE %.2f / PE %.2f (want the 2nd bids)", p.Weighted, p.CEWorst, p.PEWorst)
+	}
+	// even one lot each is below target: nothing is sent
+	in.CEBids = lv(144.20, 10, 144.00, 1000)
+	in.PEBids = lv(134.40, 10, 134.10, 1000)
+	if p := PlanDepthEntry(in); p.Authorized {
+		t.Fatalf("no size clears the target, must wait: %s", p)
 	}
 }
 

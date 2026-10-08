@@ -132,7 +132,7 @@ function PnlChart(props) {
             <g>
               <polyline fill="none" stroke={s.color} stroke-width="2" stroke-linejoin="round" stroke-linecap="round"
                 points={s.points.map((p) => `${sx(toMin(p.time))},${sy(p.pnl)}`).join(' ')} />
-              <For each={s.points.filter((p) => p.event && /HEDGE|EXIT|neutral/.test(p.event))}>
+              <For each={s.points.filter((p) => p.event && /HEDGE|EXIT|neutral|MTM SQF/.test(p.event))}>
                 {(p) => <circle cx={sx(toMin(p.time))} cy={sy(p.pnl)} r="4" fill={s.color} stroke="#14161a" stroke-width="2"><title>{`${s.label} ${p.time}: ${p.event}`}</title></circle>}
               </For>
             </g>
@@ -217,8 +217,12 @@ function SimDetail(props) {
           <Row k="Prices recorded at" v={cur().quote_ts || '—'} />
           <Row k="Min / max straddle" v={`${fmt(s().min_straddle)} / ${fmt(s().max_straddle)}`} />
           <div style={{ ...S.label, 'margin-top': '10px' }}>Rules</div>
-          <Row k="TP" v={`${fmt(s().tp_points)} pts · ${fmt(s().tp_bps, 0)} bps`} />
+          <Row k="TP" v={`${fmt(s().tp_points)} pts · ${fmt(s().tp_bps, 2)} bps`} />
           <Row k="SL" v={`${fmt(-s().sl_points)} pts · ${fmt(s().config.sl_bps, 0)} bps`} />
+          <Show when={s().config.mtm_sqf_on}>
+            <Row k="MTM square-off" v={`≥ ₹${fmt(s().mtm_sqf_floor)} (${fmt(s().config.mtm_sqf_level)} ${s().config.mtm_sqf_unit === 'rs' ? '₹' : s().config.mtm_sqf_unit}) · ${fmt(s().config.mtm_sqf_pct, 0)}%${s().mtm_sqf_time ? ` · fired ${s().mtm_sqf_time}, ${s().mtm_sqf_lots} lot(s)` : ' · waiting'}`} />
+            <Row k="MTM at bid/ask now" v={sgn(cur().exec_pnl)} cls={pnlCls(cur().exec_pnl)} />
+          </Show>
           <Row k="Hedge check" v={cur().hedge_check || '—'} cls={/BREACH/.test(cur().hedge_check || '') ? 'negative' : ''} />
           <Row k="Hedge target / qty" v={fmt(cur().hedge_target, 4)} />
           <Row k="Gamma" v={fmt(cur().net_gamma, 5)} />
@@ -241,7 +245,7 @@ function SimDetail(props) {
               <thead><tr>
                 <th>Time</th><th>Recorded at</th><th style={S.th}>Future</th><th style={S.th}>ATM</th><th style={S.th}>ATM CE</th><th style={S.th}>ATM PE</th>
                 <th style={S.th}>Pos K</th><th style={S.th}>CE</th><th style={S.th}>PE</th><th style={S.th}>Straddle</th>
-                <th style={S.th}>Option</th><th style={S.th}>Hedge</th><th style={S.th}>Total</th><th style={S.th}>Δ</th><th style={S.th}>Γ</th><th style={S.th}>Θ</th><th style={S.th}>V</th>
+                <th style={S.th}>Option</th><th style={S.th}>Hedge</th><th style={S.th}>Total</th><Show when={s().config.mtm_sqf_on}><th style={S.th} title="MTM if closed now at bid/ask">Exec MTM</th></Show><th style={S.th}>Δ</th><th style={S.th}>Γ</th><th style={S.th}>Θ</th><th style={S.th}>V</th>
                 <th style={S.th}>Hedge / qty</th><th style={S.th}>Out / allowed</th><th>Check</th><th>Event</th>
               </tr></thead>
               <tbody>
@@ -255,6 +259,7 @@ function SimDetail(props) {
                     <td style={S.th} class={pnlCls(p.option_pnl)}>{sgn(p.option_pnl)}</td>
                     <td style={S.th} class={pnlCls(p.hedge_pnl)}>{sgn(p.hedge_pnl)}</td>
                     <td style={{ ...S.th, 'font-weight': 600 }} class={pnlCls(p.pnl)}>{sgn(p.pnl)}</td>
+                    <Show when={s().config.mtm_sqf_on}><td style={S.th} class={pnlCls(p.exec_pnl)}>{sgn(p.exec_pnl)}</td></Show>
                     <td style={S.th}>{fmt(p.net_delta, 3)}</td><td style={S.th}>{fmt(p.net_gamma, 5)}</td><td style={S.th}>{fmt(p.net_theta, 2)}</td><td style={S.th}>{fmt(p.net_vega, 2)}</td>
                     <td style={S.th}>{fmt(p.hedge_fut_qty, 4)}</td>
                     <td style={S.th}>{p.points_allowed ? `${fmt(p.points_out, 1)} / ${fmt(p.points_allowed, 1)}` : '—'}</td>
@@ -310,6 +315,16 @@ export default function PaperSimTab() {
   const [view, setView] = createSignal('current');
   const [size, setSize] = createSignal('1');
   const [hedge, setHedge] = createSignal('synthetic');
+  // MTM square-off, applied to every simulated build; remembered per browser.
+  const saved = (k, d) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
+  const remember = (k, set) => (v) => { set(v); try { localStorage.setItem(k, v); } catch { /* storage unavailable */ } };
+  const [mtmLevel, setMtmLevelRaw] = createSignal(saved('paper.mtm.level', ''));
+  const [mtmUnit, setMtmUnitRaw] = createSignal(saved('paper.mtm.unit', 'rs'));
+  const [mtmPct, setMtmPctRaw] = createSignal(saved('paper.mtm.pct', '100'));
+  const setMtmLevel = remember('paper.mtm.level', setMtmLevelRaw);
+  const setMtmUnit = remember('paper.mtm.unit', setMtmUnitRaw);
+  const setMtmPct = remember('paper.mtm.pct', setMtmPctRaw);
+  const mtmQuery = () => (String(mtmLevel()).trim() === '' ? '' : `&mtm=${encodeURIComponent(mtmLevel())}&mtm_unit=${mtmUnit()}&mtm_pct=${encodeURIComponent(mtmPct() || '100')}`);
   const [data, setData] = createSignal(null);
   const [sel, setSel] = createSignal('overview');
   const [startAt, setStartAt] = createSignal('');
@@ -327,7 +342,7 @@ export default function PaperSimTab() {
     busy = true;
     try {
       const n = Math.max(1, Number(size()) || 1);
-      const d = await (await fetch(`/api/paper/sim?day=${day()}&expiry=${view()}&lots=${n}&size=${n}&hedge=${hedge()}`)).json();
+      const d = await (await fetch(`/api/paper/sim?day=${day()}&expiry=${view()}&lots=${n}&size=${n}&hedge=${hedge()}${mtmQuery()}`)).json();
       if (d.success) {
         for (const s of d.sims || []) colorOf(s.config.id);
         setData(d);
@@ -394,6 +409,17 @@ export default function PaperSimTab() {
         <Field label="Expiry"><Seg value={view()} onChange={reload(setView)} options={[['current', 'Current'], ['next', 'Next week']]} /></Field>
         <Field label="Size (qty)"><input class="symbol-select" style={{ width: '90px' }} type="number" min="1" value={size()} onInput={(e) => setSize(e.currentTarget.value)} onChange={load} title="1 = one straddle (per-qty values); 65 = one NIFTY lot" /></Field>
         <Field label="Hedge"><Seg value={hedge()} onChange={reload(setHedge)} options={[['synthetic', 'Synthetic'], ['lots', 'ATM lots'], ['off', 'Off']]} /></Field>
+        <Field label="MTM square-off (every build)">
+          <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
+            <input class="symbol-select" style={{ width: '90px' }} type="number" step="any" placeholder="off" value={mtmLevel()}
+              onInput={(e) => setMtmLevel(e.currentTarget.value)} onChange={load}
+              title="Close the trade lot by lot at bid/ask once it can end with total MTM at or above this level (may be negative). Blank = off." />
+            <Seg value={mtmUnit()} onChange={reload(setMtmUnit)} options={[['rs', '₹'], ['pts', 'pts'], ['bps', 'bps']]} />
+            <input class="symbol-select" style={{ width: '60px' }} type="number" min="1" max="100" value={mtmPct()}
+              onInput={(e) => setMtmPct(e.currentTarget.value)} onChange={load} title="% of the position to square off (100 = complete)" />
+            <span style={S.muted}>%</span>
+          </div>
+        </Field>
         <Show when={day() === today()}>
           <Field label="Start at">
             <div style={{ display: 'flex', gap: '6px' }}>

@@ -3,72 +3,10 @@ package trading
 import (
 	"fmt"
 	"math"
-	"math/rand"
 	"path/filepath"
 	"testing"
 	"time"
 )
-
-func TestSBLotLimit_StrictlyAboveTarget(t *testing.T) {
-	// First CE lot, PE has nothing yet (its planned floor 94.25 stands in):
-	// bound 170 - 94.25 = 75.75 -> lowest tick strictly above = 75.80,
-	// but never below the depth floor 76.00.
-	if got := sbLotLimit(170, 0, 0, 94.25, 65, 76.00); got != 76.00 {
-		t.Fatalf("limit %v, want 76.00 (floor)", got)
-	}
-	if got := sbLotLimit(170, 0, 0, 94.25, 65, 70.00); got != 75.80 {
-		t.Fatalf("limit %v, want 75.80", got)
-	}
-	// Exactly on a tick: 170 - 94.30 = 75.70 -> must be 75.75, never 75.70 (equal).
-	if got := sbLotLimit(170, 0, 0, 94.30, 65, 0); got != 75.75 {
-		t.Fatalf("limit %v, want 75.75 (strictly above, not equal)", got)
-	}
-	// Second CE lot after one at 77.00, PE avg 92.50: new avg must be > 77.50,
-	// so this lot > 78.00 -> 78.05.
-	if got := sbLotLimit(170, 65, 77.00, 92.50, 65, 0); got != 78.05 {
-		t.Fatalf("limit %v, want 78.05", got)
-	}
-}
-
-// Every lot fills EXACTLY at its limit (worst case for an IOC sell): once
-// both legs have fills, avg CE + avg PE stays strictly above the target.
-func TestSBLotLimit_InvariantHolds(t *testing.T) {
-	rng := rand.New(rand.NewSource(7))
-	for trial := 0; trial < 300; trial++ {
-		target := 150 + rng.Float64()*100
-		lot := int64(65)
-		var ceQ, peQ int64
-		var ceAvg, peAvg float64
-		ceFloor := math.Round((target/2-5+rng.Float64()*10)*20) / 20
-		peFloor := math.Round((target/2-5+rng.Float64()*10)*20) / 20
-		for i := 0; i < 20; i++ {
-			leg := "CE"
-			if rng.Intn(2) == 1 {
-				leg = "PE"
-			}
-			if leg == "CE" {
-				other := peAvg
-				if peQ == 0 {
-					other = peFloor
-				}
-				px := sbLotLimit(target, ceQ, ceAvg, other, lot, ceFloor)
-				ceAvg = (ceAvg*float64(ceQ) + px*float64(lot)) / float64(ceQ+lot)
-				ceQ += lot
-			} else {
-				other := ceAvg
-				if ceQ == 0 {
-					other = ceFloor
-				}
-				px := sbLotLimit(target, peQ, peAvg, other, lot, peFloor)
-				peAvg = (peAvg*float64(peQ) + px*float64(lot)) / float64(peQ+lot)
-				peQ += lot
-			}
-			if ceQ > 0 && peQ > 0 && !(ceAvg+peAvg > target+1e-9) {
-				t.Fatalf("trial %d step %d: avg CE %.4f + PE %.4f = %.4f not above target %.4f", trial, i, ceAvg, peAvg, ceAvg+peAvg, target)
-			}
-		}
-	}
-}
 
 func TestSBFlattenOrders_BuysFirst(t *testing.T) {
 	v := PMSView{Legs: []PMSLeg{
@@ -104,26 +42,6 @@ func TestSBRounds_PairsTogetherThenExtras(t *testing.T) {
 	}
 	if fmt.Sprint(sbRounds(2, 2)) != "[[CE PE] [CE PE]]" {
 		t.Fatal("2+2 must be two pairs")
-	}
-}
-
-func TestSBPairLimits_StrictlyAboveTarget(t *testing.T) {
-	// fresh build: bids 43.05 + 37.30 = 80.35 vs target 80
-	x, y, ok := sbPairLimits(80, 0, 0, 0, 0, 65, 43.05, 37.30)
-	if !ok || x > 43.05 || y > 37.30 || x+y <= 80+1e-9 {
-		t.Fatalf("x=%.2f y=%.2f ok=%v", x, y, ok)
-	}
-	// at the target exactly: no pair
-	if _, _, ok := sbPairLimits(80, 0, 0, 0, 0, 65, 43.00, 37.00); ok {
-		t.Fatal("80.00 is not strictly above 80")
-	}
-	// existing build CE 65@43.05 + PE 65@37.05 (80.10): new pair must keep avg sum > 80
-	x, y, ok = sbPairLimits(80, 65, 43.05, 65, 37.05, 65, 42.5, 37.6)
-	if !ok {
-		t.Fatal("expected a pair")
-	}
-	if (43.05+x)/2+(37.05+y)/2 <= 80 {
-		t.Fatalf("avg sum %.4f not above 80", (43.05+x)/2+(37.05+y)/2)
 	}
 }
 
@@ -169,4 +87,92 @@ func TestSBExecuteLive_PairDoesNotDeadlock(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("live tranche never finished: runner still busy (deadlock)")
+}
+
+// 2026-10-08 12:44: a cushion from earlier fills priced a CE lot at 116.05
+// (LTP 145) -> broker RMS reject. Each lot is now limited at the tranche
+// plan's own price for its leg; a best bid below it stops the tranche.
+func TestSBPlanLimits(t *testing.T) {
+	plan := DepthEntryPlan{CEQty: 2080, PEQty: 2080, CEWorst: 144.85, PEWorst: 147.90}
+	lim, why := sbPlanLimits([]string{"CE", "PE"}, plan, map[string]float64{"CE": 144.95, "PE": 148.00})
+	if why != "" || lim["CE"] != 144.85 || lim["PE"] != 147.90 {
+		t.Fatalf("limits must be the plan's prices: %v %q", lim, why)
+	}
+	if _, why := sbPlanLimits([]string{"CE"}, plan, map[string]float64{"CE": 144.80, "PE": 148.00}); why == "" {
+		t.Fatal("best bid below the planned price: stop and re-plan, never sell lower")
+	}
+	if _, why := sbPlanLimits([]string{"PE"}, DepthEntryPlan{CEWorst: 144.85}, map[string]float64{"PE": 148}); why == "" {
+		t.Fatal("a leg with no planned price must not be sent")
+	}
+}
+
+// L5 (completion lots, not held to the target): the lowest of the top 5 bids.
+func TestSBRowL5(t *testing.T) {
+	bids := func(p ...float64) *DepthBook {
+		d := &DepthBook{}
+		for _, x := range p {
+			d.Bids = append(d.Bids, DepthLevel{Price: x, Qty: 650})
+		}
+		return d
+	}
+	row := OptionChainRow{CEDepth: bids(144.75, 144.70, 144.65, 144.60, 144.55, 144.00), PEDepth: bids(148.35, 148.30)}
+	if l5 := sbRowL5(row); l5["CE"] != 144.55 || l5["PE"] != 148.30 {
+		t.Fatalf("L5 = lowest of the top 5 bids (level 6 ignored; fewer levels -> deepest shown): %v", l5)
+	}
+}
+
+// A rejection ends only its tranche; sbMaxRejects in a row stop building.
+func TestSBRejectContinuesBuilding(t *testing.T) {
+	r := newSBRunner(SBConfig{ID: "T"})
+	r.phase = "BUILDING"
+	for i := 1; i < sbMaxRejects; i++ {
+		r.sbRejectLocked("CE order", "RMS")
+		if r.phase != "BUILDING" {
+			t.Fatalf("rejection %d must not stop the build", i)
+		}
+	}
+	r.rejects = 0 // a fill in between resets the streak
+	r.sbRejectLocked("CE order", "RMS")
+	if r.phase != "BUILDING" {
+		t.Fatal("streak reset by a fill: still building")
+	}
+	for i := 0; i < sbMaxRejects; i++ {
+		r.sbRejectLocked("CE order", "margin")
+	}
+	if r.phase != "COMPLETE" {
+		t.Fatalf("%d rejections in a row must stop building, phase %s", sbMaxRejects, r.phase)
+	}
+}
+
+// Stop rule: no more entry orders of any kind; a later quantity raise does
+// not resume; a handed-off rule can be stopped too (monitoring untouched).
+func TestSBStopRuleNoMoreEntries(t *testing.T) {
+	t.Setenv("SBUILD_RULES_PATH", filepath.Join(t.TempDir(), "sbuild_rules.json"))
+	s := &Service{}
+	r := newSBRunner(SBConfig{ID: "STOPT", Symbol: "NIFTY", TargetStraddle: 290, Straddles: 650})
+	r.isLive, r.phase, r.lotSize, r.tradeUID = true, "BUILDING", 65, "SB-STOPT"
+	sbEng.mu.Lock()
+	if sbEng.runners == nil {
+		sbEng.runners = map[string]*sbRunner{}
+	}
+	sbEng.runners["STOPT"] = r
+	sbEng.order = append(sbEng.order, "STOPT")
+	sbEng.mu.Unlock()
+	defer sbEng.remove("STOPT")
+	if err := s.StopStraddleBuild("STOPT"); err != nil {
+		t.Fatal(err)
+	}
+	if r.phase != "COMPLETE" || !r.noEntries {
+		t.Fatalf("phase %s noEntries %v", r.phase, r.noEntries)
+	}
+	if _, _, err := s.SaveSBRule(SBConfig{ID: "STOPT", Symbol: "NIFTY", TargetStraddle: 290, Straddles: 1300}); err != nil {
+		t.Fatal(err)
+	}
+	if r.phase != "COMPLETE" {
+		t.Fatalf("a stopped rule must not resume on a raised quantity: phase %s", r.phase)
+	}
+	r.phase, r.noEntries = sbPhaseHandedOff, false
+	if err := s.StopStraddleBuild("STOPT"); err != nil || !r.noEntries || r.phase != sbPhaseHandedOff {
+		t.Fatalf("handed-off rule: err %v noEntries %v phase %s", err, r.noEntries, r.phase)
+	}
 }

@@ -38,6 +38,10 @@ type lutDayState struct {
 	U0916    float64   `json:"underlying_0916"`
 	OGSource string    `json:"og_source"`
 	Entry    *LUTEntry `json:"entry,omitempty"`
+	// Build: the day's one REAL build fired by the LUT (lut_build.go).
+	Build *LUTBuildRun `json:"build,omitempty"`
+	// Tests: user test fires of the LUT build (real orders, not the YES).
+	Tests []*LUTBuildRun `json:"tests,omitempty"`
 }
 
 var lutCSVHeader = []string{
@@ -58,7 +62,7 @@ func lutCSVRow(day string, ev LUTEvaluation) []string {
 	return []string{
 		day, ev.Time, ev.Stage, answer, ev.Skip, f(ev.Underlying, 2), f(ev.Strike, 0), f(ev.CELTP, 2), f(ev.PELTP, 2), ev.OTMLeg, f(ev.OTMPrice, 2),
 		f(ev.RawDTE, 4), f(ev.TradingDTE, 4), f(ev.AdjFactor, 4), f(ev.BuildIV, 4), f(ev.AdjBuildIV, 4), ev.BldLabel, f(ev.IVRatio, 4), ev.IVLabel,
-		f(ev.Straddle, 2), f(ev.StrRatio, 4), ev.StrLabel, f(ev.NormOG, 4), ev.OGLabel, f(ev.AdjIVChg, 5), ev.AdjLabel, ev.CoordText, f(ev.TPBps, 0),
+		f(ev.Straddle, 2), f(ev.StrRatio, 4), ev.StrLabel, f(ev.NormOG, 4), ev.OGLabel, f(ev.AdjIVChg, 5), ev.AdjLabel, ev.CoordText, f(ev.TPBps, 2),
 	}
 }
 

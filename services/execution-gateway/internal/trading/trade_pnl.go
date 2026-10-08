@@ -65,6 +65,8 @@ func classifyExecutionKind(phase, intentID string) string {
 		return "EXIT"
 	case wingPhase:
 		return "WING"
+	case "MANUAL_LEG":
+		return "MANUAL"
 	}
 	id := strings.ToUpper(strings.TrimSpace(intentID))
 	switch {
@@ -143,6 +145,7 @@ func computeLegPnLWhere(execs []OrderExecution, keep func(OrderExecution) bool) 
 		}
 	}
 
+	booked := bookedRealized(execs, keep)
 	out := map[string]*LegPnL{}
 	for k, a := range legs {
 		p := &LegPnL{Leg: a.leg, Token: a.token, Strike: a.strike, SoldQty: a.sellQ, BoughtQty: a.buyQ, NetShortQty: a.sellQ - a.buyQ}
@@ -152,12 +155,98 @@ func computeLegPnLWhere(execs []OrderExecution, keep func(OrderExecution) bool) 
 		if a.buyQ > 0 {
 			p.BoughtAvg = round2(a.buyV / float64(a.buyQ))
 		}
-		if matched := minInt64(a.sellQ, a.buyQ); matched > 0 {
-			p.Realized = round2((a.sellV/float64(a.sellQ) - a.buyV/float64(a.buyQ)) * float64(matched))
-		}
+		p.Realized = round2(booked[k])
 		out[k] = p
 	}
 	return out
+}
+
+// bookedRealized is the PnL actually BOOKED per leg. Only exits book it --
+// PSQF, a complete square-off, the MTM square-off (kind EXIT; also wing
+// closes for the separate wing figure, and untagged legacy rows) -- in
+// proportion to the share of the position they close. Build, hedge and
+// manual fills only move the position and its average cost: a hedge that
+// buys back or adds on the same strike books nothing (the position is
+// still there), and a hedge leg taken to zero by another hedge leaves its
+// PnL in an unbooked pool, booked with the trade's next exits pro rata.
+// After a complete exit, booked = the trade's whole PnL (hedges in).
+func bookedRealized(execs []OrderExecution, keep func(OrderExecution) bool) map[string]float64 {
+	type pos struct {
+		net   int64   // sold - bought (>0 short, <0 long)
+		basis float64 // cash from non-exit fills behind the open quantity
+	}
+	legs := map[string]*pos{}
+	booked := map[string]float64{}
+	unbooked := 0.0
+	openTotal := func() int64 {
+		var t int64
+		for _, p := range legs {
+			t += abs64(p.net)
+		}
+		return t
+	}
+	for _, e := range execs {
+		if e.FilledQty <= 0 || e.AvgPrice <= 0 || e.Leg == "" || !keep(e) {
+			continue
+		}
+		var signed int64
+		switch strings.ToUpper(e.Side) {
+		case "SELL":
+			signed = e.FilledQty
+		case "BUY":
+			signed = -e.FilledQty
+		default:
+			continue
+		}
+		k := legKey(e.Leg, e.token)
+		p := legs[k]
+		if p == nil {
+			p = &pos{}
+			legs[k] = p
+		}
+		unit := e.AvgPrice // cash per contract: + sell, - buy
+		if signed < 0 {
+			unit = -unit
+		}
+		kind := e.Kind
+		if kind == "" {
+			kind = classifyExecutionKind(e.phase, e.intentID)
+		}
+		qty := abs64(signed)
+		// Entries, hedges and manual legs never book; exits (and wing
+		// closes, untagged legacy rows) book what they close.
+		books := kind != "ENTRY" && kind != "HEDGE" && kind != "MANUAL"
+		if books && p.net != 0 && (p.net > 0) != (signed > 0) {
+			q := min(qty, abs64(p.net))
+			total := openTotal()
+			r := float64(q) / float64(abs64(p.net))
+			b := r*p.basis + unit*float64(q)
+			if total > 0 {
+				f := float64(q) / float64(total)
+				b += unbooked * f
+				unbooked -= unbooked * f
+			}
+			booked[k] += b
+			p.basis -= r * p.basis
+			if signed > 0 {
+				p.net += q
+			} else {
+				p.net -= q
+			}
+			qty -= q
+			if qty == 0 {
+				continue
+			}
+			signed = qty * map[bool]int64{true: 1, false: -1}[signed > 0] // a flip opens the rest
+		}
+		p.net += signed
+		p.basis += unit * float64(qty)
+		if p.net == 0 {
+			unbooked += p.basis // closed by a non-exit fill: not booked
+			p.basis = 0
+		}
+	}
+	return booked
 }
 
 func totalRealizedPnL(legs map[string]*LegPnL) float64 {
@@ -176,6 +265,10 @@ func closeReasonForStatus(status string) string {
 		return "TAKE PROFIT"
 	case "CLOSED_TIME":
 		return "TIME EXIT"
+	case "CLOSED_MTM":
+		return "MTM EXIT"
+	case "CLOSED_STRADDLE":
+		return "ATM STRADDLE EXIT"
 	case "CLOSEDSQF", "CLOSED_SQF", "CLOSED", "CLOSED_MANUAL":
 		return "MANUAL SQUARE-OFF"
 	case sbStatusClosed:

@@ -1,8 +1,11 @@
 import { createSignal, onCleanup, onMount, Show, For } from 'solid-js';
+import LutActualBuild from './LutActualBuild.jsx';
 
-// LUT Entry Check -- PAPER ONLY, always on. The gateway re-evaluates on every
-// chain update (100ms) and pushes a "lut_update" over the UI websocket; this
-// tab just renders it. Nothing is ever executed from here.
+// LUT Entry Check, always on. The gateway re-evaluates on every chain update
+// (100ms) and pushes a "lut_update" over the UI websocket; this tab renders
+// it. The check itself is paper; the separate "Actual build" panel
+// (LutActualBuild.jsx), when ARMED, turns the day's first YES into a real
+// build.
 
 const fmt = (v, d = 2) => {
   const n = Number(v);
@@ -246,7 +249,7 @@ export default function LutBuildTab() {
                         <td><strong>₹{fmt(g.straddle_from)} – ₹{fmt(g.straddle_to)}</strong></td>
                         <td>{fmt(g.build_iv_from, 4)} – {fmt(g.build_iv_to, 4)}</td>
                         <td>{fmt(g.adj_iv_from, 4)} – {fmt(g.adj_iv_to, 4)}</td>
-                        <td>{fmt(g.tp_bps_from, 0)} – {fmt(g.tp_bps_to, 0)}</td>
+                        <td>{fmt(g.tp_bps_from, 2)} – {fmt(g.tp_bps_to, 2)}</td>
                         <td class={rowGap(g)[1] ? 'positive' : ''}>{rowGap(g)[0]}</td>
                       </tr>
                     )}
@@ -288,7 +291,7 @@ export default function LutBuildTab() {
           <div style={{ 'margin-top': '6px' }}>
             NIFTY {d().expiry} <strong>{fmt(d().strike, 0)}</strong> — SELL CE {d().qty} (bid {fmt(d().ce_bid)} / ask {fmt(d().ce_ask)}) + SELL PE {d().qty} (bid {fmt(d().pe_bid)} / ask {fmt(d().pe_ask)})
           </div>
-          <div>{d().lots} lot(s) × {d().lot_size} · future {fmt(d().underlying)} · adjusted build IV {fmt(d().evaluation?.adj_build_iv, 4)}</div>
+          <div>{d().lots} lot(s) × {d().lot_size} · future {fmt(d().underlying)} · build IV {fmt(d().evaluation?.build_iv, 4)} · adjusted build IV {fmt(d().evaluation?.adj_build_iv, 4)}</div>
           <div>Exit: SL {fmt(d().sl_bps, 0)} bps = {fmt(d().sl_points)} pts (₹{fmt(d().sl_rupees, 0)}) · TP {fmt(d().tp_bps, 0)} bps = {fmt(d().tp_points)} pts (₹{fmt(d().tp_rupees, 0)})</div>
         </div>
       </Show>
@@ -327,11 +330,11 @@ export default function LutBuildTab() {
           <KV k="DTE raw / trading" v={`${fmt(ev().raw_dte, 3)} / ${fmt(ev().trading_dte, 3)}`} tag={`DTE ${ev().dte_label}`} />
           <KV k="Weekend adj factor √(raw/trading)" v={fmt(ev().adj_factor, 4)} />
           <KV k="Build IV (raw, BS from OTM)" v={fmt(ev().build_iv, 4)} />
-          <KV k="Build IV adjusted (used)" v={fmt(ev().adj_build_iv, 4)} tag={ev().bld_label} />
+          <KV k="Build IV adjusted (entry + TP)" v={fmt(ev().adj_build_iv, 4)} tag={ev().bld_label} />
           <KV k="IV ratio = adj IV / IDV" v={fmt(ev().iv_ratio, 4)} tag={ev().iv_label} />
-          <KV k="ATM straddle (BS, that IV)" v={fmt(ev().straddle)} />
+          <KV k="ATM straddle (CE LTP + PE LTP)" v={fmt(ev().straddle)} />
           <KV k="Straddle ratio = prev / now" v={fmt(ev().str_ratio, 4)} tag={ev().str_label} />
-          <KV k="TP if entered now" v={`${fmt(ev().tp_bps, 0)} bps = ${fmt(ev().underlying * ev().tp_bps / 10000)} pts`} />
+          <KV k="TP if entered now" v={`${fmt(ev().tp_bps, 2)} bps = ${fmt(ev().underlying * ev().tp_bps / 10000)} pts`} />
           <KV k="SL if entered now" v={`${fmt(params()?.sl_bps, 0)} bps = ${fmt(ev().underlying * (params()?.sl_bps || 0) / 10000)} pts`} />
           <KV k="Coordinate (DTE,IV,STR,BLD,OG,ADJ)" v={ev().coord_text} />
         </div>
@@ -430,7 +433,7 @@ export default function LutBuildTab() {
           <table class="trade-position-table">
             <thead>
               <tr>
-                <th>Time</th><th>Table</th><th>Answer</th><th>Future</th><th>ATM</th><th>CE / PE</th><th>Adj build IV</th>
+                <th>Time</th><th>Table</th><th>Answer</th><th>Future</th><th>ATM</th><th>CE / PE</th><th>Build IV</th><th>Adj build IV</th>
                 <th>IV ratio</th><th>Straddle</th><th>Str ratio</th><th>DTE / OG / Adj</th><th>Coord</th><th>TP bps</th>
               </tr>
             </thead>
@@ -440,18 +443,19 @@ export default function LutBuildTab() {
                   <tr>
                     <td>{e.time}</td>
                     <td>{e.stage}</td>
-                    <Show when={!e.skip} fallback={<td colSpan="11" style={{ opacity: 0.7 }}>no check: {e.skip}</td>}>
+                    <Show when={!e.skip} fallback={<td colSpan="12"style={{ opacity: 0.7 }}>no check: {e.skip}</td>}>
                       <td class={e.allowed ? 'positive' : 'negative'}><strong>{e.allowed ? 'YES' : 'NO'}</strong></td>
                       <td>{fmt(e.underlying)}</td>
                       <td>{fmt(e.strike, 0)}</td>
                       <td>{fmt(e.ce_ltp)} / {fmt(e.pe_ltp)}</td>
+                      <td>{fmt(e.build_iv, 4)}</td>
                       <td>{fmt(e.adj_build_iv, 4)} <span style={muted}>{e.bld_label}</span></td>
                       <td>{fmt(e.iv_ratio, 4)} <span style={muted}>{e.iv_label}</span></td>
                       <td>{fmt(e.straddle)}</td>
                       <td>{fmt(e.str_ratio, 4)} <span style={muted}>{e.str_label}</span></td>
                       <td>{e.dte_label} / {e.og_label} / {e.adj_label}</td>
                       <td>{e.coord_text}</td>
-                      <td>{fmt(e.tp_bps, 0)}</td>
+                      <td>{fmt(e.tp_bps, 2)}</td>
                     </Show>
                   </tr>
                 )}
@@ -507,7 +511,7 @@ export default function LutBuildTab() {
       <div class="panel-header">
         <div class="panel-title">
           LUT Entry Check
-          <span style={{ 'font-size': '12px', padding: '2px 8px', 'border-radius': '10px', background: '#5d4037', 'margin-left': '8px' }}>PAPER — YES / NO only, never executed</span>
+          <span style={{ 'font-size': '12px', padding: '2px 8px', 'border-radius': '10px', background: '#5d4037', 'margin-left': '8px' }}>YES / NO check — real orders only via the armed Actual build below</span>
         </div>
         <div class="panel-subtitle">
           Always on: re-evaluated on every chain tick and shown live. The first tick of each minute 09:16–13:30 is recorded; the first YES of the day is the paper entry.
@@ -537,6 +541,7 @@ export default function LutBuildTab() {
       <SellZone r={lastSell()} />
       <Show when={lastSell0920() && lastSell()?.table !== '09:20+'}><SellZone r={lastSell0920()} /></Show>
       <Entry />
+      <LutActualBuild />
       <Inputs />
       <Grid g={lastGrid()} />
       <Show when={ev() && !ev().skip && !ev().allowed}>

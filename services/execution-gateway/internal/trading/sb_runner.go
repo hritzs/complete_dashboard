@@ -102,6 +102,17 @@ type SBEvent struct {
 	Text string `json:"text"`
 }
 
+// SBReject is the latest broker rejection of a build order, shown on the
+// rule card with the broker's own reason.
+type SBReject struct {
+	Time    string `json:"time"`
+	What    string `json:"what"`   // "CE order" / "PE completion"
+	Reason  string `json:"reason"` // broker text, verbatim
+	Streak  int    `json:"streak"` // rejections in a row (no fill between)
+	Max     int    `json:"max"`    // sbMaxRejects: the streak that stops building
+	Stopped bool   `json:"stopped"`
+}
+
 // SBState is what the tab shows for one rule.
 type SBState struct {
 	RuleID    string            `json:"rule_id"`
@@ -110,7 +121,8 @@ type SBState struct {
 	Busy      bool              `json:"busy"`
 	Pending   []sbPendingOrder  `json:"pending,omitempty"`
 	Halt      string            `json:"halt,omitempty"`
-	LiveCap   int64             `json:"live_max_lots"`
+	Reject    *SBReject         `json:"last_reject,omitempty"`
+	NoEntries bool              `json:"no_entries,omitempty"`
 	Phase     string            `json:"phase"`
 	Config    SBConfig          `json:"config"`
 	Date      string            `json:"date,omitempty"`
@@ -169,6 +181,12 @@ type sbRunner struct {
 	busy       bool             // orders in flight (background); the cycle waits
 	pending    []sbPendingOrder // sent, outcome not yet confirmed (write-ahead)
 	haltReason string
+	rejects    int       // consecutive rejected build orders (sbMaxRejects stops)
+	lastReject *SBReject // shown on the rule card
+	// noEntries: the user stopped the rule -- no entry order of any kind
+	// (tranche, completion lot, resume on a raised quantity) for this run.
+	// The position's monitoring (here or in Portfolio) is untouched.
+	noEntries bool
 	// handoffNoted: the "not handed off" reason was logged once.
 	handoffNoted bool
 	followAt     time.Time // last check of the handed-off trade's status
@@ -323,9 +341,6 @@ func (s *Service) StartStraddleBuild(id string, live bool, confirm string) error
 		if strings.TrimSpace(confirm) != sbLiveConfirm {
 			return fmt.Errorf("LIVE needs the confirmation text %q", sbLiveConfirm)
 		}
-		if maxLots := sbLiveMaxLots(); c.Straddles/lot > maxLots {
-			return fmt.Errorf("LIVE size %d lots per leg is above the cap %d (SBUILD_LIVE_MAX_LOTS)", c.Straddles/lot, maxLots)
-		}
 		if !sbLiveWindow(time.Now().In(lutIST())) {
 			return fmt.Errorf("LIVE can only start in the broker session (09:15-15:40)")
 		}
@@ -361,6 +376,7 @@ func (s *Service) StartStraddleBuild(id string, live bool, confirm string) error
 	r.lastPlan, r.lastAuth, r.risk, r.events = nil, nil, map[string]string{}, nil
 	r.lotSize, r.expiry, r.atm, r.spot, r.buildATM, r.strikes, r.errText = int(lot), "", 0, 0, 0, nil, ""
 	r.isLive, r.tradeUID, r.busy, r.pending, r.haltReason = live, liveTrade.TradeUID, false, nil, ""
+	r.rejects, r.lastReject, r.noEntries = 0, nil, false
 	r.handoffNoted = false
 	if live {
 		r.event("LIVE", "LIVE run started -- REAL ORDERS on account %s, trade %s: %s target straddle %.2f (sold straddle avg CE + avg PE always STRICTLY above it; IOC limit per lot), straddle qty %d (%d lots) = %d contracts, exit %s",
@@ -387,13 +403,23 @@ func (s *Service) StopStraddleBuild(id string) error {
 	defer r.mu.Unlock()
 	if r.isLive {
 		switch r.phase {
-		case "BUILDING", "PAUSED":
-			r.phase = "COMPLETE"
-			r.event("INFO", "LIVE build stopped by user -- no more entry orders; the position stays monitored (hedge / SL / TP / exit time). Use Exit now to flatten.")
+		case "BUILDING", "PAUSED", "COMPLETE", "EXITING", sbPhaseHandedOff:
+			if r.noEntries {
+				return nil
+			}
+			if r.phase == "BUILDING" || r.phase == "PAUSED" {
+				r.phase = "COMPLETE"
+			}
+			r.noEntries = true
+			v := r.pms.View(r.chain)
+			where := "the position stays monitored here (hedge / SL / TP / exit time)"
+			if r.phase == sbPhaseHandedOff {
+				where = "the position stays monitored in Portfolio as trade " + r.tradeUID
+			}
+			r.event("INFO", "RULE STOPPED by user -- no more entry orders from this rule (built CE %d + PE %d of %d); %s. Use Exit to flatten.%s",
+				v.BuildCE, v.BuildPE, 2*r.cfg.Straddles, where, map[bool]string{true: " Orders already in flight finish first.", false: ""}[r.busy])
 			r.persistLocked()
 			return nil
-		case "COMPLETE", "EXITING":
-			return fmt.Errorf("LIVE position is open and monitored -- use Exit now to flatten it")
 		case "HALTED":
 			r.phase = "STOPPED"
 			r.event("INFO", "HALT acknowledged by user (%s) -- run stopped; nothing was sent. Reconcile trade %s with the broker.", r.haltReason, r.tradeUID)
@@ -672,7 +698,7 @@ func (s *Service) sbCycleOneLocked(r *sbRunner, chain *OptionChainSnapshot, err 
 	}
 
 	// 2. Next tranche, always at the CURRENT ATM.
-	if r.phase != "BUILDING" || time.Since(r.lastTranche) < time.Duration(cfg.TrancheGapMs)*time.Millisecond {
+	if r.phase != "BUILDING" || r.noEntries || time.Since(r.lastTranche) < time.Duration(cfg.TrancheGapMs)*time.Millisecond {
 		return
 	}
 	view := r.pms.View(chain)
@@ -800,16 +826,8 @@ func (s *Service) sbExecuteShadowLocked(r *sbRunner, plan DepthEntryPlan, atm *O
 		"PE": {levels: atm.PEDepth.Bids, floor: plan.PEWorst},
 	}
 	filled := map[string]int64{}
-	bestBid := map[string]float64{"CE": atm.CEDepth.Bids[0].Price, "PE": atm.PEDepth.Bids[0].Price}
 	for _, leg := range seq {
 		c := cur[leg]
-		other := "PE"
-		if leg == "PE" {
-			other = "CE"
-		}
-		// Same strict rule as LIVE: this lot may not pull avg CE + avg PE
-		// to or below the target.
-		c.floor = r.sbNextLotLimit(leg, plan, bestBid[other])
 		remaining, value := lot, 0.0
 		for remaining > 0 && c.i < len(c.levels) {
 			l := c.levels[c.i]
@@ -1006,7 +1024,7 @@ func (r *sbRunner) stateLocked(trim bool) SBState {
 	}
 	st := SBState{
 		RuleID: r.cfg.ID, Mode: map[bool]string{false: "SHADOW", true: "LIVE"}[r.isLive], Phase: r.phase,
-		TradeUID: r.tradeUID, Busy: r.busy, Pending: append([]sbPendingOrder(nil), r.pending...), Halt: r.haltReason, LiveCap: sbLiveMaxLots(), Config: r.cfg, Date: r.date, Now: time.Now().In(lutIST()).Format("15:04:05.0"),
+		TradeUID: r.tradeUID, Busy: r.busy, Pending: append([]sbPendingOrder(nil), r.pending...), Halt: r.haltReason, Reject: r.lastReject, NoEntries: r.noEntries, Config: r.cfg, Date: r.date, Now: time.Now().In(lutIST()).Format("15:04:05.0"),
 		TargetQty: 2 * r.cfg.Straddles, LotSize: r.lotSize, Expiry: r.expiry, ATM: r.atm, Spot: r.spot,
 		Strikes: append([]float64(nil), r.strikes...), Tranches: r.tranches, LastPlan: r.lastPlan, LastAuth: r.lastAuth, Risk: r.risk,
 		Events: append([]SBEvent(nil), events...), Fills: r.pms.Fills(), Error: r.errText, Live: r.live,
@@ -1047,6 +1065,8 @@ type sbRunFile struct {
 	TradeUID  string            `json:"trade_uid,omitempty"`
 	Pending   []sbPendingOrder  `json:"pending,omitempty"`
 	Halt      string            `json:"halt,omitempty"`
+	Reject    *SBReject         `json:"last_reject,omitempty"`
+	NoEntries bool              `json:"no_entries,omitempty"`
 }
 
 func sbRunDir() string { return filepath.Join(filepath.Dir(sbRulesPath()), "sbuild_runs") }
@@ -1064,7 +1084,7 @@ func (r *sbRunner) persistLocked() {
 		RuleID: r.cfg.ID, Date: r.date, Config: r.cfg, Phase: r.phase, StartedAt: r.startedAt, ResumedAt: r.resumedAt,
 		Tranches: r.tranches, LotSize: r.lotSize, Expiry: r.expiry, BuildATM: r.buildATM, Strikes: r.strikes,
 		Fills: r.pms.Fills(), Marks: r.pms.Marks(), Risk: r.risk, LastAuth: r.lastAuth, Events: r.events, SavedAt: time.Now(),
-		Live: r.isLive, TradeUID: r.tradeUID, Pending: r.pending, Halt: r.haltReason,
+		Live: r.isLive, TradeUID: r.tradeUID, Pending: r.pending, Halt: r.haltReason, Reject: r.lastReject, NoEntries: r.noEntries,
 	}
 	b, err := json.Marshal(f)
 	if err != nil {
@@ -1106,6 +1126,7 @@ func (r *sbRunner) restoreLocked() {
 	r.tranches, r.lotSize, r.expiry, r.buildATM, r.strikes = f.Tranches, f.LotSize, f.Expiry, f.BuildATM, f.Strikes
 	r.risk, r.lastAuth, r.events = f.Risk, f.LastAuth, f.Events
 	r.isLive, r.tradeUID, r.pending, r.haltReason = f.Live, f.TradeUID, f.Pending, f.Halt
+	r.lastReject, r.noEntries = f.Reject, f.NoEntries
 	if r.risk == nil {
 		r.risk = map[string]string{}
 	}

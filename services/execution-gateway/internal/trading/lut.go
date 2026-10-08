@@ -596,12 +596,33 @@ func lutStage(hhmm int) int {
 	return 4
 }
 
-// lutTPBps interpolates TP by build IV between the DTE row's low/high.
+// lutRefreshTP recomputes a recorded minute's TP from its own recorded
+// inputs (adj build IV, trading DTE) with the current formula, so minutes
+// recorded before a formula change show the TP the rules give now. The
+// LUT answer itself is never touched. Reports whether it changed.
+func lutRefreshTP(ev *LUTEvaluation) bool {
+	if ev == nil || ev.AdjBuildIV <= 0 || ev.TradingDTE <= 0 {
+		return false
+	}
+	tp := lutTPBps(lutDTEIndex(ev.TradingDTE), ev.AdjBuildIV)
+	if tp == ev.TPBps {
+		return false
+	}
+	ev.TPBps = tp
+	return true
+}
+
+// lutDTEIndex is the DTE row (0-6) for a trading-days-to-expiry value.
+func lutDTEIndex(trading float64) int {
+	return min(max(int(math.Ceil(trading))-1, 0), 6)
+}
+
+// lutTPBps interpolates TP by adj build IV between the DTE row's low/high.
+// Exact: neither the IV nor the resulting bps is rounded.
 func lutTPBps(dteIdx int, adjBuildIV float64) float64 {
-	rounded := math.Round(adjBuildIV*100) / 100
-	fraction := (rounded - 0.08) / 0.12
+	fraction := (adjBuildIV - 0.08) / 0.12
 	tp := lutTPLow[dteIdx] + fraction*(lutTPHigh[dteIdx]-lutTPLow[dteIdx])
-	return math.Max(1, math.Round(tp))
+	return math.Max(1, tp)
 }
 
 // EvaluateLUTMinute reduces one minute to its coordinate and looks it up.
@@ -656,11 +677,13 @@ func EvaluateLUTMinute(set LUTSet, in LUTDailyInputs, normOG float64, isEvent bo
 		iv = m.PrevIV // reference forward-fills
 	}
 	ev.BuildIV = iv
-	ev.Straddle = lutBSPrice(true, m.Underlying, K, T, iv) + lutBSPrice(false, m.Underlying, K, T, iv)
-	if ev.Straddle <= 0 {
-		ev.Skip = "straddle 0"
+	// Straddle = the recorded ATM CE LTP + PE LTP, as traded -- not a
+	// model price from the OTM leg's IV (that read ~2pts off the screen).
+	if m.CELTP <= 0 || m.PELTP <= 0 {
+		ev.Skip = fmt.Sprintf("ATM LTP missing (CE %.2f PE %.2f)", m.CELTP, m.PELTP)
 		return ev
 	}
+	ev.Straddle = m.CELTP + m.PELTP
 	ev.StrRatio = in.PrevStraddle / ev.Straddle
 
 	// weekend_days = ceil(this minute's DTE) - busday_count(today,
@@ -675,13 +698,7 @@ func EvaluateLUTMinute(set LUTSet, in LUTDailyInputs, normOG float64, isEvent bo
 	if m.RawDTE > 0 && trading > 0 && m.RawDTE != trading {
 		ev.AdjFactor = math.Sqrt(m.RawDTE / trading)
 	}
-	dteIdx := int(math.Ceil(trading)) - 1
-	if dteIdx < 0 {
-		dteIdx = 0
-	}
-	if dteIdx > 6 {
-		dteIdx = 6
-	}
+	dteIdx := lutDTEIndex(trading)
 	// No-entry windows still get every number computed and recorded (the
 	// data is kept); the minute is marked SKIP at the end, never a YES.
 	lateSkip := ""
@@ -787,7 +804,7 @@ func lutParams() LUTParams {
 			"Tables: 09:16, 09:17, 09:18, 09:19 each their own; 09:20 to 13:30 the 09:20+ table; first YES wins",
 			"Event day: nothing before 09:18 and one-third size",
 			"1 DTE: nothing after 09:59",
-			"TP bps = low + (round(adj build IV, 2) - 0.08) / 0.12 x (high - low) for the DTE row, min 1; SL 14 bps",
+			"TP bps = low + (adj build IV - 0.08) / 0.12 x (high - low) for the DTE row, min 1; SL 14 bps",
 		},
 	}
 }

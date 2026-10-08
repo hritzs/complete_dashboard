@@ -3,6 +3,7 @@
   import StraddleBuildTab from './StraddleBuildTab.jsx';
   import PaperSimTab from './PaperSimTab.jsx';
   import SBPortfolioRows, { sbStore } from './SBPortfolioRows.jsx';
+  import ManualLegPanel, { closeManualLeg } from './ManualLegPanel.jsx';
   import './App.css';
   import LatencyDashboard from './LatencyDashboard.jsx';
 
@@ -20,6 +21,14 @@
 
   const fmt = (v, d = 2) => {
     return hasValue(v) ? Number(v).toFixed(d) : '—';
+  };
+
+  // HH:MM:SS (IST) of a broker rejection.
+  const rejectTime = (r) => {
+    const t = new Date(r?.time || 0);
+    return Number.isFinite(t.getTime()) && t.getTime() > 0
+      ? t.toLocaleTimeString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' })
+      : '—';
   };
 
   async function safeFetchJson(url, options = {}) {
@@ -261,6 +270,11 @@
     sl_points_per_lot: "30",
     sl_pnl_bps_of_spot: "14",
     tp_pnl_bps_of_spot: "0",
+    mtm_exit_level: "",
+    mtm_exit_unit: "rs",
+    mtm_exit_pct: "100",
+    straddle_exit_below: "",
+    straddle_exit_pct: "100",
     square_off_time: "15:37:00",
     square_off_hard_time: "",
     straddle_div: "4",
@@ -1066,6 +1080,8 @@
             unrealizedPnl: 0,
             totalPnl: t.realized_pnl ?? 0,
             config: t.config || {},
+            lastReject: t.last_reject || null,
+            rejectCount: t.reject_count || 0,
             points_allowed: 0,
             closeReason: t.close_reason || "",
             closedAt: t.closed_at || "",
@@ -1115,6 +1131,8 @@
           realizedPnl: summaryByUid[tr.trade_uid]?.realized_pnl ?? tr.realized_pnl ?? 0,
           wingRealizedPnl: summaryByUid[tr.trade_uid]?.wing_realized_pnl ?? 0,
           executions: summaryByUid[tr.trade_uid]?.executions || [],
+          lastReject: summaryByUid[tr.trade_uid]?.last_reject || null,
+          rejectCount: summaryByUid[tr.trade_uid]?.reject_count || 0,
           unrealizedPnl: tr.unrealized_pnl ?? 0,
           totalPnl: tr.total_pnl ?? tr.live_pnl ?? 0,
           config: tr.config || {},
@@ -1168,6 +1186,8 @@
             "CLOSED_SL",
             "CLOSED_TP",
             "CLOSED_TIME",
+            "CLOSED_MTM",
+            "CLOSED_STRADDLE",
             "FAILED"
           ].includes(status);
         })
@@ -1253,7 +1273,9 @@
       "CLOSEDSQF",
       "CLOSED_SL",
       "CLOSED_TP",
-      "CLOSED_TIME"
+      "CLOSED_TIME",
+      "CLOSED_MTM",
+      "CLOSED_STRADDLE"
     ]);
 
     const isTradeClosed = (item) =>
@@ -1441,6 +1463,18 @@
 
         tp_pnl_bps_of_spot: cfg.tp_pnl_bps_of_spot ?? cfg.tpPnlBpsOfSpot ?? "0",
 
+        // MTM exit: blank = infinity (never fires).
+        mtm_exit_level: cfg.mtm_exit_level != null ? String(cfg.mtm_exit_level) : "",
+
+        mtm_exit_unit: cfg.mtm_exit_unit || "rs",
+
+        mtm_exit_pct: String(cfg.mtm_exit_pct || 100),
+
+        // ATM-straddle exit: blank = off.
+        straddle_exit_below: cfg.straddle_exit_below != null ? String(cfg.straddle_exit_below) : "",
+
+        straddle_exit_pct: String(cfg.straddle_exit_pct || 100),
+
 
         straddle_div: cfg.straddle_div ?? cfg.straddleDiv ?? "4",
 
@@ -1526,6 +1560,46 @@
 
         payload[field] = value;
 
+      }
+
+      // MTM exit: a number sets the level (rupees / pts / bps), blank = infinity.
+      const mtmRaw = String(form.mtm_exit_level ?? "").trim();
+      if (mtmRaw === "") {
+        payload.mtm_exit_off = true;
+      } else {
+        const mtm = Number(mtmRaw);
+        if (!Number.isFinite(mtm)) {
+          setModifyTradeError("Invalid number for MTM exit level.");
+          return;
+        }
+        payload.mtm_exit_level = mtm;
+        payload.mtm_exit_unit = form.mtm_exit_unit || "rs";
+      }
+      const pctOf = (raw, name) => {
+        const v = Number(String(raw ?? "").trim() || "100");
+        if (!Number.isFinite(v) || v <= 0 || v > 100) {
+          setModifyTradeError(`${name} must be 1-100 (100 = complete).`);
+          return null;
+        }
+        return v;
+      };
+      const mtmPct = pctOf(form.mtm_exit_pct, "MTM exit %");
+      if (mtmPct == null) return;
+      payload.mtm_exit_pct = mtmPct;
+      // ATM-straddle exit: a number = close when the ATM straddle LTP falls below it; blank = off.
+      const strRaw = String(form.straddle_exit_below ?? "").trim();
+      if (strRaw === "") {
+        payload.straddle_exit_off = true;
+      } else {
+        const lvl = Number(strRaw);
+        if (!Number.isFinite(lvl) || lvl <= 0) {
+          setModifyTradeError("ATM straddle exit level must be a positive number.");
+          return;
+        }
+        payload.straddle_exit_below = lvl;
+        const sp = pctOf(form.straddle_exit_pct, "ATM straddle exit %");
+        if (sp == null) return;
+        payload.straddle_exit_pct = sp;
       }
 
 
@@ -2338,6 +2412,63 @@
                 </label>
 
                 <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
+                  MTM exit above (blank = ∞)
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    <input
+                      type="number"
+                      step="any"
+                      placeholder="∞"
+                      value={modifyTradeForm().mtm_exit_level}
+                      onInput={(event) => setModifyTradeForm((form) => ({ ...form, mtm_exit_level: event.currentTarget.value }))}
+                      title="Closes the trade lot by lot at depth-checked IOC limits so it ends at or above this MTM (may be negative)"
+                      style={{ flex: 1, padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                    />
+                    <input
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={modifyTradeForm().mtm_exit_pct}
+                      onInput={(event) => setModifyTradeForm((form) => ({ ...form, mtm_exit_pct: event.currentTarget.value }))}
+                      title="% of the ORIGINAL position this rule closes (100 = complete). Rules together never close more than what is open."
+                      style={{ width: "70px", padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                    />
+                    <select
+                      value={modifyTradeForm().mtm_exit_unit}
+                      onChange={(event) => setModifyTradeForm((form) => ({ ...form, mtm_exit_unit: event.currentTarget.value }))}
+                      style={{ padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                    >
+                      <option value="rs">₹ total</option>
+                      <option value="pts">pts / straddle</option>
+                      <option value="bps">bps of spot</option>
+                    </select>
+                  </div>
+                </label>
+
+                <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
+                  ATM straddle exit below (blank = off) · % of position
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    <input
+                      type="number"
+                      step="0.05"
+                      placeholder="off"
+                      value={modifyTradeForm().straddle_exit_below}
+                      onInput={(event) => setModifyTradeForm((form) => ({ ...form, straddle_exit_below: event.currentTarget.value }))}
+                      title="Square off only when the live ATM CE LTP + PE LTP falls BELOW this; above it nothing happens"
+                      style={{ flex: 1, padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                    />
+                    <input
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={modifyTradeForm().straddle_exit_pct}
+                      onInput={(event) => setModifyTradeForm((form) => ({ ...form, straddle_exit_pct: event.currentTarget.value }))}
+                      title="% of the ORIGINAL position (100 = complete). Combined with the other exits it never exceeds what is open."
+                      style={{ width: "70px", padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                    />
+                  </div>
+                </label>
+
+                <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
                   Hedge Delta Threshold
                   <input
                     type="number"
@@ -2686,6 +2817,11 @@
                                 <span class={`status-badge ${(status()).toLowerCase()}`}>
                                   {status()}<Show when={isPartialFill()}><span title={partialTitle()}> · PARTIAL</span></Show>
                                 </span>
+                                <Show when={item.lastReject}>
+                                  <div style={{ "font-size": "11px", color: "#ff6b6b", "margin-top": "3px", "font-weight": 700 }} title={item.lastReject.reason}>
+                                    ⚠ {item.rejectCount > 1 ? `${item.rejectCount} orders` : "order"} REJECTED · last {rejectTime(item.lastReject)} {item.lastReject.leg} {item.lastReject.side} @{fmt(item.lastReject.limit_price, 2)}
+                                  </div>
+                                </Show>
                                 <Show when={isBuilding() && buildTotal() > 0}>
                                   <div style={{ "font-size": "11px", opacity: 0.75, "margin-top": "2px" }}>
                                     Building {buildSubmitted()}/{buildTotal()} orders placed
@@ -2726,6 +2862,15 @@
                                         {status()}<Show when={isPartialFill()}><span title={partialTitle()}> · PARTIAL</span></Show>
                                       </span>
                                     </div>
+
+                                    <Show when={item.lastReject}>
+                                      <div style={{ margin: "10px 0", padding: "10px 12px", "border-radius": "8px", border: "1px solid #b23b3b", background: "rgba(178,59,59,0.12)" }}>
+                                        <div style={{ color: "#ff6b6b", "font-weight": 700 }}>
+                                          ⚠ Broker REJECTED {item.rejectCount > 1 ? `${item.rejectCount} orders of this trade — latest` : "an order of this trade"}: {rejectTime(item.lastReject)} · {item.lastReject.leg} {item.lastReject.strike ? fmt(item.lastReject.strike, 0) : ""} {item.lastReject.side} @ ₹{fmt(item.lastReject.limit_price, 2)} · {item.lastReject.phase || "—"} · broker order {item.lastReject.broker_order_id || "—"}
+                                        </div>
+                                        <div style={{ "margin-top": "6px", "font-family": "monospace", "font-size": "12px", "white-space": "pre-wrap", "word-break": "break-word" }}>{item.lastReject.reason}</div>
+                                      </div>
+                                    </Show>
 
                                     <div class="trade-dashboard-grid">
 
@@ -3074,6 +3219,7 @@
                                           </button>
                                         </div>
                                       </section>
+                                      <ManualLegPanel item={item} onDone={() => refreshPortfolio()} />
                                       </Show>
 
                                       <section class="trade-card position-details-card">
@@ -3084,6 +3230,8 @@
                                           <div class="monitor-row"><span>Broker / account</span><strong>{item.brokerName} / {item.accountId}</strong></div>
                                           <div class="monitor-row"><span>SL (bps of spot)</span><strong>{item.config?.sl_pnl_bps_of_spot || "off"}</strong></div>
                                           <div class="monitor-row"><span>TP (bps of spot)</span><strong>{item.config?.tp_pnl_bps_of_spot || "off"}</strong></div>
+                                          <div class="monitor-row"><span>MTM exit above</span><strong>{item.config?.mtm_exit_level != null ? `${item.config.mtm_exit_level} ${({ rs: "₹", pts: "pts/straddle", bps: "bps" })[item.config.mtm_exit_unit || "rs"]}` : "∞"}{item.config?.mtm_exit_level != null ? ` · ${item.config?.mtm_exit_pct || 100}%` : ""}</strong></div>
+                                          <div class="monitor-row"><span>ATM straddle exit below</span><strong>{item.config?.straddle_exit_below != null ? `${item.config.straddle_exit_below} · ${item.config?.straddle_exit_pct || 100}%` : "off"}</strong></div>
                                           <div class="monitor-row"><span>Exit time</span><strong>{(() => {
                                             const d = new Date(item.config?.square_off_hard_time || "");
                                             return Number.isNaN(d.getTime()) || d.getUTCFullYear() < 2000 ? "not set" : d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -3126,6 +3274,7 @@
                                                 <th>LTP</th>
                                                 <th>PnL</th>
                                                 <th>IV</th>
+                                                <th></th>
                                               </tr>
                                             </thead>
 
@@ -3133,7 +3282,11 @@
                                               <For each={livePositions()}>
                                                 {(position) => (
                                                   <tr style={position.wing ? { opacity: 0.6 } : undefined}>
-                                                    <td>{position.option_type || "—"}{position.wing ? " WING (RM)" : ""}</td>
+                                                    <td>
+                                                      {position.option_type || "—"}{position.wing ? " WING (RM)" : ""}
+                                                      <Show when={position.expiry && position.expiry !== item.expiry}><span style={{ "font-size": "11px", opacity: 0.8 }}> {position.expiry}</span></Show>
+                                                      <Show when={position.excluded}><span title="kept out of this trade's P&L / greeks" style={{ "font-size": "10px", "margin-left": "4px", padding: "1px 5px", "border-radius": "8px", background: "rgba(255,255,255,0.12)" }}>not in P&amp;L</span></Show>
+                                                    </td>
                                                     <td>{position.strike || "—"}</td>
                                                     <td class={String(position.action || "").toUpperCase() === "BUY" ? "positive" : "negative"}>
                                                       {position.action || "—"}
@@ -3151,6 +3304,14 @@
                                                       ₹{fmt(position.pnl ?? 0, 2)}
                                                     </td>
                                                     <td>{fmt(position.iv ?? 0, 2)}</td>
+                                                    <td>
+                                                      <Show when={!isClosed() && !position.wing && Number(position.quantity) > 0 && position.token}>
+                                                        <button class="dashboard-btn red" style={{ padding: "2px 8px", "font-size": "11px" }}
+                                                          onClick={(event) => { event.stopPropagation(); closeManualLeg(uid, position, item.lotSize || 65, () => refreshPortfolio()); }}>
+                                                          Close
+                                                        </button>
+                                                      </Show>
+                                                    </td>
                                                   </tr>
                                                 )}
                                               </For>

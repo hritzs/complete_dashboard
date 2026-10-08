@@ -66,6 +66,10 @@ type OpenLeg struct {
 	// normally >= 0). Qty-WingQty is the real (straddle/hedge) position;
 	// only that part counts for delta/PnL/exits.
 	WingQty int64
+	// Expiry ("13-OCT-26") and strike of the contract: a leg can be in a
+	// different expiry than the trade (manual leg across expiry).
+	Expiry string
+	Strike float64
 }
 
 // wingQtyCTE nets this trade's WING-phase fills per contract ($1 =
@@ -150,7 +154,8 @@ func (s *PostgresBackedStore) LoadOpenLegs(tradeUID string) ([]OpenLeg, error) {
 	rows, err := s.db.QueryContext(ctx, wingQtyCTE+`
 		SELECT c.broker_token, c.exchange, tl.current_quantity,
 		       COALESCE(c.option_type, ''), COALESCE(tl.avg_entry_price, 0),
-		       COALESCE(w.qty, 0)
+		       COALESCE(w.qty, 0), COALESCE(UPPER(to_char(c.expiry_date, 'DD-MON-YY')), ''),
+		       COALESCE(c.strike_price, 0)
 		FROM trade_legs tl
 		JOIN trades t ON t.id = tl.trade_id
 		JOIN contracts c ON c.id = tl.contract_id
@@ -167,7 +172,7 @@ func (s *PostgresBackedStore) LoadOpenLegs(tradeUID string) ([]OpenLeg, error) {
 	var legs []OpenLeg
 	for rows.Next() {
 		var leg OpenLeg
-		if err := rows.Scan(&leg.Token, &leg.Exchange, &leg.Qty, &leg.OptionType, &leg.EntryPrice, &leg.WingQty); err != nil {
+		if err := rows.Scan(&leg.Token, &leg.Exchange, &leg.Qty, &leg.OptionType, &leg.EntryPrice, &leg.WingQty, &leg.Expiry, &leg.Strike); err != nil {
 			return nil, fmt.Errorf("scan open leg trade_uid=%s: %w", tradeUID, err)
 		}
 		legs = append(legs, leg)

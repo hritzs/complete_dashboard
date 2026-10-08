@@ -61,3 +61,19 @@ func TestSBHandOff_HedgeLegStaysWithBuild(t *testing.T) {
 		t.Fatalf("phase %s", r.phase)
 	}
 }
+
+// Delta-neutral legs are unequal: CE 195 + PE 65 = 260 of 2 x 130 is the
+// full size, not partial (2026-10-08: CE 585 + PE 715 of 650 was flagged).
+func TestSBHandOff_FullTotalUnequalLegsNotPartial(t *testing.T) {
+	s, r := handoffRunner(t)
+	r.pms.ApplyFill(PMSFill{Token: 44620, Strike: 22700, OptionType: "CE", Side: "SELL", Qty: 195, Price: 168.3, Role: "BUILD"})
+	r.pms.ApplyFill(PMSFill{Token: 44621, Strike: 22700, OptionType: "PE", Side: "SELL", Qty: 65, Price: 146.8, Role: "BUILD"})
+	if !s.sbHandOffLocked(r) {
+		t.Fatal("expected hand-off")
+	}
+	defer stopRuntime(s, "SB-T-1")
+	tr, _ := s.Store.LoadTrade("SB-T-1")
+	if tr.Config.PartialFill {
+		t.Fatalf("CE 195 + PE 65 = the full 260: must not be partial %+v", tr.Config)
+	}
+}

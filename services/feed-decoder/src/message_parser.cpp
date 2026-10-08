@@ -1,4 +1,5 @@
 #include "decoder/message_parser.hpp"
+#include "decoder/minute_close.hpp"
 #include "decoder/nse_mbp_record.hpp"
 #include <iostream>
 #include <string_view>
@@ -200,6 +201,7 @@ void MessageParser::parse_7208(
             // the old, now-confirmed-wrong offset 174, which fell inside
             // the ladder itself. Nothing downstream currently reads oi.
             greeks_calc.process_tick(rec.token, rec.ltp, rec.buy[0].price, rec.sell[0].price, rec.volume, 0, info);
+            g_minute_close.update(rec.token, rec.ltp, nse_time_to_unix(rec.last_trade_time));
 
             // Full L1-L5 ladder for depth-aware execution.
             double bpx[5], apx[5];

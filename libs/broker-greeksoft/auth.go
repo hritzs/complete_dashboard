@@ -93,7 +93,17 @@ func (c *Client) PerformFullLogin(ctx context.Context, accCfg *broker.AccountCon
 		"iris_port":   jloginRes.Response.Data.IrisPort,
 		"apollo_ip":   jloginRes.Response.Data.ApolloIP,
 		"apollo_port": jloginRes.Response.Data.ApolloPort,
+		// Kept for reference (market-data source discovery): GreekSoft's
+		// broadcast/order sender ports and the REST (Arachne) endpoint.
+		"arachne_ip":            jloginRes.Response.Data.ArachneIP,
+		"arachne_port":          jloginRes.Response.Data.ArachnePort,
+		"broadcast_sender_port": jloginRes.Response.Data.BroadcastSenderPort,
+		"order_sender_port":     jloginRes.Response.Data.OrderSenderPort,
 	}
+	slog.Info("Greeksoft server endpoints", "iris", fmt.Sprintf("%s:%d", jloginRes.Response.Data.IrisIP, jloginRes.Response.Data.IrisPort),
+		"apollo", fmt.Sprintf("%s:%d", jloginRes.Response.Data.ApolloIP, jloginRes.Response.Data.ApolloPort),
+		"arachne", fmt.Sprintf("%s:%d", jloginRes.Response.Data.ArachneIP, jloginRes.Response.Data.ArachnePort),
+		"broadcast_sender_port", jloginRes.Response.Data.BroadcastSenderPort, "order_sender_port", jloginRes.Response.Data.OrderSenderPort)
 
 	if flagValues != nil {
 		if flagValues.Response.SessionID != "" {

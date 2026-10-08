@@ -11,6 +11,7 @@ const (
 	BuildModeManual    BuildMode = "MANUAL"
 	BuildModeConfig    BuildMode = "CONFIG"
 	BuildModeAutomated BuildMode = "AUTOMATED"
+	BuildModeLUT       BuildMode = "LUT" // fired by the LUT's first YES (lut_build.go)
 )
 
 type FinalBuildRequest struct {
@@ -26,6 +27,10 @@ type FinalBuildRequest struct {
 	OrderLotsPerCall int
 	DeltaNeutral     bool
 	Risk             *BuildRiskConfig
+	// Optional exact strikes (both or neither): the LUT build sells the
+	// strike the LUT evaluated, not whatever is ATM a moment later.
+	CEStrikePrice int
+	PEStrikePrice int
 }
 
 func (s *Service) ExecuteFinalBuild(
@@ -63,5 +68,7 @@ func (s *Service) ExecuteFinalBuild(
 		OrderLotsPerCall: req.OrderLotsPerCall,
 		DeltaNeutral:     req.DeltaNeutral,
 		Risk:             req.Risk,
+		CEStrikePrice:    req.CEStrikePrice,
+		PEStrikePrice:    req.PEStrikePrice,
 	})
 }

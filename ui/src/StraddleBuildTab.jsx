@@ -3,7 +3,7 @@ import { createSignal, createMemo, onCleanup, onMount, Show, For } from 'solid-j
 // Straddle Build -- sell the ATM straddle at or above a target, sized off
 // L1-L5 depth. Several rules can run at once; each has its own build, PMS,
 // risk and audit trail. SHADOW = simulated fills; LIVE = real orders behind
-// a typed confirmation. Live state arrives as "sbuild_update" ({runs}).
+// an OK/Cancel confirm. Live state arrives as "sbuild_update" ({runs}).
 
 const fmt = (v, d = 2) => {
   const n = Number(v);
@@ -196,20 +196,18 @@ export default function StraddleBuildTab() {
     }
     const s = runs().find((x) => x.rule_id === rid);
     const c = s?.config || {};
-    const typed = window.prompt(
+    if (!window.confirm(
       `REAL ORDERS on the broker account.\n\n${c.symbol} sell ATM straddle strictly ABOVE ₹${c.target_straddle} (avg CE + avg PE sold always > target), ` +
-      `${c.straddles} per leg = ${2 * (c.straddles || 0)} contracts, one lot per IOC limit order. Hedge / SL / TP / exit ${c.exit_time || '—'} with MARKET orders.\n\n` +
-      'Type SELL LIVE to start:');
-    if (typed == null) return;
-    if (await call('/api/sbuild/shadow/start', { id: rid, mode: 'LIVE', confirm: typed.trim() })) { setMsg(`LIVE build started (${rid}) — real orders`); loadState(); }
+      `${2 * (c.straddles || 0)} contracts in total (CE + PE), split DELTA-NEUTRAL by the live deltas (not ${c.straddles}/${c.straddles}), one lot per IOC limit order. Hedge / SL / TP / exit ${c.exit_time || '—'} with MARKET orders.\n\n` +
+      'Sell?')) return;
+    if (await call('/api/sbuild/shadow/start', { id: rid, mode: 'LIVE', confirm: 'SELL LIVE' })) { setMsg(`LIVE build started (${rid}) — real orders`); loadState(); }
   };
   const exitNow = async (id) => {
     const s = runs().find((x) => x.rule_id === id);
     let confirm = '';
     if (isLive(s)) {
-      const typed = window.prompt('Flatten this LIVE position now with MARKET orders?\nType EXIT to confirm:');
-      if (typed == null) return;
-      confirm = typed.trim();
+      if (!window.confirm('Flatten this LIVE position now with MARKET orders?')) return;
+      confirm = 'EXIT';
     } else if (!window.confirm('Flatten this shadow position now?')) return;
     if (await call('/api/sbuild/exit', { id, confirm })) { setMsg(`Exit sent (${id})`); loadState(); }
   };
@@ -218,18 +216,23 @@ export default function StraddleBuildTab() {
   const switchToLive = async (id) => {
     const s = runs().find((x) => x.rule_id === id);
     const c = s?.config || {};
-    const typed = window.prompt(
+    if (!window.confirm(
       `Switch ${c.symbol} target ₹${c.target_straddle} from SHADOW to LIVE (REAL ORDERS).\n\n` +
       'The shadow run stops (its simulated fills are discarded) and the rule restarts with real orders: ' +
-      `${c.straddles} per leg = ${2 * (c.straddles || 0)} contracts, only above the target.\n\nType SELL LIVE to switch:`);
-    if (typed == null) return;
-    if (typed.trim() !== 'SELL LIVE') { setMsg('Not switched: confirmation text must be SELL LIVE'); return; }
+      `${2 * (c.straddles || 0)} contracts in total (CE + PE), split delta-neutral, only above the target.\n\nSell?`)) return;
     if (!(await call('/api/sbuild/shadow/stop', { id }))) return;
     if (await call('/api/sbuild/shadow/start', { id, mode: 'LIVE', confirm: 'SELL LIVE' })) { setMsg(`${id} switched to LIVE — real orders`); }
     loadState();
   };
   const pause = async (id, on) => { if (await call('/api/sbuild/pause', { id, pause: on })) { setMsg(on ? `OMS paused (${id}) — PMS keeps monitoring` : `Building resumed (${id})`); loadState(); } };
   const stop = async (id) => { if (await call('/api/sbuild/shadow/stop', { id })) { setMsg(`Stopped ${id}`); loadState(); } };
+  // LIVE: stop the RULE -- no more entry orders of any kind from it. The
+  // position, its Portfolio trade and every monitor keep running.
+  const stopRule = async (id, s) => {
+    const where = s?.phase === 'HANDED_OFF' ? `Portfolio trade ${s.trade_uid}` : 'this rule\'s monitor';
+    if (!window.confirm(`Stop rule ${id}: NO MORE FILLS from it (no tranche, no completion lot, no resume if you raise the quantity).\n\nNothing is bought or sold now. The position stays monitored by ${where} (hedge / SL / TP / MTM / exit time).\n\nStop the rule?`)) return;
+    if (await call('/api/sbuild/shadow/stop', { id })) { setMsg(`Rule ${id} stopped -- no more fills`); loadState(); }
+  };
   const del = async (id) => {
     if (!window.confirm(`Delete rule ${id}?`)) return;
     if (await call('/api/sbuild/rule/delete', { id })) {
@@ -411,7 +414,7 @@ export default function StraddleBuildTab() {
               </Group>
               <Group title="Entry">
                 <In label="Target straddle ₹ (sell above)" k="target_straddle" ph={mkt()?.bid_straddle ? fmt(mkt().bid_straddle) : ''} />
-                <In label="Qty per leg (contracts)" k="straddles" ph={String(lotSize() || 65)} onBlur={roundQty} hint={`${lotsTxt()} · total ${totalQty()}`} />
+                <In label="Qty per leg (contracts)" k="straddles" ph={String(lotSize() || 65)} onBlur={roundQty} hint={`${lotsTxt()} · total ${totalQty()} CE+PE, split delta-neutral (not equal legs)`} />
               </Group>
               <Group title="Risk">
                 <In label="SL (bps)" k="sl_bps" />
@@ -431,7 +434,11 @@ export default function StraddleBuildTab() {
                 <Show when={!running()}><button class="tab-btn" onClick={() => start(dirty() ? '' : rule().id)}>Start shadow</button></Show>
                 <Show when={st()?.phase === 'BUILDING'}><button class="tab-btn" onClick={() => pause(rule().id, true)}>Pause building</button></Show>
                 <Show when={st()?.phase === 'PAUSED'}><button class="tab-btn" onClick={() => pause(rule().id, false)}>Resume building</button></Show>
-                <Show when={running()}><button class="tab-btn" onClick={() => stop(rule().id)}>{isLive(st()) ? (st().phase === 'HALTED' ? 'Acknowledge halt' : 'Stop building') : 'Stop'}</button></Show>
+                <Show when={running() && (!isLive(st()) || st().phase === 'HALTED')}><button class="tab-btn" onClick={() => stop(rule().id)}>{isLive(st()) ? 'Acknowledge halt' : 'Stop'}</button></Show>
+                <Show when={isLive(st()) && ['BUILDING', 'PAUSED', 'COMPLETE', 'EXITING', 'HANDED_OFF'].includes(st()?.phase) && !st()?.no_entries}>
+                  <button class="tab-btn" style={S.btnExit} title="No more entry orders from this rule; the position and all monitoring stay as they are" onClick={() => stopRule(rule().id, st())}>Stop rule — no more fills</button>
+                </Show>
+                <Show when={st()?.no_entries}><span style={{ ...S.muted, color: '#ff8a80', 'font-weight': 700 }}>Rule STOPPED — no more fills</span></Show>
                 <Show when={st()?.phase !== 'HANDED_OFF' && st()?.phase !== 'EXITED' && (running() || (st()?.position && !st().position.flat))}><button class="tab-btn" style={S.btnExit} onClick={() => exitNow(rule().id)}>Exit now</button></Show>
                 <Show when={st()?.phase === 'HANDED_OFF'}><span style={S.muted}>Position handed to trade {st()?.trade_uid} — manage / exit it from Portfolio.</span></Show>
                 <Show when={rule().id && !running()}><button class="tab-btn" onClick={() => del(rule().id)}>Delete</button></Show>
@@ -453,6 +460,7 @@ export default function StraddleBuildTab() {
               <div style={{ display: 'flex', gap: '10px', 'align-items': 'center', 'flex-wrap': 'wrap', padding: '0 14px 10px' }}>
                 <Show when={isLive(st())}><span style={modeChip(st())}>LIVE</span></Show>
                 <span style={phaseChip(st().phase)}>{st().phase}</span>
+                <Show when={st().no_entries}><span style={S.chip('#6d1b1b')}>STOPPED · no more fills</span></Show>
                 <span style={S.muted}>started {st().started_at}{st().resumed_at ? ` · resumed ${st().resumed_at}` : ''}{st().trade_uid ? ` · ${st().trade_uid}` : ''} · ATM {fmt(st().atm, 0)} · lot {st().lot_size}</span>
                 <Show when={st().busy}><span style={{ ...S.muted, color: '#d9a441' }}>orders in flight…</span></Show>
                 <Show when={(st().strikes || []).length > 1}><span style={{ ...S.muted, color: '#4dd0e1' }}>strikes {st().strikes.map((k) => fmt(k, 0)).join(', ')}</span></Show>
@@ -462,6 +470,16 @@ export default function StraddleBuildTab() {
                   <strong>HALTED — nothing more will be sent.</strong> {st().halt}
                 </div>
               </Show>
+              <Show when={st().last_reject}>{(rj) => (
+                <div style={{ margin: '0 14px 10px', padding: '8px 10px', 'border-radius': '8px', background: 'rgba(198,40,40,0.14)', border: '1px solid #c62828', 'font-size': '13px' }}>
+                  <strong style={{ color: '#ff6b6b' }}>
+                    ⚠ Broker REJECTED {rj().what} at {rj().time} — {rj().stopped
+                      ? `${rj().streak} rejections in a row: building STOPPED (position stays monitored)`
+                      : `rejection ${rj().streak}/${rj().max} in a row: re-planning, building continues`}
+                  </strong>
+                  <div style={{ 'margin-top': '4px', 'font-family': 'monospace', 'font-size': '12px', 'white-space': 'pre-wrap', 'word-break': 'break-word' }}>{rj().reason}</div>
+                </div>
+              )}</Show>
               <div style={{ padding: '0 14px 10px' }}>
                 <div style={{ display: 'flex', 'justify-content': 'space-between', 'font-size': '12px', 'margin-bottom': '4px' }}>
                   <span>Sold <strong>{filled()}</strong> / {st().target_qty}</span><span style={S.muted}>{fmt(pct(), 1)}% · remaining {st().remaining}</span>

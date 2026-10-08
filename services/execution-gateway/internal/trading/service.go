@@ -1177,6 +1177,13 @@ func slThresholdForTrade(trade StoredTrade) (originalLotsOpen float64, threshold
 // PollIntervalSec cycle instead of being lost, with no separate retry
 // loop needed.
 func (s *Service) executeAutoExit(tradeUID string, reason string, wantStatus string) {
+	// In the background, one exit per trade at a time: the monitor keeps
+	// ticking and pushing the trade's snapshot (positions, PnL, delta) to
+	// the UI while lots close (combined_sqf.go: runExitAsync).
+	s.runExitAsync(tradeUID, reason, func() { s.executeAutoExitNow(tradeUID, reason, wantStatus) })
+}
+
+func (s *Service) executeAutoExitNow(tradeUID string, reason string, wantStatus string) {
 	if err := s.SquareOff(tradeUID, reason); err != nil {
 		log.Printf("[RISK] %s_TRIGGER SquareOff failed trade=%s err=%v", reason, tradeUID, err)
 		return
@@ -1258,14 +1265,41 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 	if extraLegs, err := s.extraOpenLegs(tradeUID, trade); err != nil {
 		log.Printf("⚠️ extraOpenLegs failed for %s (continuing without them): %v", tradeUID, err)
 	} else {
+		// A leg in another expiry (manual leg across expiry) is valued off
+		// ITS expiry's chain, fetched once per cycle.
+		chains := map[string]*OptionChainSnapshot{strings.ToUpper(chain.Expiry): chain}
+		chainFor := func(expiry string) *OptionChainSnapshot {
+			key := strings.ToUpper(strings.TrimSpace(expiry))
+			if key == "" {
+				return chain
+			}
+			if c, ok := chains[key]; ok {
+				return c
+			}
+			cctx, ccancel := context.WithTimeout(context.Background(), 2*time.Second)
+			c, cerr := s.Snapshot.GetOptionChain(cctx, trade.Symbol, key)
+			ccancel()
+			if cerr != nil || c == nil {
+				chains[key] = nil
+				return nil
+			}
+			chains[key] = c
+			return c
+		}
+		excluded := map[int64]bool{}
+		for _, t := range trade.Config.RiskExcludedTokens {
+			excluded[t] = true
+		}
 		for _, leg := range extraLegs {
 			var row *OptionChainRow
-			for i := range chain.Chain {
-				r := &chain.Chain[i]
-				if (leg.OptionType == "CE" && r.CEToken == leg.Token) ||
-					(leg.OptionType == "PE" && r.PEToken == leg.Token) {
-					row = r
-					break
+			if legChain := chainFor(leg.Expiry); legChain != nil {
+				for i := range legChain.Chain {
+					r := &legChain.Chain[i]
+					if (leg.OptionType == "CE" && r.CEToken == leg.Token) ||
+						(leg.OptionType == "PE" && r.PEToken == leg.Token) {
+						row = r
+						break
+					}
 				}
 			}
 			if row == nil {
@@ -1299,6 +1333,8 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 				d, g, th, v, pnl := signedLegGreeksAndPNL(rawDelta, rawGamma, rawTheta, rawVega, ltp, leg.EntryPrice, part.qty)
 				if part.wing {
 					wingPNL += pnl
+				} else if excluded[leg.Token] {
+					// shown below, kept out of every total
 				} else {
 					netDelta += d
 					netGamma += g
@@ -1317,7 +1353,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 					Token: leg.Token, Strike: row.Strike, OptionType: leg.OptionType,
 					Action: action, Quantity: absQty, EntryPrice: leg.EntryPrice, LTP: ltp, PNL: pnl,
 					IV: iv, Delta: rawDelta, Gamma: rawGamma, Theta: rawTheta, Vega: rawVega,
-					Wing: part.wing,
+					Wing: part.wing, Excluded: !part.wing && excluded[leg.Token], Expiry: leg.Expiry,
 				})
 			}
 		}
@@ -1386,6 +1422,19 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 		pnlPerStraddle = totalPNL / float64(straddleQuantity)
 	}
 
+	// MTM exit: checked on EVERY tick (not only at the minute end), on
+	// executable depth prices -- see mtm_exit.go. nil level = infinity.
+	var mtmFloorPtr, mtmExecPtr *float64
+	if trade.Config.MTMExitLevel != nil {
+		ex, fl, priced, _ := s.mtmExitCheck(trade, chain, spot, straddleQuantity)
+		mtmFloorPtr = &fl
+		if priced {
+			mtmExecPtr = &ex
+		}
+	}
+	// ATM-straddle exit: every tick, only below its level (combined_sqf.go).
+	s.straddleExitCheck(trade, chain)
+
 	livePositions := []TradeLegSnapshot{
 		{
 			Token:      trade.CEToken,
@@ -1431,6 +1480,8 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 		TotalPNL:              totalPNL,
 		PnLPerStraddle:        pnlPerStraddle,
 		StraddleQuantity:      straddleQuantity,
+		MTMExitFloor:          mtmFloorPtr,
+		MTMExecPNL:            mtmExecPtr,
 		PointsOut:             pointsOut,
 		PointsAllowed:         pointsAllowed,
 		PointsAllowedStraddle: term1,
@@ -1438,7 +1489,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 		AllowedStrike:         allowedRow.Strike,
 		RealizedPNL: func() float64 {
 			switch trade.Status {
-			case "CLOSED", "CLOSEDSQF", "CLOSED_SQF", "CLOSED_SL", "CLOSED_TP", "CLOSED_TIME", "CLOSED_MANUAL", "FAILED":
+			case "CLOSED", "CLOSEDSQF", "CLOSED_SQF", "CLOSED_SL", "CLOSED_TP", "CLOSED_TIME", "CLOSED_MTM", "CLOSED_STRADDLE", "CLOSED_MANUAL", "FAILED":
 				return totalPNL
 			default:
 				return 0
@@ -1446,7 +1497,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 		}(),
 		UnrealizedPNL: func() float64 {
 			switch trade.Status {
-			case "CLOSED", "CLOSEDSQF", "CLOSED_SQF", "CLOSED_SL", "CLOSED_TP", "CLOSED_TIME", "CLOSED_MANUAL", "FAILED":
+			case "CLOSED", "CLOSEDSQF", "CLOSED_SQF", "CLOSED_SL", "CLOSED_TP", "CLOSED_TIME", "CLOSED_MTM", "CLOSED_STRADDLE", "CLOSED_MANUAL", "FAILED":
 				return 0
 			default:
 				return totalPNL
@@ -1489,7 +1540,10 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 	// Evaluate hedge only at minute boundaries to avoid duplicate signals
 	currentMinute := now.Truncate(time.Minute)
 
-	if rt, ok := s.Store.LoadRuntime(tradeUID); ok {
+	// While an exit is running (in the background) the minute-end hedge /
+	// SL / TP / TIME checks wait -- not consumed, they run once it ends.
+	exiting := trade.Status == "SQUARING_OFF" || trade.Status == "PARTIAL-SQF" || s.exitRunning(tradeUID)
+	if rt, ok := s.Store.LoadRuntime(tradeUID); ok && !exiting {
 		if rt.LastMinuteCheck.IsZero() || !rt.LastMinuteCheck.Equal(currentMinute) {
 			rt.LastMinuteCheck = currentMinute
 
@@ -2275,6 +2329,10 @@ func closedStatusForReason(reason string) string {
 		return "CLOSED_TP"
 	case "TIME":
 		return "CLOSED_TIME"
+	case "MTM":
+		return "CLOSED_MTM"
+	case "STRADDLE":
+		return "CLOSED_STRADDLE"
 	default:
 		return "CLOSEDSQF"
 	}
@@ -2531,9 +2589,10 @@ func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
 	if tr.CEToken <= 0 && tr.PEToken <= 0 {
 		return fmt.Errorf("cannot partially square off %s: missing CE/PE tokens", tradeUID)
 	}
-	// ACTIVE (partial): the percentage is of what was EXECUTED, re-read from
-	// the exchange fills, never of the requested build size.
-	if tr.Config.PartialFill {
+	// Always size from what is OPEN per the exchange fills, never the stored
+	// size: a stale stored quantity would buy back more than is short and
+	// leave a long (exits from several rules combined never exceed 100%).
+	{
 		if p, ok := s.Store.(interface {
 			TradeOpenQuantities(ctx context.Context, tradeUID string) (int64, int64, error)
 		}); ok {
@@ -2542,9 +2601,13 @@ func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
 				return fmt.Errorf("cannot partially square off %s: unable to verify executed quantities: %w", tradeUID, err)
 			}
 			if int64(tr.CEQty) != ce || int64(tr.PEQty) != pe {
-				log.Printf("⚠️ PartialSquareOff %s (partial): stored CE=%d PE=%d differs from executed CE=%d PE=%d -- using executed", tradeUID, tr.CEQty, tr.PEQty, ce, pe)
+				log.Printf("⚠️ PartialSquareOff %s: stored CE=%d PE=%d differs from open per fills CE=%d PE=%d -- using the fills", tradeUID, tr.CEQty, tr.PEQty, ce, pe)
 			}
-			tr.CEQty, tr.PEQty = int(ce), int(pe)
+			if ce == 0 && pe == 0 && !tr.Config.PartialFill && (tr.CEQty > 0 || tr.PEQty > 0) {
+				log.Printf("⚠️ PartialSquareOff %s: no exchange fills recorded yet -- using the stored CE=%d PE=%d", tradeUID, tr.CEQty, tr.PEQty)
+			} else {
+				tr.CEQty, tr.PEQty = int(ce), int(pe)
+			}
 		}
 	}
 	if tr.CEQty <= 0 && tr.PEQty <= 0 {

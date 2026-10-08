@@ -13,7 +13,9 @@ package trading
 //	     neutral (corrects any imbalance left by earlier partial fills)
 //	  -> both legs >= 1 lot (never one-sided)
 //	  -> fit in the remaining quantity (anchor steps down a lot at a time)
-//	  -> ONE weighted-price test: VWAP_CE + VWAP_PE > target
+//	  -> weighted-price test: VWAP_CE + VWAP_PE > target walking the
+//	     bids for the pair's quantity (size steps down until it passes);
+//	     the deepest bid reached is each leg's IOC limit
 //
 // It never places orders. The OMS executes an authorized tranche; PMS
 // records what really filled; the next tranche is planned from that.
@@ -205,35 +207,50 @@ func PlanDepthEntry(in DepthEntryInput) DepthEntryPlan {
 		if qCE+qPE > in.RemainingQty {
 			continue
 		}
+		// 5. Weighted-price test on this exact pair: walk the bids for the
+		//    pair's quantity; the deepest level reached (e.g. the 3rd bid
+		//    when 3 levels are covered) is each leg's limit. VWAP_CE +
+		//    VWAP_PE must be above target -- if not, step the size down
+		//    (fill only as deep as the VWAP allows).
+		vCE, wCE, ok1 := walkBids(in.CEBids, qCE, in.MaxLevels)
+		vPE, wPE, ok2 := walkBids(in.PEBids, qPE, in.MaxLevels)
+		if !ok1 || !ok2 {
+			continue
+		}
+		if vCE+vPE <= in.TargetStraddle {
+			step("[PRICE TEST] CE %d VWAP %.2f (to %.2f) + PE %d VWAP %.2f (to %.2f) = %.2f not above target %.2f -- smaller size",
+				qCE, vCE, wCE, qPE, vPE, wPE, vCE+vPE, in.TargetStraddle)
+			continue
+		}
 		p.CEQty, p.PEQty = qCE, qPE
+		p.CEVWAP, p.CEWorst, p.PEVWAP, p.PEWorst = vCE, wCE, vPE, wPE
 		break
 	}
 	if p.CEQty == 0 || p.PEQty == 0 {
-		return fail("no two-sided delta-neutral pair fits capacity and remaining quantity")
+		return fail("no two-sided delta-neutral pair fits capacity, remaining quantity and a VWAP above target -- wait for next tick")
 	}
 	p.TrancheDelta = -dCE*float64(p.CEQty) + dPE*float64(p.PEQty)
 	p.ResidualDelta = in.PositionDelta + p.TrancheDelta
 	step("[DELTA NEUTRAL] CE %d (%.3f) + PE %d (%.3f): tranche delta %+.2f, position after %+.2f; remaining %d -> %d",
 		p.CEQty, dCE, p.PEQty, dPE, p.TrancheDelta, p.ResidualDelta, in.RemainingQty, in.RemainingQty-p.CEQty-p.PEQty)
-
-	// 5. ONE weighted-price test on this exact pair.
-	var ok1, ok2 bool
-	p.CEVWAP, p.CEWorst, ok1 = walkBids(in.CEBids, p.CEQty, in.MaxLevels)
-	p.PEVWAP, p.PEWorst, ok2 = walkBids(in.PEBids, p.PEQty, in.MaxLevels)
-	if !ok1 || !ok2 {
-		return fail("book does not hold the pair quantity")
-	}
 	p.Weighted = p.CEVWAP + p.PEVWAP
-	step("[PRICE TEST] CE VWAP %.2f (worst %.2f) + PE VWAP %.2f (worst %.2f) = %.2f vs target %.2f",
-		p.CEVWAP, p.CEWorst, p.PEVWAP, p.PEWorst, p.Weighted, in.TargetStraddle)
-	if p.Weighted <= in.TargetStraddle {
-		return fail(fmt.Sprintf("weighted straddle %.2f not above target %.2f -- wait for next tick", p.Weighted, in.TargetStraddle))
-	}
+	step("[PRICE TEST] CE VWAP %.2f (to bid %.2f, L%d) + PE VWAP %.2f (to bid %.2f, L%d) = %.2f vs target %.2f",
+		p.CEVWAP, p.CEWorst, bidLevel(in.CEBids, p.CEWorst), p.PEVWAP, p.PEWorst, bidLevel(in.PEBids, p.PEWorst), p.Weighted, in.TargetStraddle)
 
 	p.Authorized = true
 	p.Reason = "authorized"
-	step("[AUTH] SELL CE %d (limit floor %.2f) + SELL PE %d (limit floor %.2f)", p.CEQty, p.CEWorst, p.PEQty, p.PEWorst)
+	step("[AUTH] SELL CE %d (limit %.2f) + SELL PE %d (limit %.2f)", p.CEQty, p.CEWorst, p.PEQty, p.PEWorst)
 	return p
+}
+
+// bidLevel: the 1-based level of price in the bid book (0 if absent).
+func bidLevel(levels []DepthLevel, price float64) int {
+	for i, l := range levels {
+		if math.Abs(l.Price-price) < 1e-9 {
+			return i + 1
+		}
+	}
+	return 0
 }
 
 // String renders the plan's steps on one block (for logs).

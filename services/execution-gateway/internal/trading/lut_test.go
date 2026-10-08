@@ -203,6 +203,9 @@ func TestLUTTPBps_Interpolation(t *testing.T) {
 		t.Fatalf("tp = %v, want 23", got)
 	}
 	// Build IV 0.08 -> low.
+	if got := lutTPBps(5, 0.1399); math.Abs(got-(8+0.0599/0.12*7)) > 1e-9 { // 11.494, not rounded to 12
+		t.Fatalf("TP not exact: %v", got)
+	}
 	if got := lutTPBps(4, 0.08); got != 8 {
 		t.Fatalf("tp = %v, want 8", got)
 	}

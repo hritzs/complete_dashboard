@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -711,6 +712,19 @@ type ModifyTradeRequest struct {
 	HedgePointsFloor             *float64 `json:"hedge_points_floor,omitempty"`
 	ForceHedgeRegardlessOfPoints *bool    `json:"force_hedge_regardless_of_points,omitempty"`
 	HedgeMinThresholdBps         *float64 `json:"hedge_min_threshold_bps,omitempty"`
+
+	// MTM exit (mtm_exit.go): a level (may be negative) sets it; MTMExitOff
+	// puts it back to infinity. Unit: rs (default) / pts / bps.
+	MTMExitLevel *float64 `json:"mtm_exit_level,omitempty"`
+	MTMExitUnit  *string  `json:"mtm_exit_unit,omitempty"`
+	MTMExitOff   bool     `json:"mtm_exit_off,omitempty"`
+	MTMExitPct   *float64 `json:"mtm_exit_pct,omitempty"` // % of the original position (0/100 = complete)
+
+	// ATM-straddle exit (combined_sqf.go): close StraddleExitPct of the
+	// original position when the live ATM straddle LTP < StraddleExitBelow.
+	StraddleExitBelow *float64 `json:"straddle_exit_below,omitempty"`
+	StraddleExitPct   *float64 `json:"straddle_exit_pct,omitempty"`
+	StraddleExitOff   bool     `json:"straddle_exit_off,omitempty"`
 }
 
 func (h *Handlers) ModifyTrade(w http.ResponseWriter, r *http.Request) {
@@ -801,6 +815,52 @@ func (h *Handlers) ModifyTrade(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		tr.Config.TPPnLBpsOfSpot = *req.TPPnLBpsOfSpot
+	}
+
+	if req.MTMExitUnit != nil {
+		switch u := strings.TrimSpace(*req.MTMExitUnit); u {
+		case "", "rs", "pts", "bps":
+			tr.Config.MTMExitUnit = u
+		default:
+			http.Error(w, "mtm_exit_unit must be rs, pts or bps", http.StatusBadRequest)
+			return
+		}
+	}
+	if req.MTMExitOff {
+		tr.Config.MTMExitLevel = nil // back to infinity
+	} else if req.MTMExitLevel != nil {
+		if math.IsNaN(*req.MTMExitLevel) || math.IsInf(*req.MTMExitLevel, 0) {
+			http.Error(w, "mtm_exit_level must be a finite number (use mtm_exit_off for infinity)", http.StatusBadRequest)
+			return
+		}
+		v := *req.MTMExitLevel
+		tr.Config.MTMExitLevel = &v
+	}
+	pctOK := func(p *float64, name string) bool {
+		if p != nil && (math.IsNaN(*p) || *p < 0 || *p > 100) {
+			http.Error(w, name+" must be 0-100 (0 or 100 = complete)", http.StatusBadRequest)
+			return false
+		}
+		return true
+	}
+	if !pctOK(req.MTMExitPct, "mtm_exit_pct") || !pctOK(req.StraddleExitPct, "straddle_exit_pct") {
+		return
+	}
+	if req.MTMExitPct != nil {
+		tr.Config.MTMExitPct = *req.MTMExitPct
+	}
+	if req.StraddleExitOff {
+		tr.Config.StraddleExitBelow = nil
+	} else if req.StraddleExitBelow != nil {
+		if math.IsNaN(*req.StraddleExitBelow) || *req.StraddleExitBelow <= 0 {
+			http.Error(w, "straddle_exit_below must be > 0 (use straddle_exit_off to remove it)", http.StatusBadRequest)
+			return
+		}
+		v := *req.StraddleExitBelow
+		tr.Config.StraddleExitBelow = &v
+	}
+	if req.StraddleExitPct != nil {
+		tr.Config.StraddleExitPct = *req.StraddleExitPct
 	}
 
 	if req.StraddleDiv != nil {

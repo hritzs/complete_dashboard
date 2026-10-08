@@ -8,6 +8,7 @@ package trading
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"time"
 )
@@ -220,7 +221,15 @@ func (e *lutEngine) evaluate(now time.Time, hhmm int, chain *OptionChainSnapshot
 	}
 	m := LUTMinuteInput{HHMM: c.EvalHHMM, Underlying: c.S, RawDTE: c.RawDTE, BusDays: c.BusDays, PrevIV: e.lastIV}
 	if c.Row != nil {
-		m.CELTP, m.PELTP = c.Row.CELtp, c.Row.PELtp
+		var ceCarried, peCarried bool
+		m.CELTP, ceCarried = e.carryLTP(now, c.Row.CEToken, c.Row.CELtp)
+		m.PELTP, peCarried = e.carryLTP(now, c.Row.PEToken, c.Row.PELtp)
+		live := !c.Preview && !man.active() && c.EvalHHMM == now.Hour()*100+now.Minute()
+		if (ceCarried || peCarried) && live && e.carryLogged != c.EvalHHMM {
+			e.carryLogged = c.EvalHHMM // once per minute, not every 100ms tick
+			log.Printf("[LUT] %02d:%02d K=%.0f LTP 0 on the feed -- previous second used: CE %.2f%s PE %.2f%s",
+				c.EvalHHMM/100, c.EvalHHMM%100, c.K, m.CELTP, carriedTag(ceCarried), m.PELTP, carriedTag(peCarried))
+		}
 	}
 	T := math.Max(c.RawDTE/365.0, 1e-5)
 	manualPx := true

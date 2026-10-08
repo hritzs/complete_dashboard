@@ -88,8 +88,11 @@ func (s *Service) sbHandOffLocked(r *sbRunner) bool {
 	if tr.Expiry == "" {
 		tr.Expiry = r.expiry
 	}
+	// The build sells a TOTAL of 2 x Straddles split delta-neutral, so the
+	// legs are rarely equal (CE 585 + PE 715 of 650 is complete): partial
+	// only when the total is short.
 	target := int(cfg.Straddles)
-	if tr.CEQty < target || tr.PEQty < target {
+	if tr.CEQty+tr.PEQty < 2*target {
 		tr.Config.PartialFill = true
 		tr.Config.RequestedCEQty, tr.Config.RequestedPEQty = target, target
 	}

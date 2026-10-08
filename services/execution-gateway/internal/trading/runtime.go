@@ -123,7 +123,7 @@ func (s *Service) ResumeRuntime(trade StoredTrade) {
 // should be monitoring it any more.
 func isTerminalTradeStatus(status string) bool {
 	switch status {
-	case "CLOSED", "CLOSEDSQF", "CLOSED_SQF", "CLOSED_SL", "CLOSED_TP", "CLOSED_TIME", "CLOSED_MANUAL", "FAILED":
+	case "CLOSED", "CLOSEDSQF", "CLOSED_SQF", "CLOSED_SL", "CLOSED_TP", "CLOSED_TIME", "CLOSED_MTM", "CLOSED_STRADDLE", "CLOSED_MANUAL", "FAILED":
 		return true
 	}
 	return false

@@ -13,6 +13,7 @@
 #include <cstdlib>
 
 #include "decoder/socket_reader.hpp"
+#include "decoder/minute_close.hpp"
 #include "decoder/thread_safe_queue.hpp"
 #include "decoder/packet_dispatch.hpp"
 #include "decoder/decompressor.hpp"
@@ -329,8 +330,19 @@ int main() {
             "BANKEX"
         };
 
+        // Fixed-rate schedule: the next publish is due PUBLISH_INTERVAL_MS
+        // after the previous one STARTED, not after it finished -- building
+        // every chain takes ~60ms, which a plain sleep_for added on top
+        // (measured 2026-10-07: ~160ms between publishes instead of 100).
+        // NIFTY's nearest expiry is the first chain built each cycle.
+        auto next_publish = std::chrono::steady_clock::now();
         while (running.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(Config::PUBLISH_INTERVAL_MS));
+            next_publish += std::chrono::milliseconds(Config::PUBLISH_INTERVAL_MS);
+            const auto now_tp = std::chrono::steady_clock::now();
+            if (next_publish < now_tp) {
+                next_publish = now_tp; // overran: publish now, don't burst to catch up
+            }
+            std::this_thread::sleep_until(next_publish);
             print_throttle++;
 
             for (const auto& sym : symbols_to_publish) {
@@ -477,6 +489,24 @@ int main() {
                         json += "\"pe_vega\":" + safe_num(row.pe_greeks.vega) + ",";
                         json += "\"ce_theta\":" + safe_num(row.ce_greeks.theta) + ",";
                         json += "\"pe_theta\":" + safe_num(row.pe_greeks.theta) + ",";
+                        // Exchange trade time + candle close (last trade before
+                        // a minute boundary) for the two nearest expiries --
+                        // the LUT minute and its paper SL/TP use these.
+                        if (exp_index < 2) {
+                            auto close_json = [&](const char* leg, uint32_t token) {
+                                decoder::MinuteClose mc;
+                                if (!token || !decoder::g_minute_close.get(token, mc) || mc.last_ltt_s == 0) return;
+                                const std::string p = std::string("\"") + leg;
+                                json += p + "_ltt\":" + std::to_string(mc.last_ltt_s) + ",";
+                                if (mc.close_next_s > 0) {
+                                    json += p + "_close\":" + safe_num(mc.close_px) + ",";
+                                    json += p + "_close_ltt\":" + std::to_string(mc.close_ltt_s) + ",";
+                                    json += p + "_close_next\":" + std::to_string(mc.close_next_s) + ",";
+                                }
+                            };
+                            close_json("ce", row.ce_token);
+                            close_json("pe", row.pe_token);
+                        }
                         if (exp_index < Config::DEPTH_EXPIRIES && atm_index >= 0 &&
                             std::labs(row_index - atm_index) <= Config::DEPTH_STRIKES_EACH_SIDE) {
                             if (row.ce_depth_ms > 0) json += "\"ce_depth\":" + depth_json(row.ce_bids, row.ce_asks, row.ce_depth_ms) + ",";

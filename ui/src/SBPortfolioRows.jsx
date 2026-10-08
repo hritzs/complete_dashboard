@@ -99,10 +99,9 @@ function SBRow(props) {
     post('/api/sbuild/shadow/stop', { id: s().rule_id });
   };
   const squareOff = () => {
-    const typed = window.prompt(
-      `Square off ${cfg().name || s().rule_id} (${uid()}) with MARKET orders?\nOpen: CE ${qtyOf('CE')} / PE ${qtyOf('PE')}, P&L ₹${fmt(total(), 0)}.\n\nType EXIT to confirm:`);
-    if (typed == null) return;
-    post('/api/sbuild/exit', { id: s().rule_id, confirm: typed.trim() });
+    if (!window.confirm(
+      `Square off ${cfg().name || s().rule_id} (${uid()}) with MARKET orders?\nOpen: CE ${qtyOf('CE')} / PE ${qtyOf('PE')}, P&L ₹${fmt(total(), 0)}.`)) return;
+    post('/api/sbuild/exit', { id: s().rule_id, confirm: 'EXIT' });
   };
 
   return (

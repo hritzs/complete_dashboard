@@ -157,18 +157,65 @@ type lutEngine struct {
 	u0916         float64
 	ogSource      string
 
-	minutes    []LUTEvaluation
-	lastMinute int
-	lastChain  int // minute whose whole chain was last saved
-	lastNext   int // same, next-expiry chain
-	lastIV     float64
-	entry      *LUTEntry
-	startNow   bool
+	minutes     []LUTEvaluation
+	lastMinute  int
+	lastChain   int // minute whose whole chain was last saved
+	lastNext    int // same, next-expiry chain
+	lastIV      float64
+	lastLTP     map[int64]lutLTPSeen // token -> last non-zero LTP, refreshed every tick
+	build       *LUTBuildRun         // today's REAL build fired by the LUT (one per day)
+	tests       []*LUTBuildRun       // today's user test fires (never the day's entry)
+	carryLogged int                  // minute whose carried-LTP fill was last logged
+	entry       *LUTEntry
+	startNow    bool
 
 	live LUTLive
 }
 
 var lutEng = &lutEngine{cfg: LUTConfig{Lots: 1}}
+
+// lutLTPCarry: a leg reading 0 at the minute's first tick takes its last
+// non-zero LTP from at most this long ago (the previous second's data).
+const lutLTPCarry = time.Second
+
+type lutLTPSeen struct {
+	px float64
+	at time.Time
+}
+
+// noteLTPs remembers every non-zero CE/PE LTP in the chain. Caller holds e.mu.
+func (e *lutEngine) noteLTPs(now time.Time, chain *OptionChainSnapshot) {
+	if e.lastLTP == nil {
+		e.lastLTP = make(map[int64]lutLTPSeen)
+	}
+	for _, r := range chain.Chain {
+		if r.CEToken > 0 && r.CELtp > 0 {
+			e.lastLTP[r.CEToken] = lutLTPSeen{r.CELtp, now}
+		}
+		if r.PEToken > 0 && r.PELtp > 0 {
+			e.lastLTP[r.PEToken] = lutLTPSeen{r.PELtp, now}
+		}
+	}
+}
+
+// carryLTP returns px, or -- when px is 0 -- the token's last non-zero LTP
+// if it was seen within lutLTPCarry. Caller holds e.mu.
+func (e *lutEngine) carryLTP(now time.Time, token int64, px float64) (float64, bool) {
+	if px > 0 || token <= 0 {
+		return px, false
+	}
+	if s, ok := e.lastLTP[token]; ok && now.Sub(s.at) <= lutLTPCarry {
+		return s.px, true
+	}
+	return px, false
+}
+
+func carriedTag(carried bool) string {
+	if carried {
+		return " (prev second)"
+	}
+	return ""
+}
 
 // StartLUTEngine starts the always-on paper LUT check (call once at boot).
 func (s *Service) StartLUTEngine() {
@@ -190,6 +237,8 @@ func (e *lutEngine) newDay(day string) {
 	e.inputsOK, e.inputsErr, e.inputsTried = false, "", time.Time{}
 	e.u0916, e.ogSource = 0, ""
 	e.minutes, e.lastMinute, e.lastIV, e.entry = nil, 0, 0, nil
+	e.build, e.tests = nil, nil
+	e.lastLTP = nil
 	e.lastChain, e.lastNext = 0, 0
 	for t := range lutLoadChainRecorded(day) {
 		if hm := lutHHMM(t); hm > e.lastChain {
@@ -203,7 +252,27 @@ func (e *lutEngine) newDay(day string) {
 	}
 	// Restart mid-day: reload what was already recorded today.
 	if mins, st := lutLoadDay(day); len(mins) > 0 || st.U0916 > 0 || st.Entry != nil {
-		e.minutes, e.entry = mins, st.Entry
+		for i := range mins {
+			lutRefreshTP(&mins[i])
+		}
+		if d := st.Entry; d != nil && lutRefreshTP(&d.Evaluation) {
+			d.TPBps = d.Evaluation.TPBps
+			d.TPPoints = d.Underlying * d.TPBps / 10000
+			d.TPRupees = d.TPPoints * float64(d.Qty)
+		}
+		e.minutes, e.entry, e.build, e.tests = mins, st.Entry, st.Build, st.Tests
+		for _, t := range e.tests {
+			if t.Status == "FIRING" {
+				t.Status, t.Error = "UNKNOWN", "gateway restarted while the test build was being sent -- check Portfolio; NOT re-sent"
+			}
+		}
+		if b := e.build; b != nil && b.Status == "FIRING" {
+			// Restarted while the real build was in flight: never re-send it.
+			b.Status = "UNKNOWN"
+			b.Error = "gateway restarted while the build was being sent -- check Portfolio / the broker; it is NOT re-sent"
+			e.saveDayLocked(day)
+			log.Printf("[LUT-BUILD] ⚠ today's REAL build was in flight at restart -- marked UNKNOWN, not re-sent (check Portfolio)")
+		}
 		e.u0916, e.ogSource = st.U0916, st.OGSource
 		if n := len(mins); n > 0 {
 			e.lastMinute = lutHHMM(mins[n-1].Time)
@@ -268,26 +337,6 @@ func (s *Service) lutTick(withGrid bool) {
 		chain = nil
 	}
 
-	// Next weekly expiry: its whole chain at each minute's first tick too
-	// (Paper Sim "Next" view). Fetched outside the lock.
-	if chain != nil && hhmm >= 915 && hhmm <= lutRecordUntil {
-		e.mu.Lock()
-		due := hhmm != e.lastNext && e.day == day
-		if due {
-			e.lastNext = hhmm
-		}
-		e.mu.Unlock()
-		if nx := lutNextExpiry(chain); due && nx != "" {
-			go func(nx string, hhmm int) {
-				nctx, ncancel := context.WithTimeout(context.Background(), 2*time.Second)
-				defer ncancel()
-				if nc, nerr := s.Snapshot.GetOptionChain(nctx, lutSymbol, nx); nerr == nil && nc != nil {
-					lutSaveChainMinuteTo(day, "next", hhmm, nc)
-				}
-			}(nx, hhmm)
-		}
-	}
-
 	e.mu.Lock()
 	live := s.lutComputeLocked(now, day, hhmm, chain, err, cfg, withGrid)
 	e.live = live
@@ -340,6 +389,7 @@ func (s *Service) lutComputeLocked(now time.Time, day string, hhmm int, chain *O
 	}
 
 	if chain != nil {
+		e.noteLTPs(now, chain)
 		if e.expiry != chain.Expiry {
 			e.expiry = chain.Expiry
 		}
@@ -357,19 +407,42 @@ func (s *Service) lutComputeLocked(now time.Time, day string, hhmm int, chain *O
 			}
 			lcancel()
 		}
-		// Every strike at each minute's first tick, 09:15-15:40 (paper sim data).
+	}
+	// The minute's record uses candle closes (last trade before hh:mm:00 by
+	// exchange trade time), built once the ATM closes are final or the
+	// grace period is over -- see lut_close.go.
+	var closed *OptionChainSnapshot
+	if chain != nil && (hhmm != e.lastChain || hhmm != e.lastMinute || e.u0916 <= 0) {
+		if cc, ready := lutCloseChain(chain, now.Truncate(time.Minute), now); ready {
+			closed = cc
+		}
+	}
+	if closed != nil {
+		// Every strike each minute, 09:15-15:40 (paper sim data), and the
+		// next weekly expiry's chain (Paper Sim "Next" view).
 		if hhmm >= 915 && hhmm <= lutRecordUntil && hhmm != e.lastChain {
 			e.lastChain = hhmm
-			lutSaveChainMinute(day, hhmm, chain)
+			lutSaveChainMinute(day, hhmm, closed)
+			if nx := lutNextExpiry(chain); nx != "" && hhmm != e.lastNext {
+				e.lastNext = hhmm
+				go func(nx string, hhmm int, b time.Time) {
+					nctx, ncancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer ncancel()
+					if nc, nerr := s.Snapshot.GetOptionChain(nctx, lutSymbol, nx); nerr == nil && nc != nil {
+						ncc, _ := lutCloseChain(nc, b, time.Now())
+						lutSaveChainMinuteTo(day, "next", hhmm, ncc)
+					}
+				}(nx, hhmm, now.Truncate(time.Minute))
+			}
 		}
 		// Capture the 09:16 future from the live feed only.
-		if S := lutUnderlying(chain); e.u0916 <= 0 && hhmm >= 916 && S > 0 {
+		if S := lutUnderlying(closed); e.u0916 <= 0 && hhmm >= 916 && S > 0 {
 			e.u0916 = S
 			e.ogSource = fmt.Sprintf("captured live at %s", now.Format("15:04:05"))
 			if hhmm != 916 {
 				e.ogSource += " (gateway was not running at 09:16)"
 			}
-			lutSaveDay(lutDayState{Day: day, U0916: e.u0916, OGSource: e.ogSource, Entry: e.entry})
+			e.saveDayLocked(day)
 		}
 	}
 	live.Expiry, live.LotSize = e.expiry, e.lotSize
@@ -435,24 +508,35 @@ func (s *Service) lutComputeLocked(now time.Time, day string, hhmm int, chain *O
 		e.lastIV = ev.BuildIV
 	}
 
-	// Official record: the first tick of each minute inside the window
-	// (live values only, never the what-if).
-	if !lc.Preview && hhmm != e.lastMinute {
+	// Official record: each minute inside the window, from the candle
+	// closes (live feed only, never the what-if).
+	var rc lutCtx
+	if closed != nil && !lc.Preview && hhmm != e.lastMinute {
+		rc = e.evaluate(now, hhmm, closed, cfg, LUTManual{})
+	}
+	if rc.Ev != nil && !rc.Preview {
 		e.lastMinute = hhmm
-		rec := *ev
+		rec := *rc.Ev
 		rec.Time = fmt.Sprintf("%02d:%02d", hhmm/100, hhmm%100)
 		rec.Preview = false
 		rec.NearestYes, rec.NearestYes0920 = nil, nil
 		e.minutes = append(e.minutes, rec)
 		lutSaveMinute(day, rec)
 		lutLogEval(rec)
+		// REAL build: the first YES (minute-end record) while armed, on its
+		// own -- independent of the paper entry ("Start now" never blocks
+		// it); once sent it never fires again that day; a refusal retries
+		// at the next YES.
+		if rec.Allowed {
+			s.lutFireBuildLocked(day, rec, lutMakeEntry(rec, closed, rc.Row, cfg.Lots, e.lotSize))
+		}
 		if rec.Allowed && e.entry == nil {
-			e.entry = lutMakeEntry(rec, chain, lc.Row, cfg.Lots, e.lotSize)
+			e.entry = lutMakeEntry(rec, closed, rc.Row, cfg.Lots, e.lotSize)
 			e.entry.Source = "LUT YES"
 			d := e.entry
-			log.Printf("[LUT] ✅ FIRST YES -- PAPER ENTRY (NOT executed) %s table %s NIFTY %s %.0f SELL CE %d + SELL PE %d (%d lots x %d) fut %.2f adj build IV %.4f SL %.0fbps=%.2fpts TP %.0fbps=%.2fpts coord %s",
-				d.Time, d.Stage, d.Expiry, d.Strike, d.Qty, d.Qty, d.Lots, d.LotSize, d.Underlying, rec.AdjBuildIV, d.SLBps, d.SLPoints, d.TPBps, d.TPPoints, rec.CoordText)
-			lutSaveDay(lutDayState{Day: day, U0916: e.u0916, OGSource: e.ogSource, Entry: e.entry})
+			log.Printf("[LUT] ✅ FIRST YES -- PAPER ENTRY (NOT executed) %s table %s NIFTY %s %.0f SELL CE %d + SELL PE %d (%d lots x %d) fut %.2f build IV %.4f adj build IV %.4f SL %.0fbps=%.2fpts TP %.2fbps=%.2fpts coord %s",
+				d.Time, d.Stage, d.Expiry, d.Strike, d.Qty, d.Qty, d.Lots, d.LotSize, d.Underlying, rec.BuildIV, rec.AdjBuildIV, d.SLBps, d.SLPoints, d.TPBps, d.TPPoints, rec.CoordText)
+			e.saveDayLocked(day)
 		}
 		live.MinutesCount, live.Entry = len(e.minutes), e.entry
 	}
@@ -468,10 +552,10 @@ func (s *Service) lutComputeLocked(now time.Time, day string, hhmm int, chain *O
 			rec.Preview = false
 			e.entry = lutMakeEntry(rec, chain, lc.Row, cfg.Lots, e.lotSize)
 			e.entry.Source = "started manually"
-			lutSaveDay(lutDayState{Day: day, U0916: e.u0916, OGSource: e.ogSource, Entry: e.entry})
+			e.saveDayLocked(day)
 			d := e.entry
-			log.Printf("[LUT] ▶ STARTED MANUALLY -- PAPER ENTRY (NOT executed) %s NIFTY %s %.0f SELL CE %d + SELL PE %d fut %.2f adj build IV %.4f LUT said %v SL %.2fpts TP %.2fpts",
-				d.Time, d.Expiry, d.Strike, d.Qty, d.Qty, d.Underlying, rec.AdjBuildIV, rec.Allowed, d.SLPoints, d.TPPoints)
+			log.Printf("[LUT] ▶ STARTED MANUALLY -- PAPER ENTRY (NOT executed) %s NIFTY %s %.0f SELL CE %d + SELL PE %d fut %.2f build IV %.4f adj build IV %.4f LUT said %v SL %.2fpts TP %.2fpts",
+				d.Time, d.Expiry, d.Strike, d.Qty, d.Qty, d.Underlying, rec.BuildIV, rec.AdjBuildIV, rec.Allowed, d.SLPoints, d.TPPoints)
 			live.Entry = e.entry
 		}
 	}
@@ -526,7 +610,7 @@ func lutLogEval(ev LUTEvaluation) {
 	} else if ev.Allowed {
 		verdict = "YES"
 	}
-	log.Printf("[LUT] %s table=%s fut=%.2f atm=%.0f ce=%.2f pe=%.2f otm=%s@%.2f dte=%.3f/%.3f build_iv=%.4f adj_iv=%.4f [%s] iv_ratio=%.4f [%s] straddle=%.2f str_ratio=%.4f [%s] og=%.4f [%s] adj_chg=%.5f [%s] coord=%s -> %s tp=%.0fbps",
+	log.Printf("[LUT] %s table=%s fut=%.2f atm=%.0f ce=%.2f pe=%.2f otm=%s@%.2f dte=%.3f/%.3f build_iv=%.4f adj_iv=%.4f [%s] iv_ratio=%.4f [%s] straddle=%.2f str_ratio=%.4f [%s] og=%.4f [%s] adj_chg=%.5f [%s] coord=%s -> %s tp=%.2fbps",
 		ev.Time, ev.Stage, ev.Underlying, ev.Strike, ev.CELTP, ev.PELTP, ev.OTMLeg, ev.OTMPrice, ev.RawDTE, ev.TradingDTE,
 		ev.BuildIV, ev.AdjBuildIV, ev.BldLabel, ev.IVRatio, ev.IVLabel, ev.Straddle, ev.StrRatio, ev.StrLabel,
 		ev.NormOG, ev.OGLabel, ev.AdjIVChg, ev.AdjLabel, ev.CoordText, verdict, ev.TPBps)

@@ -33,6 +33,19 @@ type OptionChainRow struct {
 	// nearest expiries only); nil when not published / not yet received.
 	CEDepth *DepthBook `json:"ce_depth,omitempty"`
 	PEDepth *DepthBook `json:"pe_depth,omitempty"`
+
+	// Exchange trade time of the LTP and the candle close (feed-decoder's
+	// MinuteCloseTracker, two nearest expiries; unix seconds, 0 = absent):
+	// *Close is the last trade before every minute boundary B with
+	// *CloseLTT < B <= *CloseNext. See lutCloseBefore.
+	CELTT       int64   `json:"ce_ltt,omitempty"`
+	PELTT       int64   `json:"pe_ltt,omitempty"`
+	CEClose     float64 `json:"ce_close,omitempty"`
+	PEClose     float64 `json:"pe_close,omitempty"`
+	CECloseLTT  int64   `json:"ce_close_ltt,omitempty"`
+	PECloseLTT  int64   `json:"pe_close_ltt,omitempty"`
+	CECloseNext int64   `json:"ce_close_next,omitempty"`
+	PECloseNext int64   `json:"pe_close_next,omitempty"`
 }
 
 // DepthBook is one option's 5-level book, best level first. Each level is
@@ -285,6 +298,9 @@ type MonitorConfig struct {
 
 	// Modifications: every Modify Config change (time, field, from -> to).
 	Modifications []ConfigChange `json:"modifications,omitempty"`
+	// RiskExcludedTokens: manually added legs kept out of PnL / greeks /
+	// PointsOut / SL / TP (still shown, still closed by Full Exit).
+	RiskExcludedTokens []int64 `json:"risk_excluded_tokens,omitempty"`
 
 	// === ENTRY MODES (mutually exclusive: scheduled vs price-trigger vs manual) ===
 	// Scheduled entry: fire at this exact time (e.g., 09:20:00)
@@ -312,6 +328,26 @@ type MonitorConfig struct {
 	// MTM-based square-off: exit if intraday MTM crosses this threshold (+/- ₹ value)
 	// Positive = take profit, negative = stop loss
 	MTMSquareOffThreshold float64 `json:"mtm_square_off_threshold,omitempty"`
+	// MTM exit (mtm_exit.go), on every trade: nil = infinity (never
+	// fires). When set, the trade is closed lot by lot at depth-checked IOC
+	// limits once its executable MTM >= the level, ending at or above it.
+	// Unit: "rs" (trade total, default), "pts" (per straddle), "bps" (of
+	// spot, per straddle).
+	MTMExitLevel *float64 `json:"mtm_exit_level,omitempty"`
+	MTMExitUnit  string   `json:"mtm_exit_unit,omitempty"`
+	// MTMExitPct: share of the ORIGINAL position the MTM exit closes (0 or
+	// 100 = complete). MTMExitClosedQty: straddle contracts it has closed
+	// so far (CE+PE) -- it never closes more than its share, and never more
+	// than is open (combined_sqf.go).
+	MTMExitPct       float64 `json:"mtm_exit_pct,omitempty"`
+	MTMExitClosedQty int64   `json:"mtm_exit_closed_qty,omitempty"`
+
+	// ATM-straddle exit (combined_sqf.go): when the live ATM CE LTP + PE
+	// LTP falls BELOW this level, close StraddleExitPct of the ORIGINAL
+	// position (0 or 100 = complete); above it, nothing. nil = off.
+	StraddleExitBelow     *float64 `json:"straddle_exit_below,omitempty"`
+	StraddleExitPct       float64  `json:"straddle_exit_pct,omitempty"`
+	StraddleExitClosedQty int64    `json:"straddle_exit_closed_qty,omitempty"`
 	// Straddle-price-based square-off: exit ONLY if straddle price falls BELOW this level
 	// If straddle price is between this and EntryStraddlePriceTrigger, hold/manage position
 	// and re-check every poll cycle; square off only when price actually drops below this.
@@ -365,24 +401,32 @@ type TradeLegSnapshot struct {
 	Vega       float64 `json:"vega"`
 	// Wing marks a margin-only wing leg: shown, never in the totals.
 	Wing bool `json:"wing,omitempty"`
+	// Excluded: a manually added leg the user chose to keep OUT of the
+	// trade's PnL / greeks / SL / TP (shown, closed with the trade).
+	Excluded bool   `json:"excluded,omitempty"`
+	Expiry   string `json:"expiry,omitempty"`
 }
 
 type TradeSnapshot struct {
-	TradeUID         string             `json:"trade_uid"`
-	Timestamp        time.Time          `json:"timestamp"`
-	Status           string             `json:"status"`
-	Symbol           string             `json:"symbol"`
-	Expiry           string             `json:"expiry"`
-	Strike           float64            `json:"strike"`
-	Underlying       float64            `json:"underlying"`
-	TotalPNL         float64            `json:"total_pnl"`
-	RealizedPNL      float64            `json:"realized_pnl"`
-	UnrealizedPNL    float64            `json:"unrealized_pnl"`
-	NetDelta         float64            `json:"net_delta"`
-	NetGamma         float64            `json:"net_gamma"`
-	NetTheta         float64            `json:"net_theta"`
-	NetVega          float64            `json:"net_vega"`
-	PnLPerStraddle   float64            `json:"pnl_per_straddle"`
+	TradeUID       string    `json:"trade_uid"`
+	Timestamp      time.Time `json:"timestamp"`
+	Status         string    `json:"status"`
+	Symbol         string    `json:"symbol"`
+	Expiry         string    `json:"expiry"`
+	Strike         float64   `json:"strike"`
+	Underlying     float64   `json:"underlying"`
+	TotalPNL       float64   `json:"total_pnl"`
+	RealizedPNL    float64   `json:"realized_pnl"`
+	UnrealizedPNL  float64   `json:"unrealized_pnl"`
+	NetDelta       float64   `json:"net_delta"`
+	NetGamma       float64   `json:"net_gamma"`
+	NetTheta       float64   `json:"net_theta"`
+	NetVega        float64   `json:"net_vega"`
+	PnLPerStraddle float64   `json:"pnl_per_straddle"`
+	// MTM exit: the level in rupees (nil = infinity, never fires) and the
+	// trade's executable MTM (closing every open leg through the depth now).
+	MTMExitFloor     *float64           `json:"mtm_exit_floor,omitempty"`
+	MTMExecPNL       *float64           `json:"mtm_exec_pnl,omitempty"`
 	StraddleQuantity int64              `json:"straddle_quantity"`
 	PointsOut        float64            `json:"points_out"`
 	PointsAllowed    float64            `json:"points_allowed"`

@@ -24,6 +24,10 @@ struct Nse7208Record {
     uint16_t book_type = 0;
     uint32_t volume = 0;
     double ltp = 0.0;
+    // Exchange last-trade time, whole seconds since 1980-01-01 IST
+    // (record offset 30, confirmed live 2026-10-07 against the header
+    // LogTime and GreekSoft's own ltt). 0 = no trade yet.
+    uint32_t last_trade_time = 0;
     std::array<Nse7208Level, 5> buy{};   // best bid first, descending price
     std::array<Nse7208Level, 5> sell{};  // best ask first, ascending price
 };

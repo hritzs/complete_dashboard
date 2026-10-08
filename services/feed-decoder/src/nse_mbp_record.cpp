@@ -53,6 +53,7 @@ std::vector<Nse7208Record> parse_nse_7208_records(const uint8_t* b, size_t len) 
         parsed.book_type = be16(rec + 4);
         parsed.volume = be32(rec + 8);
         parsed.ltp = be32(rec + 16) / 100.0;
+        parsed.last_trade_time = be32(rec + 30);
 
         // Each 16-byte level is: qty (int64) | price (int32) | orders
         // (int16) | flag (int16), the first level's qty at offset 60 --

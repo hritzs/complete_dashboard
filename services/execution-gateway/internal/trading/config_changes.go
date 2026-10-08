@@ -42,12 +42,27 @@ func cfgPtr(p *float64) string {
 	return fmt.Sprintf("%g", *p)
 }
 
+// cfgMTM shows the MTM exit level ("∞" when unset).
+func cfgMTM(c MonitorConfig) string {
+	if c.MTMExitLevel == nil {
+		return "∞"
+	}
+	u := c.MTMExitUnit
+	if u == "" {
+		u = "rs"
+	}
+	return fmt.Sprintf("%g %s", *c.MTMExitLevel, u)
+}
+
 // diffMonitorConfig lists every user-facing setting that differs.
 func diffMonitorConfig(a, b MonitorConfig) []ConfigChange {
 	type f struct{ name, from, to string }
 	fields := []f{
 		{"SL (bps of spot)", cfgNum(a.SLPnLBpsOfSpot), cfgNum(b.SLPnLBpsOfSpot)},
 		{"TP (bps of spot)", cfgNum(a.TPPnLBpsOfSpot), cfgNum(b.TPPnLBpsOfSpot)},
+		{"MTM exit", cfgMTM(a), cfgMTM(b)},
+		{"MTM exit share", fmt.Sprintf("%.0f%%", ruleShare(a.MTMExitPct)), fmt.Sprintf("%.0f%%", ruleShare(b.MTMExitPct))},
+		{"ATM straddle exit below", ruleLabel(a.StraddleExitBelow, a.StraddleExitPct, ""), ruleLabel(b.StraddleExitBelow, b.StraddleExitPct, "")},
 		{"Exit time", cfgClock(a.SquareOffHardTime), cfgClock(b.SquareOffHardTime)},
 		{"Straddle divisor", cfgNum(a.StraddleDiv), cfgNum(b.StraddleDiv)},
 		{"Hedge divisor", cfgNum(a.HedgeDiv), cfgNum(b.HedgeDiv)},

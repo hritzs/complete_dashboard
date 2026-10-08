@@ -44,6 +44,18 @@ type PaperSimConfig struct {
 	HedgeMode   string  `json:"hedge_mode"`     // synthetic (default) / lots / off
 	View        string  `json:"view,omitempty"` // "" current expiry / "next"
 	CreatedAt   string  `json:"created_at,omitempty"`
+
+	// MTM square-off (its own exit type, separate from SL/TP/time): once
+	// the trade can be closed at executable prices (shorts at the ask,
+	// longs at the bid) with total MTM >= the level, close it lot by lot,
+	// each lot only while the trade still ends at or above the level.
+	// Level in MTMSqfUnit: "rs" (trade total), "pts" (per straddle) or
+	// "bps" (of the entry future, per straddle) -- converted to rupees at
+	// entry. MTMSqfPct: share of the position to close (default 100).
+	MTMSqfOn    bool    `json:"mtm_sqf_on,omitempty"`
+	MTMSqfLevel float64 `json:"mtm_sqf_level,omitempty"`
+	MTMSqfUnit  string  `json:"mtm_sqf_unit,omitempty"`
+	MTMSqfPct   float64 `json:"mtm_sqf_pct,omitempty"`
 }
 
 type PaperSimLeg struct {
@@ -96,6 +108,10 @@ type PaperSimPoint struct {
 	Source          string        `json:"source"` // worst price source used this minute
 	Event           string        `json:"event,omitempty"`
 	Legs            []PaperSimLeg `json:"legs,omitempty"`
+	// ExecPnL: total MTM if the whole position were closed now at
+	// executable prices (shorts at the ask, longs at the bid) -- what the
+	// MTM square-off compares to its level. 0 when that rule is off.
+	ExecPnL float64 `json:"exec_pnl,omitempty"`
 }
 
 type PaperSimHedge struct {
@@ -150,7 +166,10 @@ type PaperSimResult struct {
 	Legs           []PaperSimLeg   `json:"legs"`
 	Series         []PaperSimPoint `json:"series"`
 	Hedges         []PaperSimHedge `json:"hedges"`
-	Reconstructed  int             `json:"reconstructed_minutes"` // minutes priced (partly) by BS
+	MTMSqfFloor    float64         `json:"mtm_sqf_floor,omitempty"` // the level in rupees (0 with the rule off)
+	MTMSqfTime     string          `json:"mtm_sqf_time,omitempty"`  // minute it fired
+	MTMSqfLots     int64           `json:"mtm_sqf_lots,omitempty"`  // lots it closed
+	Reconstructed  int             `json:"reconstructed_minutes"`   // minutes priced (partly) by BS
 	Notes          []string        `json:"notes,omitempty"`
 	Error          string          `json:"error,omitempty"`
 }
@@ -208,6 +227,7 @@ func lutLoadSimSet(day, set string) []simMinute {
 		m.hasLUT = true
 		m.Ts = e.Time + ":00 (first tick)"
 		m.Future, m.lutK, m.lutCE, m.lutPE = e.Underlying, e.Strike, e.CELTP, e.PELTP
+		lutRefreshTP(&e)
 		m.ATM, m.IV, m.DTE, m.TPBps = e.Strike, e.BuildIV, e.RawDTE, e.TPBps
 		switch {
 		case e.Skip != "":
@@ -404,6 +424,14 @@ func paperDefaults(c PaperSimConfig) PaperSimConfig {
 	}
 	if c.HedgeMinBps <= 0 {
 		c.HedgeMinBps = defaultHedgeMinThresholdBps
+	}
+	if c.MTMSqfPct <= 0 || c.MTMSqfPct > 100 {
+		c.MTMSqfPct = 100
+	}
+	switch c.MTMSqfUnit {
+	case "rs", "pts", "bps":
+	default:
+		c.MTMSqfUnit = "rs"
 	}
 	switch c.HedgeMode {
 	case "synthetic", "lots", "off":
@@ -607,6 +635,13 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 	res.TPPoints = m0.Future * res.TPBps / 10000
 	res.MinStraddle, res.MaxStraddle = ce+pe, ce+pe
 
+	// MTM square-off: level in rupees, and how many lots it may close.
+	mtmWant := int64(0)
+	if c.MTMSqfOn {
+		res.MTMSqfFloor = mtmSqfFloor(c, m0.Future, q)
+		mtmWant = int64(math.Ceil(float64(c.Lots) * c.MTMSqfPct / 100))
+	}
+
 	book := &simBook{legs: map[string]*simLeg{}}
 	book.fill("BUILD", K, "CE", "SELL", q, ce)
 	book.fill("BUILD", K, "PE", "SELL", q, pe)
@@ -692,6 +727,32 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 			exit = "TP"
 		} else if exitAt > 0 && m.HHMM >= exitAt {
 			exit = "TIME"
+		}
+		if c.MTMSqfOn {
+			pt.ExecPnL, _ = book.execMTM(m)
+		}
+		if exit == "" && mtmWant > 0 {
+			if closed, ev := mtmSqfStep(book, m, lotSize, res.MTMSqfFloor, mtmWant); closed > 0 {
+				mtmWant -= closed
+				if res.MTMSqfTime == "" {
+					res.MTMSqfTime = m.Time
+				}
+				res.MTMSqfLots += closed
+				after := book.value(m, q)
+				posMarks(m, &after)
+				hedgeCheck(m, &after)
+				after.ExecPnL, _ = book.execMTM(m)
+				after.Event = ev
+				if book.buildLots(lotSize) == 0 {
+					after.Event += " EXIT MTM_SQF"
+					after.HedgeCheck = "EXITED"
+					res.Series = append(res.Series, after)
+					res.Status, res.ExitTime, res.ExitReason = "EXITED", m.Time, "MTM_SQF"
+					break
+				}
+				res.Series = append(res.Series, after) // partial: the rest runs on (no re-hedge this minute)
+				continue
+			}
 		}
 		d := hedgeCheck(m, &pt)
 		if exit == "" && c.HedgeMode == "synthetic" && pt.HedgeCheck == "RISK_BREACH" {
@@ -953,6 +1014,20 @@ func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 		hedgeMode = "synthetic"
 	}
 	hedge := hedgeMode == "lots"
+	// MTM square-off, applied to every simulated build: mtm=<level>
+	// (blank = off), mtm_unit=rs|pts|bps, mtm_pct=<1-100>.
+	var mtmCfg PaperSimConfig
+	if v := strings.TrimSpace(q.Get("mtm")); v != "" {
+		if _, err := fmt.Sscanf(v, "%g", &mtmCfg.MTMSqfLevel); err == nil {
+			mtmCfg.MTMSqfOn = true
+			mtmCfg.MTMSqfUnit = strings.TrimSpace(q.Get("mtm_unit"))
+			fmt.Sscanf(q.Get("mtm_pct"), "%g", &mtmCfg.MTMSqfPct)
+		}
+	}
+	withMTM := func(c PaperSimConfig) PaperSimConfig {
+		c.MTMSqfOn, c.MTMSqfLevel, c.MTMSqfUnit, c.MTMSqfPct = mtmCfg.MTMSqfOn, mtmCfg.MTMSqfLevel, mtmCfg.MTMSqfUnit, mtmCfg.MTMSqfPct
+		return c
+	}
 	// Default: think in ONE straddle (qty 1 per leg, no lots); size is a
 	// plain quantity multiplier. Only the ATM-lots hedge mode uses lots.
 	unit := hedgeMode != "lots"
@@ -1034,7 +1109,7 @@ func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 		if size > 0 {
 			c.Lots = size
 		}
-		sims = append(sims, RunPaperSim(mins, c, runLot, live))
+		sims = append(sims, RunPaperSim(mins, withMTM(c), runLot, live))
 	}
 	src := map[string]int{}
 	for _, m := range mins {
