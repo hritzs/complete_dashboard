@@ -358,6 +358,16 @@ func (s *Service) mtmExitRunOpts(tradeUID string, o mtmRunOpts) {
 			}
 		}
 	}
+	// Each leg's share at the start: the next lot always goes to the leg
+	// that is furthest BEHIND its share (least closed so far, as a fraction),
+	// so the straddle and the hedge legs come down together in the position's
+	// own ratio and the delta stays where it was. (Picking the leg with the
+	// most quantity left closed the straddle first and the hedges last; delta
+	// drifted to ~+500 mid-exit, 14:01 2026-10-09.)
+	tgt0 := map[int64]int64{}
+	for t, q := range targets {
+		tgt0[t] = q
+	}
 	var shortChangeCE, shortChangePE int64
 	misses := 0
 	for step := 0; step < 2000; step++ {
@@ -370,13 +380,19 @@ func (s *Service) mtmExitRunOpts(tradeUID string, o mtmRunOpts) {
 			return
 		}
 		rowOf := mtmRowLookup(chain)
-		// Next lot: the open leg with the most of its target left (keeps
-		// CE/PE paired), never beyond what it holds.
+		// Next lot: the open leg with the largest fraction of its share
+		// still to close (ties: the larger quantity), never beyond what it
+		// holds -- every leg is closed pro rata, lot by lot.
 		var pick *mtmLeg
+		pickLeft, pickFrac := int64(0), 0.0
 		for i := range legs {
 			left := min(targets[legs[i].Token], abs64(legs[i].NetShort))
-			if left > 0 && (pick == nil || left > min(targets[pick.Token], abs64(pick.NetShort))) {
-				pick = &legs[i]
+			if left <= 0 || tgt0[legs[i].Token] <= 0 {
+				continue
+			}
+			frac := float64(left) / float64(tgt0[legs[i].Token])
+			if pick == nil || frac > pickFrac+1e-9 || (math.Abs(frac-pickFrac) <= 1e-9 && left > pickLeft) {
+				pick, pickLeft, pickFrac = &legs[i], left, frac
 			}
 		}
 		if pick == nil {
