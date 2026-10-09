@@ -43,7 +43,78 @@ const (
 	// never had the candle earlier than ~+0.25-0.3 s; earlier asks only add
 	// load).
 	gsCaptureStart = 250 * time.Millisecond
+	// gsGateMaxWait: legs waiting for the lead's "candle is out" give up
+	// waiting at this point after the boundary and ask themselves.
+	gsGateMaxWait = 1300 * time.Millisecond
 )
+
+// gsGate: GreekSoft answers its REST requests about two at a time (6 sent
+// together finished at 100/170/245/245/380 ms on a quiet second, ~3x slower
+// at the boundary, 14:17 2026-10-09), so every extra request -- above all
+// the "candle not out yet" misses of 6-8 legs polling together -- delays
+// the real answers. So per boundary ONE leg, the lead (the ATM CE), asks
+// until the candle is out; every other leg waits for that and then asks
+// once, the ATM PE first, the held legs right behind it.
+var gsGate struct {
+	mu   sync.Mutex
+	b    int64
+	lead int64
+	prio map[int64]bool
+	open chan struct{}
+}
+
+// gsGateFor (caller holds gsGate.mu) resets the gate for boundary b.
+func gsGateFor(b int64) {
+	if gsGate.b != b {
+		gsGate.b, gsGate.lead, gsGate.prio, gsGate.open = b, 0, nil, make(chan struct{})
+	}
+}
+
+// gsGateSet names the lead and the priority legs of boundary b.
+func gsGateSet(b, lead int64, prio map[int64]bool) {
+	gsGate.mu.Lock()
+	gsGateFor(b)
+	if gsGate.lead == 0 {
+		gsGate.lead = lead
+	}
+	gsGate.prio = prio
+	gsGate.mu.Unlock()
+}
+
+// gsGateOpen: the candle of boundary b is out.
+func gsGateOpen(b int64) {
+	gsGate.mu.Lock()
+	gsGateFor(b)
+	select {
+	case <-gsGate.open:
+	default:
+		close(gsGate.open)
+	}
+	gsGate.mu.Unlock()
+}
+
+// gsGateWait returns when token may ask: it is the lead (the first leg to
+// ask becomes the lead when the capture named none), the candle is out
+// (non-priority legs a moment after the ATM PE), or gsGateMaxWait passed.
+func gsGateWait(token int64, b time.Time) {
+	gsGate.mu.Lock()
+	gsGateFor(b.Unix())
+	if gsGate.lead == 0 {
+		gsGate.lead = token
+	}
+	lead, prio, open := gsGate.lead == token, gsGate.prio[token], gsGate.open
+	gsGate.mu.Unlock()
+	if lead {
+		return
+	}
+	select {
+	case <-open:
+		if !prio {
+			time.Sleep(10 * time.Millisecond) // the ATM pair goes out first
+		}
+	case <-time.After(time.Until(b.Add(gsGateMaxWait))):
+	}
+}
 
 // gsArrived wakes the LUT loop as soon as a close is in (instead of its
 // next 100 ms tick).
@@ -100,8 +171,15 @@ func (s *Service) gsCaptureLoop() {
 		if s.gsCloseProvider() == nil || !sbLiveWindow(b.Add(-time.Minute).In(lutIST())) {
 			continue
 		}
-		for tok := range s.gsTokens(0) {
-			go s.gsCloseAt(tok, b)
+		toks, atmCE, atmPE := s.gsTokens(0)
+		gsGateSet(b.Unix(), atmCE, map[int64]bool{atmCE: true, atmPE: true})
+		if atmCE > 0 {
+			go s.gsCloseAt(atmCE, b) // the lead first
+		}
+		for tok, ok := range toks {
+			if ok && tok != atmCE {
+				go s.gsCloseAt(tok, b)
+			}
 		}
 	}
 }
@@ -124,8 +202,8 @@ func gsAfterBoundary() {
 // gsTokens: CE + PE within band strikes of the ATM (band 0: the ATM, plus
 // the neighbouring strike when the synthetic is within 10 pts of the middle
 // between two strikes) and every leg the open positions hold.
-func (s *Service) gsTokens(band int) map[int64]bool {
-	toks := map[int64]bool{}
+func (s *Service) gsTokens(band int) (toks map[int64]bool, atmCE, atmPE int64) {
+	toks = map[int64]bool{}
 	if s.Snapshot != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		if c, err := s.Snapshot.GetOptionChain(ctx, lutSymbol, ""); err == nil && c != nil {
@@ -143,6 +221,9 @@ func (s *Service) gsTokens(band int) map[int64]bool {
 				if near {
 					toks[r.CEToken], toks[r.PEToken] = r.CEToken > 0, r.PEToken > 0
 				}
+				if d < 1e-6 {
+					atmCE, atmPE = r.CEToken, r.PEToken
+				}
 			}
 		}
 		cancel()
@@ -154,7 +235,7 @@ func (s *Service) gsTokens(band int) map[int64]bool {
 		}
 	}
 	pm.mu.Unlock()
-	return toks
+	return toks, atmCE, atmPE
 }
 
 func (s *Service) gsWarmNow() {
@@ -162,7 +243,7 @@ func (s *Service) gsWarmNow() {
 	if p == nil || !sbLiveWindow(time.Now().In(lutIST())) {
 		return
 	}
-	toks := s.gsTokens(gsWarmStrikes)
+	toks, _, _ := s.gsTokens(gsWarmStrikes)
 	day := time.Now().In(lutIST()).Format("20060102")
 	for tok, ok := range toks {
 		if !ok || tok <= 0 {
@@ -278,12 +359,16 @@ func gsFetch(p MinuteCloseProvider, k gsCloseKey, day string, deadline time.Time
 			}
 			v, ok := gsc.got[k]
 			gsc.mu.Unlock()
+			if ok {
+				gsGateOpen(k.b) // the candle is out: the other legs ask now
+			}
 			res <- result{v: v, ok: ok}
 		}()
 	}
 	tick := time.NewTicker(gsClosePoll)
 	defer tick.Stop()
 	var lastErr error
+	gsGateWait(token, b)
 	launch()
 	for {
 		select {
