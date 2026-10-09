@@ -50,8 +50,9 @@ var gsc struct {
 
 // gsWarmLoop pre-loads GreekSoft candles so the boundary request is fast
 // (the first request for a token after a pause took ~0.9 s; 11:43
-// 2026-10-09 right after a restart timed out). Twice a minute (:20 / :50)
-// and once at start it requests:
+// 2026-10-09 right after a restart timed out). Once a minute (:50, ~10 s
+// before the boundary; the boundary fetch itself keeps the ATM / held legs
+// hot) and once at start it requests:
 //   - CE + PE of the ATM +/- gsWarmStrikes strikes of the nearest expiry
 //     (an ATM that jumps at the boundary is already warm),
 //   - every leg the open trades hold (portfolio view),
@@ -63,7 +64,7 @@ func (s *Service) gsWarmLoop() {
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
 	for now := range t.C {
-		if sec := now.Second(); sec == 20 || sec == 50 {
+		if now.Second() == 50 {
 			s.gsWarmNow()
 		}
 	}
