@@ -96,17 +96,17 @@ func legCloseTargets(legs []mtmLeg, rem, open, lot int64) map[int64]int64 {
 // (complete via SquareOff "STRADDLE", partial via PSQF of the open
 // position), and records what it closed. Returns true if it acted.
 func (s *Service) straddleExitCheck(trade StoredTrade, chain *OptionChainSnapshot) bool {
-	if trade.Config.StraddleExitBelow == nil || trade.Status != "ACTIVE" || !sbLiveWindow(time.Now().In(lutIST())) {
+	rules := straddleRules(trade.Config) // highest level first (exit_tiers.go)
+	if len(rules) == 0 || trade.Status != "ACTIVE" || !sbLiveWindow(time.Now().In(lutIST())) {
 		return false
 	}
 	atm, err := FindATMRow(*chain)
 	if err != nil || atm.CELtp <= 0 || atm.PELtp <= 0 {
 		return false
 	}
-	level := *trade.Config.StraddleExitBelow
 	straddle := atm.CELtp + atm.PELtp
-	if straddle >= level {
-		return false
+	if straddle >= rules[0].level {
+		return false // above every level
 	}
 	src, ok := s.Store.(interface {
 		TradeLegCash(ctx context.Context, tradeUID string) ([]mtmLeg, error)
@@ -121,23 +121,31 @@ func (s *Service) straddleExitCheck(trade StoredTrade, chain *OptionChainSnapsho
 		return false
 	}
 	open, orig := straddleOpenOrig(legs, trade)
-	rem := ruleRemaining(trade.Config.StraddleExitPct, orig, trade.Config.StraddleExitClosedQty, open, int64(trade.LotSize))
-	if rem <= 0 {
-		return false // its share is done (or nothing open)
+	// The first step below whose level the straddle is and with a share
+	// left fires; lower steps wait for it.
+	for _, r := range rules {
+		if straddle >= r.level {
+			return false
+		}
+		rem := ruleRemaining(r.pct, orig, r.closed, open, int64(trade.LotSize))
+		if rem <= 0 {
+			continue // this step's share is done (or nothing open)
+		}
+		if s.exitRunning(trade.TradeUID) {
+			return false
+		}
+		log.Printf("[RISK] STRADDLE_TRIGGER trade=%s %s: ATM %.0f straddle %.2f (CE %.2f + PE %.2f) < %.2f -- closing %d of %d open straddle contracts (%.0f%% of %d, %d closed before by this step)",
+			trade.TradeUID, r.name(), atm.Strike, straddle, atm.CELtp, atm.PELtp, r.level, rem, open, ruleShare(r.pct), orig, r.closed)
+		idx := r.idx
+		return s.runExitAsync(trade.TradeUID, "STRADDLE", func() { s.straddleExitRun(trade, src, rem, open, idx) })
 	}
-	if s.exitRunning(trade.TradeUID) {
-		return false
-	}
-	log.Printf("[RISK] STRADDLE_TRIGGER trade=%s ATM %.0f straddle %.2f (CE %.2f + PE %.2f) < %.2f -- closing %d of %d open straddle contracts (rule %.0f%% of %d, %d closed before)",
-		trade.TradeUID, atm.Strike, straddle, atm.CELtp, atm.PELtp, level, rem, open, ruleShare(trade.Config.StraddleExitPct), orig, trade.Config.StraddleExitClosedQty)
-
-	return s.runExitAsync(trade.TradeUID, "STRADDLE", func() { s.straddleExitRun(trade, src, rem, open) })
+	return false
 }
 
 // straddleExitRun closes the straddle rule's share and records it.
 func (s *Service) straddleExitRun(trade StoredTrade, src interface {
 	TradeLegCash(ctx context.Context, tradeUID string) ([]mtmLeg, error)
-}, rem, open int64) {
+}, rem, open int64, rule int) {
 	var runErr error
 	if rem >= open {
 		runErr = s.SquareOff(trade.TradeUID, "STRADDLE")
@@ -151,7 +159,7 @@ func (s *Service) straddleExitRun(trade StoredTrade, src interface {
 	if aerr == nil {
 		open2, _ := straddleOpenOrig(after, trade)
 		if tr, ok := s.Store.LoadTrade(trade.TradeUID); ok && open2 < open {
-			tr.Config.StraddleExitClosedQty += open - open2
+			addStraddleClosed(&tr.Config, rule, open-open2)
 			tr.LastUpdateTime = time.Now()
 			s.Store.UpdateTrade(tr)
 			if isTerminalTradeStatus(tr.Status) {

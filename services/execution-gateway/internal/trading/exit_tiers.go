@@ -43,7 +43,7 @@ func (r exitRule) name() string {
 	if r.idx < 0 {
 		return "main rule"
 	}
-	return fmt.Sprintf("step %d", r.idx+1)
+	return fmt.Sprintf("step at %g", r.level)
 }
 
 // mtmRules: the MTM main rule and steps, lowest level first.

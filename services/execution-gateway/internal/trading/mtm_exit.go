@@ -104,6 +104,12 @@ func mtmLegsFromExecutions(execs []OrderExecution) []mtmLeg {
 	return out
 }
 
+// mtmFloorOf converts an MTM level (in the trade's unit) to rupees.
+func mtmFloorOf(lvl float64, unit string, spot float64, straddleQty int64) float64 {
+	f, _ := mtmExitFloor(MonitorConfig{MTMExitLevel: &lvl, MTMExitUnit: unit}, spot, straddleQty)
+	return f
+}
+
 // mtmExitFloor converts the trade's level to rupees.
 func mtmExitFloor(cfg MonitorConfig, spot float64, straddleQty int64) (float64, bool) {
 	if cfg.MTMExitLevel == nil {
@@ -244,8 +250,13 @@ func mtmLotLimit(book []DepthLevel, qty int64, buy bool, execMTM, floor float64)
 // It returns the executable MTM and floor for display; when the level is
 // reached it runs the exit (synchronously, like the SL exit) and ran=true.
 func (s *Service) mtmExitCheck(trade StoredTrade, chain *OptionChainSnapshot, spot float64, straddleQty int64) (execMTM, floor float64, ok, ran bool) {
-	floor, on := mtmExitFloor(trade.Config, spot, straddleQty)
-	if !on || trade.Status != "ACTIVE" || !sbLiveWindow(time.Now().In(lutIST())) {
+	// The main rule and its steps, lowest level first (exit_tiers.go).
+	rules := mtmRules(trade.Config)
+	if len(rules) == 0 {
+		return 0, 0, false, false
+	}
+	floor = mtmFloorOf(rules[0].level, trade.Config.MTMExitUnit, spot, straddleQty)
+	if trade.Status != "ACTIVE" || !sbLiveWindow(time.Now().In(lutIST())) {
 		return 0, floor, false, false
 	}
 	src, has := s.Store.(interface {
@@ -261,20 +272,32 @@ func (s *Service) mtmExitCheck(trade StoredTrade, chain *OptionChainSnapshot, sp
 		return 0, floor, false, false
 	}
 	execMTM, ok = mtmExecMTM(legs, mtmRowLookup(chain))
-	if !ok || execMTM < floor {
+	if !ok {
 		return execMTM, floor, ok, false
 	}
 	open, orig := straddleOpenOrig(legs, trade)
-	rem := ruleRemaining(trade.Config.MTMExitPct, orig, trade.Config.MTMExitClosedQty, open, int64(trade.LotSize))
-	if rem <= 0 {
-		return execMTM, floor, ok, false // its share is done
+	// The first step with a share left is the one in play (and shown); it
+	// fires once the executable MTM reaches its level. Higher steps wait
+	// for it.
+	for _, r := range rules {
+		rem := ruleRemaining(r.pct, orig, r.closed, open, int64(trade.LotSize))
+		if rem <= 0 {
+			continue // its share is done
+		}
+		fl := mtmFloorOf(r.level, trade.Config.MTMExitUnit, spot, straddleQty)
+		floor = fl
+		if execMTM < fl {
+			return execMTM, floor, ok, false
+		}
+		idx := r.idx
+		started := s.runExitAsync(trade.TradeUID, "MTM", func() { s.mtmExitRun(trade.TradeUID, fl, idx) })
+		if started {
+			log.Printf("[RISK] MTM_TRIGGER trade=%s %s: executable MTM %.2f >= level %.2f (%s %v) -- closing %d of %d open straddle contracts (%.0f%% of %d, %d closed before by this step) lot by lot at depth-checked IOC limits",
+				trade.TradeUID, r.name(), execMTM, fl, trade.Config.MTMExitUnit, r.level, rem, open, ruleShare(r.pct), orig, r.closed)
+		}
+		return execMTM, floor, true, started
 	}
-	started := s.runExitAsync(trade.TradeUID, "MTM", func() { s.mtmExitRun(trade.TradeUID, floor) })
-	if started {
-		log.Printf("[RISK] MTM_TRIGGER trade=%s executable MTM %.2f >= level %.2f (%s %v) -- closing %d of %d open straddle contracts (rule %.0f%% of %d, %d closed before) lot by lot at depth-checked IOC limits",
-			trade.TradeUID, execMTM, floor, trade.Config.MTMExitUnit, *trade.Config.MTMExitLevel, rem, open, ruleShare(trade.Config.MTMExitPct), orig, trade.Config.MTMExitClosedQty)
-	}
-	return execMTM, floor, true, started
+	return execMTM, floor, ok, false // every step done
 }
 
 func mtmRowLookup(chain *OptionChainSnapshot) func(mtmLeg) *OptionChainRow {
@@ -301,11 +324,13 @@ type mtmRunOpts struct {
 	all    bool   // close everything (portfolio rule), not the trade rule's share
 	status string // terminal status once flat
 	tag    string // log tag
+	rule   int    // trade rule: -1 main, else step index (unused with all)
 }
 
 // mtmExitRun closes the trade lot by lot while the level holds.
-func (s *Service) mtmExitRun(tradeUID string, floor float64) {
-	s.mtmExitRunOpts(tradeUID, mtmRunOpts{floor: func() (float64, error) { return floor, nil }, status: "CLOSED_MTM", tag: "MTM-EXIT"})
+// rule: -1 the main rule, else the step index (exit_tiers.go).
+func (s *Service) mtmExitRun(tradeUID string, floor float64, rule int) {
+	s.mtmExitRunOpts(tradeUID, mtmRunOpts{floor: func() (float64, error) { return floor, nil }, status: "CLOSED_MTM", tag: "MTM-EXIT", rule: rule})
 }
 
 // mtmExitRunOpts closes the trade lot by lot, each lot priced so the
@@ -347,7 +372,12 @@ func (s *Service) mtmExitRunOpts(tradeUID string, o mtmRunOpts) {
 		return
 	}
 	open0, orig := straddleOpenOrig(legs0, tr)
-	rem := ruleRemaining(tr.Config.MTMExitPct, orig, tr.Config.MTMExitClosedQty, open0, lot)
+	rule, haveRule := mtmRuleNow(tr.Config, o.rule)
+	if !haveRule && !o.all {
+		stopAt("ACTIVE", "MTM rule / step no longer set -- nothing to do")
+		return
+	}
+	rem := ruleRemaining(rule.pct, orig, rule.closed, open0, lot)
 	complete := rem >= open0
 	targets := legCloseTargets(legs0, rem, open0, lot)
 	if o.all { // portfolio rule: every open non-wing leg, whole
@@ -408,8 +438,9 @@ func (s *Service) mtmExitRunOpts(tradeUID string, o mtmRunOpts) {
 			if err := s.adjustWings(context.Background(), executor, tr, shortChangeCE, shortChangePE, tr.Strike, tr.Strike, "PSQF-MTM"); err != nil {
 				log.Printf("[WINGS] ⚠ MTM partial wing reduction for %s: %v", tradeUID, err)
 			}
-			stopAt("ACTIVE", fmt.Sprintf("MTM share done: %d straddle contracts closed by this rule (%.0f%% of %d) -- the rest stays monitored",
-				tr.Config.MTMExitClosedQty, ruleShare(tr.Config.MTMExitPct), orig))
+			now, _ := mtmRuleNow(tr.Config, o.rule)
+			stopAt("ACTIVE", fmt.Sprintf("MTM %s done: %d straddle contracts closed by it (%.0f%% of %d) -- the rest stays monitored",
+				rule.name(), now.closed, ruleShare(rule.pct), orig))
 			return
 		}
 		execMTM, priced := mtmExecMTM(legs, rowOf)
@@ -464,7 +495,7 @@ func (s *Service) mtmExitRunOpts(tradeUID string, o mtmRunOpts) {
 			shortChangePE += shortChangeFromFill(side, got)
 		}
 		if !o.all && (pick.Token == tr.CEToken || pick.Token == tr.PEToken) {
-			tr.Config.MTMExitClosedQty += got
+			addMTMClosed(&tr.Config, o.rule, got)
 		}
 		if pick.Token == tr.CEToken && tr.CEQty > 0 {
 			tr.CEQty = int(max(0, int64(tr.CEQty)-got))

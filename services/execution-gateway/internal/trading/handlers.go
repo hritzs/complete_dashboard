@@ -696,6 +696,10 @@ type ModifyTradeRequest struct {
 	StraddleExitBelow *float64 `json:"straddle_exit_below,omitempty"`
 	StraddleExitPct   *float64 `json:"straddle_exit_pct,omitempty"`
 	StraddleExitOff   bool     `json:"straddle_exit_off,omitempty"`
+
+	// Extra steps (exit_tiers.go): the full list each time (empty = none).
+	MTMExitTiers      *[]ExitTier `json:"mtm_exit_tiers,omitempty"`
+	StraddleExitTiers *[]ExitTier `json:"straddle_exit_tiers,omitempty"`
 }
 
 func (h *Handlers) ModifyTrade(w http.ResponseWriter, r *http.Request) {
@@ -832,6 +836,20 @@ func (h *Handlers) ModifyTrade(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.StraddleExitPct != nil {
 		tr.Config.StraddleExitPct = *req.StraddleExitPct
+	}
+	if req.MTMExitTiers != nil {
+		if err := validTiers(*req.MTMExitTiers, false, "MTM steps"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		tr.Config.MTMExitTiers = mergeTiers(tr.Config.MTMExitTiers, *req.MTMExitTiers)
+	}
+	if req.StraddleExitTiers != nil {
+		if err := validTiers(*req.StraddleExitTiers, true, "ATM straddle steps"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		tr.Config.StraddleExitTiers = mergeTiers(tr.Config.StraddleExitTiers, *req.StraddleExitTiers)
 	}
 
 	if req.StraddleDiv != nil {

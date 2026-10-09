@@ -53,7 +53,25 @@
     return data;
   }
 
-  function App() {
+  // Exit steps <-> "level:%, level:%" text (Modify form).
+function tiersText(tiers) {
+  return (tiers || []).map((t) => `${t.level}:${t.pct || 100}`).join(", ");
+}
+function parseTiers(text) {
+  const raw = String(text ?? "").trim();
+  if (!raw) return { tiers: [] };
+  const tiers = [];
+  for (const part of raw.split(",")) {
+    const [lv, pc] = part.split(":").map((x) => (x ?? "").trim());
+    const level = Number(lv);
+    const pct = pc === undefined || pc === "" ? 100 : Number(pc);
+    if (!lv || !Number.isFinite(level) || !Number.isFinite(pct) || pct <= 0 || pct > 100) return { error: true, tiers: [] };
+    tiers.push({ level, pct });
+  }
+  return { tiers };
+}
+
+function App() {
     const [activeTab, setActiveTab] = createSignal('terminal');
     const [wsStatus, setWsStatus] = createSignal('Connecting...');
     const [dataSource, setDataSource] = createSignal('Waiting...');
@@ -279,6 +297,8 @@
     mtm_exit_pct: "100",
     straddle_exit_below: "",
     straddle_exit_pct: "100",
+    mtm_exit_tiers: "",
+    straddle_exit_tiers: "",
     square_off_time: "15:37:00",
     square_off_hard_time: "",
     straddle_div: "4",
@@ -1481,6 +1501,10 @@
 
         straddle_exit_pct: String(cfg.straddle_exit_pct || 100),
 
+        // Extra steps as "level:%, level:%" (each % of the ORIGINAL position).
+        mtm_exit_tiers: tiersText(cfg.mtm_exit_tiers),
+        straddle_exit_tiers: tiersText(cfg.straddle_exit_tiers),
+
 
         straddle_div: cfg.straddle_div ?? cfg.straddleDiv ?? "4",
 
@@ -1606,6 +1630,15 @@
         const sp = pctOf(form.straddle_exit_pct, "ATM straddle exit %");
         if (sp == null) return;
         payload.straddle_exit_pct = sp;
+      }
+      // Extra steps: "level:%, level:%" -- always sent, blank = none.
+      for (const [key, name, positive] of [["mtm_exit_tiers", "MTM steps", false], ["straddle_exit_tiers", "ATM straddle steps", true]]) {
+        const parsed = parseTiers(form[key]);
+        if (parsed.error || parsed.tiers.some((t) => positive && t.level <= 0)) {
+          setModifyTradeError(`${name}: write them as level:% separated by commas, e.g. 150000:15, 200000:15${positive ? " (levels > 0)" : ""}.`);
+          return;
+        }
+        payload[key] = parsed.tiers;
       }
 
 
@@ -2451,6 +2484,18 @@
                 </label>
 
                 <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
+                  More MTM steps (level:% , … same unit)
+                  <input
+                    type="text"
+                    placeholder="e.g. 150000:15, 200000:15"
+                    value={modifyTradeForm().mtm_exit_tiers}
+                    onInput={(event) => setModifyTradeForm((form) => ({ ...form, mtm_exit_tiers: event.currentTarget.value }))}
+                    title="Each step closes its own % of the ORIGINAL position once, when the executable MTM reaches its level (lowest first, lot by lot, never below that level). All rules together never close more than is open."
+                    style={{ padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                  />
+                </label>
+
+                <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
                   ATM straddle exit below (blank = off) · % of position
                   <div style={{ display: "flex", gap: "6px" }}>
                     <input
@@ -2472,6 +2517,18 @@
                       style={{ width: "70px", padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
                     />
                   </div>
+                </label>
+
+                <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
+                  More ATM straddle steps (below level:% , …)
+                  <input
+                    type="text"
+                    placeholder="e.g. 220:25, 200:25"
+                    value={modifyTradeForm().straddle_exit_tiers}
+                    onInput={(event) => setModifyTradeForm((form) => ({ ...form, straddle_exit_tiers: event.currentTarget.value }))}
+                    title="Each step closes its own % of the ORIGINAL position once, when the live ATM straddle falls below its level (highest first). Hedges come down with the straddle. All rules together never close more than is open."
+                    style={{ padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                  />
                 </label>
 
                 <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
@@ -3280,6 +3337,8 @@
                                           <div class="monitor-row"><span>TP (bps of spot)</span><strong>{item.config?.tp_pnl_bps_of_spot || "off"}</strong></div>
                                           <div class="monitor-row"><span>MTM exit above</span><strong>{item.config?.mtm_exit_level != null ? `${item.config.mtm_exit_level} ${({ rs: "₹", pts: "pts/straddle", bps: "bps" })[item.config.mtm_exit_unit || "rs"]}` : "∞"}{item.config?.mtm_exit_level != null ? ` · ${item.config?.mtm_exit_pct || 100}%` : ""}</strong></div>
                                           <div class="monitor-row"><span>ATM straddle exit below</span><strong>{item.config?.straddle_exit_below != null ? `${item.config.straddle_exit_below} · ${item.config?.straddle_exit_pct || 100}%` : "off"}</strong></div>
+                                          <Show when={(item.config?.mtm_exit_tiers || []).length}><div class="monitor-row"><span>MTM steps</span><strong>{(item.config.mtm_exit_tiers || []).map((t) => `${t.level}·${t.pct || 100}%${t.closed_qty ? " ✓" : ""}`).join("  ")}</strong></div></Show>
+                                          <Show when={(item.config?.straddle_exit_tiers || []).length}><div class="monitor-row"><span>ATM straddle steps</span><strong>{(item.config.straddle_exit_tiers || []).map((t) => `<${t.level}·${t.pct || 100}%${t.closed_qty ? " ✓" : ""}`).join("  ")}</strong></div></Show>
                                           <div class="monitor-row"><span>Exit time</span><strong>{(() => {
                                             const d = new Date(item.config?.square_off_hard_time || "");
                                             return Number.isNaN(d.getTime()) || d.getUTCFullYear() < 2000 ? "not set" : d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });

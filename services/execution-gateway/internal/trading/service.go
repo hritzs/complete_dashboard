@@ -1523,7 +1523,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 	// MTM exit: checked on EVERY tick (not only at the minute end), on
 	// executable depth prices -- see mtm_exit.go. nil level = infinity.
 	var mtmFloorPtr, mtmExecPtr *float64
-	if trade.Config.MTMExitLevel != nil {
+	if len(mtmRules(trade.Config)) > 0 {
 		ex, fl, priced, _ := s.mtmExitCheck(trade, chain, spot, straddleQuantity)
 		mtmFloorPtr = &fl
 		if priced {

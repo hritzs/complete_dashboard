@@ -63,6 +63,8 @@ func diffMonitorConfig(a, b MonitorConfig) []ConfigChange {
 		{"MTM exit", cfgMTM(a), cfgMTM(b)},
 		{"MTM exit share", fmt.Sprintf("%.0f%%", ruleShare(a.MTMExitPct)), fmt.Sprintf("%.0f%%", ruleShare(b.MTMExitPct))},
 		{"ATM straddle exit below", ruleLabel(a.StraddleExitBelow, a.StraddleExitPct, ""), ruleLabel(b.StraddleExitBelow, b.StraddleExitPct, "")},
+		{"MTM exit steps", tiersLabel(a.MTMExitTiers), tiersLabel(b.MTMExitTiers)},
+		{"ATM straddle exit steps", tiersLabel(a.StraddleExitTiers), tiersLabel(b.StraddleExitTiers)},
 		{"Exit time", cfgClock(a.SquareOffHardTime), cfgClock(b.SquareOffHardTime)},
 		{"Straddle divisor", cfgNum(a.StraddleDiv), cfgNum(b.StraddleDiv)},
 		{"Hedge divisor", cfgNum(a.HedgeDiv), cfgNum(b.HedgeDiv)},
