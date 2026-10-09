@@ -48,39 +48,84 @@ var gsc struct {
 	warmOnce sync.Once
 }
 
-// gsWarmLoop: at second :50 of every minute re-requests the tokens used in
-// the last 10 minutes, so GreekSoft answers the boundary request fast (the
-// first request for a token after a pause took ~0.9 s; 11:43 2026-10-09
-// right after a restart timed out).
+// gsWarmLoop pre-loads GreekSoft candles so the boundary request is fast
+// (the first request for a token after a pause took ~0.9 s; 11:43
+// 2026-10-09 right after a restart timed out). Twice a minute (:20 / :50)
+// and once at start it requests:
+//   - CE + PE of the ATM +/- gsWarmStrikes strikes of the nearest expiry
+//     (an ATM that jumps at the boundary is already warm),
+//   - every leg the open trades hold (portfolio view),
+//   - every token asked for in the last 10 minutes.
+const gsWarmStrikes = 3
+
 func (s *Service) gsWarmLoop() {
+	s.gsWarmNow()
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
 	for now := range t.C {
-		if now.Second() != 50 {
-			continue
+		if sec := now.Second(); sec == 20 || sec == 50 {
+			s.gsWarmNow()
 		}
-		p := s.gsCloseProvider()
-		if p == nil {
-			continue
+	}
+}
+
+func (s *Service) gsWarmNow() {
+	p := s.gsCloseProvider()
+	if p == nil || !sbLiveWindow(time.Now().In(lutIST())) {
+		return
+	}
+	toks := map[int64]bool{}
+	gsc.mu.Lock()
+	for tok, at := range gsc.recent {
+		if time.Since(at) < 10*time.Minute {
+			toks[tok] = true
+		} else {
+			delete(gsc.recent, tok)
 		}
-		gsc.mu.Lock()
-		var toks []int64
-		for tok, at := range gsc.recent {
-			if time.Since(at) < 10*time.Minute {
-				toks = append(toks, tok)
-			} else {
-				delete(gsc.recent, tok)
+	}
+	gsc.mu.Unlock()
+	if s.Snapshot != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		if c, err := s.Snapshot.GetOptionChain(ctx, lutSymbol, ""); err == nil && c != nil {
+			atm := c.ATM
+			if S := lutUnderlying(c); S > 0 {
+				atm = math.Round(S/lutStrikeStep) * lutStrikeStep
+			}
+			for _, r := range c.Chain {
+				if math.Abs(r.Strike-atm) <= gsWarmStrikes*lutStrikeStep+1e-6 {
+					toks[r.CEToken], toks[r.PEToken] = r.CEToken > 0, r.PEToken > 0
+				}
 			}
 		}
-		gsc.mu.Unlock()
-		day := now.In(lutIST()).Format("20060102")
-		for _, tok := range toks {
-			go func(tok int64) {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				_, _ = p.MinuteCloses(ctx, tok, day)
-			}(tok)
+		cancel()
+	}
+	pm.mu.Lock()
+	for _, pos := range pm.view.Positions {
+		if pos.NetQty != 0 && pos.Token > 0 {
+			toks[pos.Token] = true
 		}
+	}
+	pm.mu.Unlock()
+	day := time.Now().In(lutIST()).Format("20060102")
+	for tok, ok := range toks {
+		if !ok || tok <= 0 {
+			continue
+		}
+		go func(tok int64) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if bars, err := p.MinuteCloses(ctx, tok, day); err == nil {
+				gsc.mu.Lock()
+				if gsc.got != nil && gsc.day == day {
+					for ts, c := range bars {
+						if ts%60 == 0 {
+							gsc.got[gsCloseKey{tok, ts}] = c
+						}
+					}
+				}
+				gsc.mu.Unlock()
+			}
+		}(tok)
 	}
 }
 

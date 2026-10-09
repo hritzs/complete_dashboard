@@ -231,6 +231,7 @@ func carriedTag(carried bool) string {
 
 // StartLUTEngine starts the always-on paper LUT check (call once at boot).
 func (s *Service) StartLUTEngine() {
+	gsc.warmOnce.Do(func() { go s.gsWarmLoop() }) // GreekSoft candles warm from the start
 	go func() {
 		log.Printf("[LUT] entry check engine started (PAPER, YES/NO only, never executes); tick %s", lutTickInterval)
 		t := time.NewTicker(lutTickInterval)
