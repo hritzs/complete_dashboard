@@ -82,7 +82,7 @@ BEGIN {
   # --monitor and --all, just not folded into "events" alongside the
   # once-a-minute HEDGE/SL/TP/TIME lines and real triggers.
   isticksnap = (line ~ /\[MONITOR\]\[[^]]*\] tick=/)
-  iskey = !isticksnap && (line ~ /\[RISK\]|\[WINGS\]|\[LUT(-SIM)?\]|\[SBUILD-(SHADOW|LIVE)\]|\[MODIFY\]|\[PARTIAL\]|\[BUILD-CHASE\]|_TRIGGER|HEDGE|Square-off|SQF reconciliation|BUILD (submitted|outcome|verification|submission)|\[GREEKSOFT ORDER\] (sending|submitted)|\[IRIS-WS\]|IRIS RX\] streaming_type=(Order|Trade)Response|DeployStraddle|Persisting SQF|PersistVerifiedFills done|login (successful|failed)|Greeksoft login|[Ll]istening|SYSTEM READY|\[MONITOR\]\[(TRD|SB-)|MINUTE-CHECK\]|\[MINUTE-CLOSE\]/)
+  iskey = !isticksnap && (line ~ /\[RISK\]|\[WINGS\]|\[LUT(-SIM)?\]|\[SBUILD-(SHADOW|LIVE)\]|\[MODIFY\]|\[PARTIAL\]|\[BUILD-CHASE\]|_TRIGGER|HEDGE|Square-off|SQF reconciliation|BUILD (submitted|outcome|verification|submission)|\[GREEKSOFT ORDER\] (sending|submitted)|\[IRIS-WS\]|IRIS RX\] streaming_type=(Order|Trade)Response|DeployStraddle|Persisting SQF|PersistVerifiedFills done|login (successful|failed)|Greeksoft login|[Ll]istening|SYSTEM READY|\[MONITOR\]\[(TRD|SB-)|MINUTE-CHECK\]|\[MINUTE-CLOSE\]|\[GS-CLOSE\]|\[BACKFILL\]/)
 
   if (mode == "monitor")     show = (line ~ /\[MONITOR\]\[(TRD|SB-)|MINUTE-CHECK\]|\[MINUTE-CLOSE\]/)
   else if (mode == "errors") show = iserr

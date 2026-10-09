@@ -154,6 +154,9 @@ func (s *Service) gsWarmLoop() {
 		if now.Second() == 50 {
 			s.gsWarmNow()
 		}
+		if now.Second() == 30 { // missing minutes (restart gap) from GreekSoft candles
+			go s.gsBackfillNow()
+		}
 	}
 }
 
@@ -340,9 +343,10 @@ func gsFetch(p MinuteCloseProvider, k gsCloseKey, day string, deadline time.Time
 		err error
 	}
 	res := make(chan result, 64) // buffered: late answers never block
-	inflight := 0
+	inflight, asks := 0, 0
 	launch := func() {
 		inflight++
+		asks++
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 1800*time.Millisecond)
 			bars, err := p.MinuteCloses(ctx, token, day)
@@ -378,6 +382,13 @@ func gsFetch(p MinuteCloseProvider, k gsCloseKey, day string, deadline time.Time
 				select {
 				case gsArrived <- struct{}{}:
 				default:
+				}
+				gsGate.mu.Lock()
+				lead := gsGate.b == k.b && gsGate.lead == token
+				gsGate.mu.Unlock()
+				if lead { // one line a minute: when GreekSoft had the candle
+					log.Printf("[GS-CLOSE] %s candle out: lead token %d answered at +%dms after %d ask(s)",
+						b.In(lutIST()).Format("15:04"), token, time.Since(b).Milliseconds(), asks)
 				}
 				return r.v, true
 			}

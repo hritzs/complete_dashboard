@@ -352,6 +352,10 @@ type MonitorConfig struct {
 	StraddleExitBelow     *float64 `json:"straddle_exit_below,omitempty"`
 	StraddleExitPct       float64  `json:"straddle_exit_pct,omitempty"`
 	StraddleExitClosedQty int64    `json:"straddle_exit_closed_qty,omitempty"`
+	// Extra steps of both rules (exit_tiers.go): each closes its own % of
+	// the ORIGINAL position once, at its own level.
+	MTMExitTiers      []ExitTier `json:"mtm_exit_tiers,omitempty"`
+	StraddleExitTiers []ExitTier `json:"straddle_exit_tiers,omitempty"`
 	// Straddle-price-based square-off: exit ONLY if straddle price falls BELOW this level
 	// If straddle price is between this and EntryStraddlePriceTrigger, hold/manage position
 	// and re-check every poll cycle; square off only when price actually drops below this.
