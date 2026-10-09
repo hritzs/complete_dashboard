@@ -162,13 +162,23 @@ func minuteCloseOf(cc, live *OptionChainSnapshot, b time.Time) MinuteClose {
 }
 
 func (m MinuteClose) String() string {
+	px := func(v float64) string {
+		if v <= 0 {
+			return "feed"
+		}
+		return fmt.Sprintf("%.2f", v)
+	}
 	src := fmt.Sprintf("feed (CE trade %s, PE trade %s)", m.CETrade, m.PETrade)
 	if m.Source == "GreekSoft" {
-		src = fmt.Sprintf("GreekSoft candles (our feed CE %.2f PE %.2f)", m.FeedCE, m.FeedPE)
+		src = fmt.Sprintf("GreekSoft candles (our feed CE %s PE %s)", px(m.FeedCE), px(m.FeedPE))
 	}
-	return fmt.Sprintf("%s ATM %.0f | CE close %.2f + PE close %.2f = straddle %.2f | syn fut %.2f | source %s | straddle in minute low %.2f (%s) high %.2f (%s) | day low %.2f (%s) high %.2f (%s) | live LTP CE %.2f PE %.2f fut %.2f | taken +%dms",
-		m.Time, m.ATM, m.CE, m.PE, m.Straddle, m.SynFut, src, m.StrLow, m.StrLowAt, m.StrHigh, m.StrHighAt,
-		m.DayLow, m.DayLowAt, m.DayHigh, m.DayHighAt, m.LiveCE, m.LivePE, m.LiveFut, m.ReadyMs)
+	hl := ""
+	if m.StrHigh > 0 {
+		hl = fmt.Sprintf(" | straddle in minute low %.2f (%s) high %.2f (%s) | day low %.2f (%s) high %.2f (%s)",
+			m.StrLow, m.StrLowAt, m.StrHigh, m.StrHighAt, m.DayLow, m.DayLowAt, m.DayHigh, m.DayHighAt)
+	}
+	return fmt.Sprintf("%s ATM %.0f | CE close %.2f + PE close %.2f = straddle %.2f | syn fut %.2f | source %s%s | live LTP CE %.2f PE %.2f fut %.2f | taken +%dms",
+		m.Time, m.ATM, m.CE, m.PE, m.Straddle, m.SynFut, src, hl, m.LiveCE, m.LivePE, m.LiveFut, m.ReadyMs)
 }
 
 // lutStrHL is a straddle high / low with when each happened.

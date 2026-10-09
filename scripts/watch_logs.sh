@@ -198,7 +198,12 @@ AWK_OPTS=()
 TAIL_CMD=(tail)
 command -v stdbuf >/dev/null 2>&1 && TAIL_CMD=(stdbuf -oL tail)
 
-echo "watching $LOG_DIR  mode=$MODE${TRADE:+  trade=$TRADE}  (Ctrl+C stops the viewer only)" >&2
+if [ -n "$PLATFORM_KILL_SWITCH" ]; then
+  STOPNOTE="Ctrl+C or closing this terminal STOPS THE WHOLE PLATFORM"
+else
+  STOPNOTE="Ctrl+C stops the viewer only"
+fi
+echo "watching $LOG_DIR  mode=$MODE${TRADE:+  trade=$TRADE}  ($STOPNOTE)" >&2
 FILES=("$LOG_DIR"/*.log)
 if [ -n "$ONLY" ]; then
   FILES=("$LOG_DIR/exec/$ONLY.log")

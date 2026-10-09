@@ -44,6 +44,44 @@ var gsc struct {
 	got      map[gsCloseKey]float64
 	inflight map[gsCloseKey]chan struct{}
 	day      string
+	recent   map[int64]time.Time // tokens asked for lately (kept warm)
+	warmOnce sync.Once
+}
+
+// gsWarmLoop: at second :50 of every minute re-requests the tokens used in
+// the last 10 minutes, so GreekSoft answers the boundary request fast (the
+// first request for a token after a pause took ~0.9 s; 11:43 2026-10-09
+// right after a restart timed out).
+func (s *Service) gsWarmLoop() {
+	t := time.NewTicker(time.Second)
+	defer t.Stop()
+	for now := range t.C {
+		if now.Second() != 50 {
+			continue
+		}
+		p := s.gsCloseProvider()
+		if p == nil {
+			continue
+		}
+		gsc.mu.Lock()
+		var toks []int64
+		for tok, at := range gsc.recent {
+			if time.Since(at) < 10*time.Minute {
+				toks = append(toks, tok)
+			} else {
+				delete(gsc.recent, tok)
+			}
+		}
+		gsc.mu.Unlock()
+		day := now.In(lutIST()).Format("20060102")
+		for _, tok := range toks {
+			go func(tok int64) {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_, _ = p.MinuteCloses(ctx, tok, day)
+			}(tok)
+		}
+	}
 }
 
 // gsClosesOn: GreekSoft closes are the default for every minute-end
@@ -71,10 +109,15 @@ func (s *Service) gsCloseAt(token int64, b time.Time) (float64, bool) {
 	}
 	k := gsCloseKey{token, b.Unix()}
 	day := b.In(lutIST()).Format("20060102")
+	gsc.warmOnce.Do(func() { go s.gsWarmLoop() })
 	gsc.mu.Lock()
 	if gsc.got == nil || gsc.day != day {
 		gsc.got, gsc.inflight, gsc.day = map[gsCloseKey]float64{}, map[gsCloseKey]chan struct{}{}, day
 	}
+	if gsc.recent == nil {
+		gsc.recent = map[int64]time.Time{}
+	}
+	gsc.recent[token] = time.Now()
 	if v, ok := gsc.got[k]; ok {
 		gsc.mu.Unlock()
 		return v, true
@@ -106,7 +149,7 @@ func (s *Service) gsCloseAt(token int64, b time.Time) (float64, bool) {
 	}
 	deadline := b.Add(gsCloseDeadline)
 	for {
-		ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+		ctx, cancel := context.WithTimeout(context.Background(), 1800*time.Millisecond)
 		bars, err := p.MinuteCloses(ctx, token, day)
 		cancel()
 		if err == nil {
