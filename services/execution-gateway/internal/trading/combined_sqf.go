@@ -136,43 +136,26 @@ func (s *Service) straddleExitCheck(trade StoredTrade, chain *OptionChainSnapsho
 		}
 		log.Printf("[RISK] STRADDLE_TRIGGER trade=%s %s: ATM %.0f straddle %.2f (CE %.2f + PE %.2f) < %.2f -- closing %d of %d open straddle contracts (%.0f%% of %d, %d closed before by this step)",
 			trade.TradeUID, r.name(), atm.Strike, straddle, atm.CELtp, atm.PELtp, r.level, rem, open, ruleShare(r.pct), orig, r.closed)
-		idx := r.idx
-		return s.runExitAsync(trade.TradeUID, "STRADDLE", func() { s.straddleExitRun(trade, src, rem, open, idx) })
+		// Lot by lot like the MTM exit (mtm_exit.go): every leg pro rata,
+		// hedges and wings with it, and before EVERY lot the live ATM
+		// straddle must still be below the level -- back above it, the run
+		// pauses and resumes when it falls below again.
+		idx, level := r.idx, r.level
+		cond := func(c *OptionChainSnapshot) (bool, string) {
+			a, err := FindATMRow(*c)
+			if err != nil || a.CELtp <= 0 || a.PELtp <= 0 {
+				return false, "ATM straddle has no live price"
+			}
+			if st := a.CELtp + a.PELtp; st >= level {
+				return false, fmt.Sprintf("ATM %.0f straddle %.2f back at/above %.2f", a.Strike, st, level)
+			}
+			return true, ""
+		}
+		return s.runExitAsync(trade.TradeUID, "STRADDLE", func() {
+			s.mtmExitRunOpts(trade.TradeUID, mtmRunOpts{status: "CLOSED_STRADDLE", tag: "STRADDLE-EXIT", rule: idx, kind: "straddle", cond: cond})
+		})
 	}
 	return false
-}
-
-// straddleExitRun closes the straddle rule's share and records it.
-func (s *Service) straddleExitRun(trade StoredTrade, src interface {
-	TradeLegCash(ctx context.Context, tradeUID string) ([]mtmLeg, error)
-}, rem, open int64, rule int) {
-	var runErr error
-	if rem >= open {
-		runErr = s.SquareOff(trade.TradeUID, "STRADDLE")
-	} else {
-		runErr = s.PartialSquareOff(trade.TradeUID, float64(rem)/float64(open)*100)
-	}
-	// Record what actually closed (verified fills), success or not.
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
-	after, aerr := src.TradeLegCash(ctx2, trade.TradeUID)
-	cancel2()
-	if aerr == nil {
-		open2, _ := straddleOpenOrig(after, trade)
-		if tr, ok := s.Store.LoadTrade(trade.TradeUID); ok && open2 < open {
-			addStraddleClosed(&tr.Config, rule, open-open2)
-			tr.LastUpdateTime = time.Now()
-			s.Store.UpdateTrade(tr)
-			if isTerminalTradeStatus(tr.Status) {
-				if rt, ok := s.Store.LoadRuntime(tr.TradeUID); ok {
-					close(rt.StopCh)
-					s.Store.DeleteRuntime(tr.TradeUID)
-				}
-			}
-		}
-	}
-	if runErr != nil {
-		log.Printf("[RISK] STRADDLE exit trade=%s: %v -- retried next tick for what is left of its share", trade.TradeUID, runErr)
-	}
 }
 
 func ruleShare(pct float64) float64 {

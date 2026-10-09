@@ -138,14 +138,13 @@ func generateChunkedOrdersInternal(
 			continue
 		}
 
-		lotsBase := leg.TotalLots / chunkDivisor
-		lotsRem := leg.TotalLots % chunkDivisor
-
+		// Every leg's cumulative lots after chunk c are round(total*(c+1)/7),
+		// so all legs reach the same fraction together and keep the
+		// position's own ratio (37 / 40 lots: 5/6, 11/11, 16/17 ... instead of
+		// the remainders front-loaded into the first chunks).
 		for c := 0; c < chunkDivisor; c++ {
-			lotsThisChunk := lotsBase
-			if c < lotsRem {
-				lotsThisChunk++
-			}
+			lotsThisChunk := int(math.Round(float64(leg.TotalLots)*float64(c+1)/float64(chunkDivisor))) -
+				int(math.Round(float64(leg.TotalLots)*float64(c)/float64(chunkDivisor)))
 			if lotsThisChunk == 0 {
 				continue
 			}

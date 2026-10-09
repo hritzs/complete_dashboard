@@ -233,7 +233,8 @@ func (s *Service) gsTokens(band int) (toks map[int64]bool, atmCE, atmPE int64) {
 	}
 	pm.mu.Lock()
 	for _, pos := range pm.view.Positions {
-		if pos.NetQty != 0 && pos.Token > 0 {
+		// Wings are margin-only (outside PnL / delta): no candle needed.
+		if pos.NetQty != 0 && pos.Token > 0 && !pos.Wing {
 			toks[pos.Token] = true
 		}
 	}

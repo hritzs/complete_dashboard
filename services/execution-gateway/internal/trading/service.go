@@ -1245,9 +1245,12 @@ func (s *Service) minuteCloseChain(ctx context.Context, tradeUID string, trade S
 	// gsCloseDeadline.
 	toks := atmTokens(closed)
 	toks[trade.CEToken], toks[trade.PEToken] = true, true
-	if gsClosesOn() { // every other leg the trade holds in this expiry (hedges, wings)
+	if gsClosesOn() { // every other leg the trade holds in this expiry (hedges; not wings)
 		if extra, xerr := s.extraOpenLegs(tradeUID, trade); xerr == nil {
 			for _, l := range extra {
+				if l.Qty-l.WingQty == 0 {
+					continue // a wing only: margin, outside PnL / delta -- no candle needed
+				}
 				if strings.EqualFold(strings.TrimSpace(l.Expiry), "") || strings.EqualFold(strings.TrimSpace(l.Expiry), strings.TrimSpace(trade.Expiry)) {
 					toks[l.Token] = true
 				}
@@ -2070,6 +2073,8 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 		}
 	}
 	extraDone := map[int64]int64{}
+	var hedgeCE, hedgePE int64 // net short change from the in-step hedge cuts
+	var wingsF wingFollower    // wings sold in step with the short closed
 
 	const maxExecutionAttempts = 4
 	// Orders whose outcome is unknown (no terminal confirmation). A retry
@@ -2296,9 +2301,14 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 
 			if len(extraInit) > 0 && targetCE+targetPE > 0 && (remainingCE > 0 || remainingPE > 0) {
 				frac := float64(targetCE-remainingCE+targetPE-remainingPE) / float64(targetCE+targetPE)
-				if _, _, xerr := s.reduceExtraLegsInStep(tradeUID, tr, extraInit, extraDone, frac, "SQF"); xerr != nil {
+				xce, xpe, xerr := s.reduceExtraLegsInStep(tradeUID, tr, extraInit, extraDone, frac, "SQF")
+				hedgeCE, hedgePE = hedgeCE+xce, hedgePE+xpe
+				if xerr != nil {
 					log.Printf("⚠️ SQF in-step hedge reduction trade=%s: %v -- the rest closes after the straddle", tradeUID, xerr)
 				}
+			}
+			if remainingCE > 0 || remainingPE > 0 { // the last chunk: all wings go below
+				wingsF.follow(s, executor, tr, -(targetCE-remainingCE)+hedgeCE, -(targetPE-remainingPE)+hedgePE, "SQF-"+reason)
 			}
 
 			if remainingCE == 0 && remainingPE == 0 {
@@ -2916,6 +2926,7 @@ func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
 	}
 	extraDone := map[int64]int64{}
 	var stepCE, stepPE int64
+	var wingsF wingFollower // wings sold in step with the short closed
 
 	for chunkIdx, chunk := range chunks {
 		submitted := make(map[string]submittedOrderMeta)
@@ -3032,6 +3043,7 @@ func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
 				log.Printf("⚠️ PSQF in-step hedge reduction trade=%s: %v -- the rest is reduced at the end", tradeUID, xerr)
 			}
 		}
+		wingsF.follow(s, executor, tr, -(ceQty-remainingCE)+stepCE, -(peQty-remainingPE)+stepPE, "PSQF")
 	}
 
 	verifiedCE := ceQty - remainingCE
@@ -3069,8 +3081,8 @@ func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
 		if tr.CEQty == 0 && tr.PEQty == 0 && extraErr == nil {
 			wingErr = s.closeAllWings(context.Background(), tr, "PSQF")
 		} else {
-			wingErr = s.adjustWings(context.Background(), executor, tr,
-				-verifiedCE+extraCE, -verifiedPE+extraPE, tr.Strike, tr.Strike, "PSQF")
+			rce, rpe := wingsF.rest(-verifiedCE+extraCE, -verifiedPE+extraPE) // minus what went in step
+			wingErr = s.adjustWings(context.Background(), executor, tr, rce, rpe, tr.Strike, tr.Strike, "PSQF")
 		}
 		if wingErr != nil {
 			log.Printf("[WINGS] ⚠ PSQF wing reduction for %s: %v", tradeUID, wingErr)

@@ -325,6 +325,32 @@ type mtmRunOpts struct {
 	status string // terminal status once flat
 	tag    string // log tag
 	rule   int    // trade rule: -1 main, else step index (unused with all)
+	// kind: "" the MTM rule, "straddle" the ATM-straddle rule (its share /
+	// closed count). cond, when set, must hold before EVERY lot (the ATM
+	// straddle still below its level); otherwise the run pauses.
+	kind string
+	cond func(chain *OptionChainSnapshot) (ok bool, why string)
+}
+
+// ruleNow / addClosed for the run's rule kind.
+func (o mtmRunOpts) ruleNow(c MonitorConfig) (exitRule, bool) {
+	if o.kind == "straddle" {
+		for _, r := range straddleRules(c) {
+			if r.idx == o.rule {
+				return r, true
+			}
+		}
+		return exitRule{}, false
+	}
+	return mtmRuleNow(c, o.rule)
+}
+
+func (o mtmRunOpts) addClosed(c *MonitorConfig, q int64) {
+	if o.kind == "straddle" {
+		addStraddleClosed(c, o.rule, q)
+		return
+	}
+	addMTMClosed(c, o.rule, q)
 }
 
 // mtmExitRun closes the trade lot by lot while the level holds.
@@ -372,9 +398,9 @@ func (s *Service) mtmExitRunOpts(tradeUID string, o mtmRunOpts) {
 		return
 	}
 	open0, orig := straddleOpenOrig(legs0, tr)
-	rule, haveRule := mtmRuleNow(tr.Config, o.rule)
+	rule, haveRule := o.ruleNow(tr.Config)
 	if !haveRule && !o.all {
-		stopAt("ACTIVE", "MTM rule / step no longer set -- nothing to do")
+		stopAt("ACTIVE", "rule / step no longer set -- nothing to do")
 		return
 	}
 	rem := ruleRemaining(rule.pct, orig, rule.closed, open0, lot)
@@ -399,6 +425,7 @@ func (s *Service) mtmExitRunOpts(tradeUID string, o mtmRunOpts) {
 		tgt0[t] = q
 	}
 	var shortChangeCE, shortChangePE int64
+	var wings wingFollower // wings sold in step with the short closed
 	misses := 0
 	for step := 0; step < 2000; step++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -410,6 +437,12 @@ func (s *Service) mtmExitRunOpts(tradeUID string, o mtmRunOpts) {
 			return
 		}
 		rowOf := mtmRowLookup(chain)
+		if o.cond != nil {
+			if okc, why := o.cond(chain); !okc {
+				stopAt("ACTIVE", why+" -- remaining position stays monitored; resumes when the condition holds again")
+				return
+			}
+		}
 		// Next lot: the open leg with the largest fraction of its share
 		// still to close (ties: the larger quantity), never beyond what it
 		// holds -- every leg is closed pro rata, lot by lot.
@@ -434,12 +467,14 @@ func (s *Service) mtmExitRunOpts(tradeUID string, o mtmRunOpts) {
 				s.mtmExitFinish(tr, o.status)
 				return
 			}
-			// Partial share done: wings follow the short removed (as PSQF).
-			if err := s.adjustWings(context.Background(), executor, tr, shortChangeCE, shortChangePE, tr.Strike, tr.Strike, "PSQF-MTM"); err != nil {
-				log.Printf("[WINGS] ⚠ MTM partial wing reduction for %s: %v", tradeUID, err)
+			// Partial share done: whatever the in-step wing sells did not
+			// cover yet (as PSQF).
+			rce, rpe := wings.rest(shortChangeCE, shortChangePE)
+			if err := s.adjustWings(context.Background(), executor, tr, rce, rpe, tr.Strike, tr.Strike, "PSQF-"+o.tag); err != nil {
+				log.Printf("[WINGS] ⚠ %s partial wing reduction for %s: %v", o.tag, tradeUID, err)
 			}
-			now, _ := mtmRuleNow(tr.Config, o.rule)
-			stopAt("ACTIVE", fmt.Sprintf("MTM %s done: %d straddle contracts closed by it (%.0f%% of %d) -- the rest stays monitored",
+			now, _ := o.ruleNow(tr.Config)
+			stopAt("ACTIVE", fmt.Sprintf("%s done: %d straddle contracts closed by it (%.0f%% of %d) -- the rest stays monitored",
 				rule.name(), now.closed, ruleShare(rule.pct), orig))
 			return
 		}
@@ -448,7 +483,10 @@ func (s *Service) mtmExitRunOpts(tradeUID string, o mtmRunOpts) {
 			stopAt("ACTIVE", "an open leg has no price in the chain -- retry next tick")
 			return
 		}
-		floor, ferr := o.floor()
+		floor, ferr := math.Inf(-1), error(nil) // no MTM floor (ATM-straddle rule)
+		if o.floor != nil {
+			floor, ferr = o.floor()
+		}
 		if ferr != nil {
 			stopAt("ACTIVE", fmt.Sprintf("MTM floor unavailable (%v) -- retry next tick", ferr))
 			return
@@ -486,8 +524,12 @@ func (s *Service) mtmExitRunOpts(tradeUID string, o mtmRunOpts) {
 			continue
 		}
 		misses = 0
-		log.Printf("[%s] trade=%s %s %s %d/%d @%.2f (IOC limit %.2f) -- executable MTM before %.2f, floor %.2f",
-			o.tag, tradeUID, side, pick.Leg, got, qty, px, limit, execMTM, floor)
+		floorTxt := fmt.Sprintf("floor %.2f", floor)
+		if math.IsInf(floor, -1) {
+			floorTxt = "no MTM floor"
+		}
+		log.Printf("[%s] trade=%s %s %s %d/%d @%.2f (IOC limit %.2f) -- executable MTM before %.2f, %s",
+			o.tag, tradeUID, side, pick.Leg, got, qty, px, limit, execMTM, floorTxt)
 		targets[pick.Token] -= got
 		if pick.Leg == "CE" {
 			shortChangeCE += shortChangeFromFill(side, got)
@@ -495,8 +537,9 @@ func (s *Service) mtmExitRunOpts(tradeUID string, o mtmRunOpts) {
 			shortChangePE += shortChangeFromFill(side, got)
 		}
 		if !o.all && (pick.Token == tr.CEToken || pick.Token == tr.PEToken) {
-			addMTMClosed(&tr.Config, o.rule, got)
+			o.addClosed(&tr.Config, got)
 		}
+		wings.follow(s, executor, tr, shortChangeCE, shortChangePE, o.tag)
 		if pick.Token == tr.CEToken && tr.CEQty > 0 {
 			tr.CEQty = int(max(0, int64(tr.CEQty)-got))
 		}
