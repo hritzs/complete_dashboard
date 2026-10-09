@@ -24,6 +24,15 @@ func NewClient(authURL string, restURL string) *Client {
 	return &Client{
 		HTTPClient: &http.Client{
 			Timeout: 30 * time.Second,
+			// Keep enough warm connections for the minute-end burst (several
+			// candle requests in parallel next to orders); the default 2 idle
+			// per host made every extra request open a fresh connection.
+			Transport: &http.Transport{
+				Proxy:               http.ProxyFromEnvironment,
+				MaxIdleConns:        64,
+				MaxIdleConnsPerHost: 32,
+				IdleConnTimeout:     5 * time.Minute,
+			},
 		},
 		AuthBaseURL:    strings.TrimRight(authURL, "/"),
 		RestAPIBaseURL: strings.TrimRight(restURL, "/"),

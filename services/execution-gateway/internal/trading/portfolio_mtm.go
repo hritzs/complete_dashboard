@@ -405,7 +405,8 @@ func (s *Service) pmTick() {
 	cfg, st := pm.cfg, pm.st
 	// Execution first: while the rule is OFF / done the evaluation only
 	// feeds the screen -- every 3 s instead of every second.
-	if (st.Status == pmOff || st.Status == pmDoneProfit || st.Status == pmDoneLoss) && time.Since(pm.lastEval) < 3*time.Second {
+	// And never inside the minute-end window, where the closes / hedges run.
+	if (st.Status == pmOff || st.Status == pmDoneProfit || st.Status == pmDoneLoss) && (time.Since(pm.lastEval) < 3*time.Second || gsBoundary(time.Now())) {
 		pm.mu.Unlock()
 		return
 	}

@@ -30,9 +30,21 @@ type MinuteCloseProvider interface {
 }
 
 const (
-	gsClosePoll     = 150 * time.Millisecond
+	// While a candle is missing a new request goes out every gsClosePoll
+	// with up to gsCloseInflight overlapping per token, so the close is seen
+	// ~one request time after GreekSoft publishes it (sequential request +
+	// 150 ms sleep missed it by up to ~250 ms).
+	gsClosePoll     = 60 * time.Millisecond
+	gsCloseInflight = 2
 	gsCloseDeadline = 2 * time.Second // after the boundary: then the feed close is used
+	// gsCaptureStart: when the boundary capture starts asking (GreekSoft
+	// never had the candle earlier than ~+0.25 s).
+	gsCaptureStart = 150 * time.Millisecond
 )
+
+// gsArrived wakes the LUT loop as soon as a close is in (instead of its
+// next 100 ms tick).
+var gsArrived = make(chan struct{}, 1)
 
 type gsCloseKey struct {
 	token int64
@@ -60,6 +72,7 @@ var gsc struct {
 const gsWarmStrikes = 1
 
 func (s *Service) gsWarmLoop() {
+	go s.gsCaptureLoop()
 	s.gsWarmNow()
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
@@ -70,21 +83,61 @@ func (s *Service) gsWarmLoop() {
 	}
 }
 
-func (s *Service) gsWarmNow() {
-	p := s.gsCloseProvider()
-	if p == nil || !sbLiveWindow(time.Now().In(lutIST())) {
-		return
+// gsCaptureLoop is the minute-end snapshot capture, run on its own and
+// ahead of everything else: at every boundary + gsCaptureStart it starts
+// fetching the closed candle of the ATM CE / PE (plus the neighbouring
+// strike when the synthetic is near the middle) and every held leg. The
+// LUT record and each trade's hedge / SL / TP check then only pick the
+// results up (same singleflight in gsCloseAt) instead of starting the
+// requests themselves ~0.1-0.2 s later, one after another.
+func (s *Service) gsCaptureLoop() {
+	for {
+		b := time.Now().Truncate(time.Minute).Add(time.Minute)
+		time.Sleep(time.Until(b.Add(gsCaptureStart)))
+		if s.gsCloseProvider() == nil || !sbLiveWindow(b.Add(-time.Minute).In(lutIST())) {
+			continue
+		}
+		for tok := range s.gsTokens(0) {
+			go s.gsCloseAt(tok, b)
+		}
 	}
+}
+
+// gsBoundary: within the first seconds after a minute boundary, while the
+// minute-end capture and checks run. Display-only / housekeeping work
+// waits it out (gsAfterBoundary) so it never competes with them.
+func gsBoundary(now time.Time) bool {
+	return now.Sub(now.Truncate(time.Minute)) < 2500*time.Millisecond
+}
+
+// gsAfterBoundary sleeps until the minute-end window is over.
+func gsAfterBoundary() {
+	now := time.Now()
+	if gsBoundary(now) {
+		time.Sleep(time.Until(now.Truncate(time.Minute).Add(2500 * time.Millisecond)))
+	}
+}
+
+// gsTokens: CE + PE within band strikes of the ATM (band 0: the ATM, plus
+// the neighbouring strike when the synthetic is within 15 pts of the middle
+// between two strikes) and every leg the open positions hold.
+func (s *Service) gsTokens(band int) map[int64]bool {
 	toks := map[int64]bool{}
 	if s.Snapshot != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		if c, err := s.Snapshot.GetOptionChain(ctx, lutSymbol, ""); err == nil && c != nil {
+			S := lutUnderlying(c)
 			atm := c.ATM
-			if S := lutUnderlying(c); S > 0 {
+			if S > 0 {
 				atm = math.Round(S/lutStrikeStep) * lutStrikeStep
 			}
 			for _, r := range c.Chain {
-				if math.Abs(r.Strike-atm) <= gsWarmStrikes*lutStrikeStep+1e-6 {
+				d := math.Abs(r.Strike - atm)
+				near := d <= float64(band)*lutStrikeStep+1e-6
+				if band == 0 && S > 0 && d > 0 && d <= lutStrikeStep+1e-6 && math.Abs(r.Strike-S) <= lutStrikeStep/2+15 {
+					near = true // the ATM may flip to this strike
+				}
+				if near {
 					toks[r.CEToken], toks[r.PEToken] = r.CEToken > 0, r.PEToken > 0
 				}
 			}
@@ -98,6 +151,15 @@ func (s *Service) gsWarmNow() {
 		}
 	}
 	pm.mu.Unlock()
+	return toks
+}
+
+func (s *Service) gsWarmNow() {
+	p := s.gsCloseProvider()
+	if p == nil || !sbLiveWindow(time.Now().In(lutIST())) {
+		return
+	}
+	toks := s.gsTokens(gsWarmStrikes)
 	day := time.Now().In(lutIST()).Format("20060102")
 	for tok, ok := range toks {
 		if !ok || tok <= 0 {
@@ -181,12 +243,30 @@ func (s *Service) gsCloseAt(token int64, b time.Time) (float64, bool) {
 	if p == nil {
 		return 0, false
 	}
-	deadline := b.Add(gsCloseDeadline)
-	for {
-		ctx, cancel := context.WithTimeout(context.Background(), 1800*time.Millisecond)
-		bars, err := p.MinuteCloses(ctx, token, day)
-		cancel()
-		if err == nil {
+	return gsFetch(p, k, day, b.Add(gsCloseDeadline))
+}
+
+// gsFetch asks p for candle k until it is in or the deadline passes: a new
+// request every gsClosePoll, at most gsCloseInflight at a time.
+func gsFetch(p MinuteCloseProvider, k gsCloseKey, day string, deadline time.Time) (float64, bool) {
+	token, b := k.token, time.Unix(k.b, 0)
+	type result struct {
+		v   float64
+		ok  bool
+		err error
+	}
+	res := make(chan result, 64) // buffered: late answers never block
+	inflight := 0
+	launch := func() {
+		inflight++
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 1800*time.Millisecond)
+			bars, err := p.MinuteCloses(ctx, token, day)
+			cancel()
+			if err != nil {
+				res <- result{err: err}
+				return
+			}
 			gsc.mu.Lock()
 			for ts, c := range bars { // keep every completed candle seen (stamped hh:mm:00)
 				if ts%60 == 0 {
@@ -195,17 +275,38 @@ func (s *Service) gsCloseAt(token int64, b time.Time) (float64, bool) {
 			}
 			v, ok := gsc.got[k]
 			gsc.mu.Unlock()
-			if ok {
-				return v, true
+			res <- result{v: v, ok: ok}
+		}()
+	}
+	tick := time.NewTicker(gsClosePoll)
+	defer tick.Stop()
+	var lastErr error
+	launch()
+	for {
+		select {
+		case r := <-res:
+			inflight--
+			if r.ok {
+				select {
+				case gsArrived <- struct{}{}:
+				default:
+				}
+				return r.v, true
+			}
+			if r.err != nil {
+				lastErr = r.err
+			}
+		case <-tick.C:
+			if inflight < gsCloseInflight && time.Now().Before(deadline) {
+				launch()
 			}
 		}
-		if time.Now().Add(gsClosePoll).After(deadline) {
-			if err != nil {
-				log.Printf("[GS-CLOSE] token %d %s: %v -- feed close used", token, b.Format("15:04"), err)
+		if !time.Now().Before(deadline) && (inflight == 0 || time.Now().After(deadline.Add(300*time.Millisecond))) {
+			if lastErr != nil {
+				log.Printf("[GS-CLOSE] token %d %s: %v -- feed close used", token, b.Format("15:04"), lastErr)
 			}
 			return 0, false
 		}
-		time.Sleep(gsClosePoll)
 	}
 }
 

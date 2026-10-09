@@ -132,10 +132,12 @@ func (s *Service) StartBrokerAutoSync() {
 		for {
 			select {
 			case <-syncT.C:
+				gsAfterBoundary() // minute-end closes / hedges first
 				if autoSyncWindow(time.Now().In(lutIST())) {
 					s.autoSyncStuckOrders()
 				}
 			case <-posT.C:
+				gsAfterBoundary()
 				if autoSyncWindow(time.Now().In(lutIST())) {
 					s.checkBrokerPositions()
 				}

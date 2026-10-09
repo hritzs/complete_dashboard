@@ -237,9 +237,14 @@ func (s *Service) StartLUTEngine() {
 		t := time.NewTicker(lutTickInterval)
 		defer t.Stop()
 		n := 0
-		for range t.C {
-			n++
-			s.lutTick(n%lutGridEvery == 0)
+		for {
+			select {
+			case <-t.C:
+				n++
+				s.lutTick(n%lutGridEvery == 0)
+			case <-gsArrived: // a GreekSoft close is in: record the minute now
+				s.lutTick(false)
+			}
 		}
 	}()
 }
