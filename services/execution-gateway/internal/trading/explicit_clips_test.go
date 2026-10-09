@@ -32,9 +32,9 @@ func TestGenerateExplicitClips_InterleavesLegsInsteadOfSequencingThem(t *testing
 	}
 }
 
-// An uneven CE/PE lot count (e.g. a hedge-adjusted build) must still
-// interleave as far as it can, only falling back to sequential once the
-// smaller leg is exhausted -- not stay sequential from the start.
+// An uneven CE/PE lot count (e.g. a delta-neutral build) is spread in
+// proportion to each leg's size -- the smaller leg's clips sit evenly
+// between the larger leg's, never a run of one leg left at the end.
 func TestGenerateExplicitClips_UnevenLegsInterleaveThenTrail(t *testing.T) {
 	legs := []LegData{
 		{Token: 111, Symbol: "NIFTY", OptionType: "CE", Action: "SELL", TotalLots: 5, LotSize: 65, ExpectedPrice: 50},
@@ -46,7 +46,7 @@ func TestGenerateExplicitClips_UnevenLegsInterleaveThenTrail(t *testing.T) {
 		t.Fatalf("GenerateExplicitClips: %v", err)
 	}
 
-	want := []string{"CE", "PE", "CE", "PE", "CE", "CE", "CE"}
+	want := []string{"CE", "PE", "CE", "CE", "CE", "PE", "CE"}
 	got := optionTypeSequence(clips)
 	if len(got) != len(want) {
 		t.Fatalf("sequence = %v, want %v", got, want)

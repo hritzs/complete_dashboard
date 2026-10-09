@@ -11,7 +11,7 @@ const muted = { opacity: 0.65, 'font-size': '12px' };
 
 const FIELDS = [
   ['lots', 'Size (lots)', 'number'],
-  ['order_lots_per_call', 'Lots per order', 'number'],
+  ['order_lots_per_call', 'Lots per order (0 = auto)', 'number'],
   ['exit_time', 'Exit time', 'text'],
   ['sl_bps', 'SL bps (0 = LUT 14)', 'number'],
   ['tp_bps', 'TP bps (0 = LUT own)', 'number'],

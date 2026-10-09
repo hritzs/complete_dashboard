@@ -48,7 +48,7 @@ type LUTBuildConfig struct {
 	ExchangeSegment  string  `json:"exchange_segment"`
 	ProductType      string  `json:"product_type"`
 	Lots             int     `json:"lots"`
-	OrderLotsPerCall int     `json:"order_lots_per_call"`
+	OrderLotsPerCall int     `json:"order_lots_per_call"` // 0 = automatic (7 rounds, ceil(lots/100) per order)
 	ExitTime         string  `json:"exit_time"`
 	SLBps            float64 `json:"sl_bps"` // 0 = the LUT's own (14 bps)
 	TPBps            float64 `json:"tp_bps"` // 0 = the LUT's TP at the YES minute
@@ -93,8 +93,8 @@ func lutBuildDefaults(c LUTBuildConfig) LUTBuildConfig {
 	if c.Lots <= 0 {
 		c.Lots = 1
 	}
-	if c.OrderLotsPerCall <= 0 {
-		c.OrderLotsPerCall = 1
+	if c.OrderLotsPerCall < 0 {
+		c.OrderLotsPerCall = 0 // 0 = automatic: 7 rounds, ceil(lots/100) lots per order
 	}
 	if c.HedgeDiv <= 0 {
 		c.HedgeDiv = 57

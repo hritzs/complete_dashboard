@@ -198,21 +198,19 @@ func generateChunkedOrdersInternal(
 
 	var allChunks [][]ExecOrder
 	for c := 0; c < chunkDivisor; c++ {
-		var interleaved []ExecOrder
-		maxOrders := 0
-
+		// Inside the chunk each leg goes out in proportion to its size
+		// (furthest behind its own share next), not strictly alternating.
+		perLeg := make([][][]ExecOrder, 0, len(legChunks))
 		for _, lc := range legChunks {
-			if len(lc[c]) > maxOrders {
-				maxOrders = len(lc[c])
+			one := make([][]ExecOrder, 0, len(lc[c]))
+			for _, o := range lc[c] {
+				one = append(one, []ExecOrder{o})
 			}
+			perLeg = append(perLeg, one)
 		}
-
-		for i := 0; i < maxOrders; i++ {
-			for _, lc := range legChunks {
-				if i < len(lc[c]) {
-					interleaved = append(interleaved, lc[c][i])
-				}
-			}
+		var interleaved []ExecOrder
+		for _, o := range interleaveClips(perLeg) {
+			interleaved = append(interleaved, o...)
 		}
 
 		if len(interleaved) > 0 {
