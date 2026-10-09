@@ -344,7 +344,7 @@ function App() {
       account_id: '147',
       product_type: 'NRML',
       exchange_segment: 'NSEFO',
-      order_lots_per_call: 1,
+      order_lots_per_call: 0, // 0 = automatic: 7 rounds, ceil(lots/100) per order
       delta_neutral: true
     });
 
@@ -363,7 +363,7 @@ function App() {
       wing_pct: 0,
       buy_buffer: 2,
       sell_buffer: 2,
-      order_lots_per_call: 1,
+      order_lots_per_call: 0, // 0 = automatic: 7 rounds, ceil(lots/100) per order
       idv: 11.4,
       idv_divisor: 1.5,
       straddle_filter: 250,
@@ -864,7 +864,7 @@ function App() {
         delta_neutral: !!prefs.delta_neutral,
         product_type: prefs.product_type || 'NRML',
         target_expiry: selectedExpiry() || optionChain().expiry,
-        order_lots_per_call: toNum(prefs.order_lots_per_call) || 1,
+        order_lots_per_call: toNum(prefs.order_lots_per_call) || 0,
         exchange_segment: prefs.exchange_segment || 'NSEFO',
         // Same defaults as the Automation tab (SL/TP 14 bps of spot, exit
         // 15:37:00) so a manual build is armed the same way an automated
@@ -3765,12 +3765,12 @@ function App() {
               </div>
 
               <div class="control-block">
-                <label class="control-label">Lots per order</label>
+                <label class="control-label" title="0 = automatic: 7 rounds in the CE/PE ratio, ceil(lots/100) lots per order. 2+ = that many lots per order inside the same 7 rounds.">Lots per order (0 = auto)</label>
                 <input
                   class="symbol-select"
                   type="text" inputmode="decimal"
                   value={automationConfig().order_lots_per_call}
-                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, order_lots_per_call: Number(e.target.value) || 1 }))}
+                  onInput={(e) => setAutomationConfig((prev) => ({ ...prev, order_lots_per_call: Number(e.target.value) || 0 }))}
                 />
               </div>
             </div>

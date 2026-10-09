@@ -570,26 +570,25 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 
 	maxOrderQty := int(s.resolveMaxOrderQty(req.Symbol, int64(lotSize)))
 
-	if req.OrderLotsPerCall > 0 {
-		// Explicit UI clip size: use dedicated pipeline, no seven-bucket chunker.
-		clips, e := GenerateExplicitClips(
-			fmt.Sprintf("BUI_%s", tradeUID),
-			legs,
-			req.OrderLotsPerCall,
-			maxOrderQty,
-		)
-		chunks = clips
-		err = e
-	} else {
-		// Default automatic chunking behavior.
-		chunks, err = GenerateChunkedOrders(
-			fmt.Sprintf("BUI_%s", tradeUID),
-			legs,
-			req.Lots,
-			maxOrderQty,
-			req.OrderLotsPerCall,
-		)
+	// Every normal build (manual, automation / scheduled, LUT) goes out in
+	// 7 rounds, each leg's running total round(total*c/7) so CE and PE stay
+	// in their own ratio, and inside each round the legs are spread in
+	// proportion to their size. Lots per order: ceil(lots/100) automatically
+	// (0 or 1 = automatic -- 1 was the old forced default; at <= 100 lots the
+	// automatic size is 1 anyway), or the given size when 2+, always within
+	// the live per-order maximum. (The ATM Straddle Build has its own
+	// depth-planned path and does not come here.)
+	lotsPerOrder := req.OrderLotsPerCall
+	if lotsPerOrder <= 1 {
+		lotsPerOrder = 0
 	}
+	chunks, err = GenerateChunkedOrders(
+		fmt.Sprintf("BUI_%s", tradeUID),
+		legs,
+		req.Lots,
+		maxOrderQty,
+		lotsPerOrder,
+	)
 	if err != nil {
 		log.Printf("❌ GenerateChunkedOrders failed for %s: %v", tradeUID, err)
 		return nil, err

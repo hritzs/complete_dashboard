@@ -220,3 +220,32 @@ func generateChunkedOrdersInternal(
 
 	return allChunks, nil
 }
+
+// interleaveClips merges each leg's orders so every leg goes out in
+// proportion to its own size (see the body).
+func interleaveClips(perLegClips [][][]ExecOrder) [][]ExecOrder {
+	// Each leg in proportion to its own size: the leg furthest behind its
+	// share goes next (ties: first leg), so CE 400 / PE 370 clips stay in
+	// ratio all the way through instead of ending with 30 CE clips alone.
+	total := 0
+	for _, clips := range perLegClips {
+		total += len(clips)
+	}
+	merged := make([][]ExecOrder, 0, total)
+	emitted := make([]int, len(perLegClips))
+	for len(merged) < total {
+		best, bestKey := -1, 0.0
+		for li, clips := range perLegClips {
+			if emitted[li] >= len(clips) {
+				continue
+			}
+			k := (float64(emitted[li]) + 0.5) / float64(len(clips))
+			if best < 0 || k < bestKey-1e-12 {
+				best, bestKey = li, k
+			}
+		}
+		merged = append(merged, perLegClips[best][emitted[best]])
+		emitted[best]++
+	}
+	return merged
+}
