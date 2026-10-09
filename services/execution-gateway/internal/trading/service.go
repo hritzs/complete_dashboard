@@ -2055,6 +2055,22 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 	remainingPE := targetPE
 	var allVerifiedFills []BrokerFill
 
+	// Hedge legs come down WITH the straddle: after every chunk each extra
+	// leg is reduced to the same fraction the straddle has closed (whole
+	// lots), so the position keeps its ratio and delta all the way down
+	// instead of the straddle first and the hedges at the end (delta drifted
+	// mid-exit, 14:01 / 14:18 2026-10-09). The full close after the loop
+	// stays as the safety net for whatever is left.
+	extraInit := map[int64]int64{}
+	if extra, xerr := s.extraOpenLegs(tradeUID, tr); xerr == nil {
+		for _, l := range extra {
+			if q := abs64(l.Qty - l.WingQty); q > 0 {
+				extraInit[l.Token] = q
+			}
+		}
+	}
+	extraDone := map[int64]int64{}
+
 	const maxExecutionAttempts = 4
 	// Orders whose outcome is unknown (no terminal confirmation). A retry
 	// round re-sends the "remaining" quantity, and an unconfirmed order may
@@ -2278,6 +2294,13 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 			// quantity instead of the true remainder.
 			s.persistSQFProgress(tradeUID, tr, allVerifiedFills, remainingCE, remainingPE, "SQUARING_OFF")
 
+			if len(extraInit) > 0 && targetCE+targetPE > 0 && (remainingCE > 0 || remainingPE > 0) {
+				frac := float64(targetCE-remainingCE+targetPE-remainingPE) / float64(targetCE+targetPE)
+				if _, _, xerr := s.reduceExtraLegsInStep(tradeUID, tr, extraInit, extraDone, frac, "SQF"); xerr != nil {
+					log.Printf("⚠️ SQF in-step hedge reduction trade=%s: %v -- the rest closes after the straddle", tradeUID, xerr)
+				}
+			}
+
 			if remainingCE == 0 && remainingPE == 0 {
 				break
 			}
@@ -2484,6 +2507,56 @@ func (s *Service) reduceExtraOpenLegs(tradeUID string, tr StoredTrade, percentag
 	if percentage <= 0 {
 		return 0, 0, nil
 	}
+	lot := int64(tr.LotSize)
+	if lot <= 0 {
+		lot = 1
+	}
+	return s.reduceExtraLegsBy(tradeUID, tr, tagPrefix, phase, func(leg OpenLeg, absQty int64) int64 {
+		if percentage >= 100 {
+			return absQty
+		}
+		lots := int64(math.Round(float64(absQty) * (percentage / 100.0) / float64(lot)))
+		if lots <= 0 && absQty > 0 {
+			lots = 1
+		}
+		return min(lots*lot, absQty)
+	}, fmt.Sprintf("%.0f%% of open", percentage))
+}
+
+// reduceExtraLegsInStep brings every extra leg down to frac of its size at
+// the start of the exit (whole lots, never below what is still open);
+// done tracks what this exit already closed per token.
+func (s *Service) reduceExtraLegsInStep(tradeUID string, tr StoredTrade, init, done map[int64]int64, frac float64, phase string) (shortChangeCE, shortChangePE int64, err error) {
+	lot := int64(tr.LotSize)
+	if lot <= 0 {
+		lot = 1
+	}
+	want := map[int64]int64{}
+	for tok, q0 := range init {
+		target := int64(math.Round(float64(q0)*frac/float64(lot))) * lot
+		if n := min(target, q0) - done[tok]; n > 0 {
+			want[tok] = n
+		}
+	}
+	if len(want) == 0 {
+		return 0, 0, nil
+	}
+	sent := map[int64]int64{}
+	shortChangeCE, shortChangePE, err = s.reduceExtraLegsBy(tradeUID, tr, "SQFS", phase, func(leg OpenLeg, absQty int64) int64 {
+		q := min(want[leg.Token], absQty)
+		sent[leg.Token] += q
+		return q
+	}, fmt.Sprintf("in step, %.0f%% of the straddle closed", frac*100))
+	for tok, q := range sent {
+		done[tok] += q
+	}
+	return shortChangeCE, shortChangePE, err
+}
+
+// reduceExtraLegsBy closes qtyFor(leg, open) of every extra open leg in the
+// direction that shrinks it, in orders no bigger than the per-order max,
+// each confirmed before the next.
+func (s *Service) reduceExtraLegsBy(tradeUID string, tr StoredTrade, tagPrefix, phase string, qtyFor func(leg OpenLeg, absQty int64) int64, what string) (shortChangeCE, shortChangePE int64, retErr error) {
 
 	extra, err := s.extraOpenLegs(tradeUID, tr)
 	if err != nil {
@@ -2528,16 +2601,9 @@ func (s *Service) reduceExtraOpenLegs(tradeUID string, tr StoredTrade, percentag
 			continue
 		}
 
-		qty := absQty
-		if percentage < 100 {
-			lots := int64(math.Round(float64(absQty) * (percentage / 100.0) / float64(lotSize)))
-			if lots <= 0 && absQty > 0 {
-				lots = 1
-			}
-			qty = lots * lotSize
-			if qty > absQty {
-				qty = absQty
-			}
+		qty := qtyFor(leg, absQty)
+		if qty > absQty {
+			qty = absQty
 		}
 		if qty <= 0 {
 			continue
@@ -2573,8 +2639,8 @@ func (s *Service) reduceExtraOpenLegs(tradeUID string, tr StoredTrade, percentag
 			}
 
 			log.Printf(
-				"📝 Persisting %s extra-leg order to DB before execution: trade=%s token=%d side=%s qty=%d (piece %d, %.0f%% of open %d, max/order %d)",
-				phase, tradeUID, leg.Token, side, pieceQty, piece+1, percentage, absQty, maxPer,
+				"📝 Persisting %s extra-leg order to DB before execution: trade=%s token=%d side=%s qty=%d (piece %d, %s, open %d, max/order %d)",
+				phase, tradeUID, leg.Token, side, pieceQty, piece+1, what, absQty, maxPer,
 			)
 			brokerOrderID, _, err := s.submitOrderIntent(context.Background(), executor, tradeUID, intent)
 			if err != nil {
@@ -2837,6 +2903,20 @@ func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
 	remainingPE := peQty
 	var allVerifiedFills []BrokerFill
 
+	// Hedge legs come down with the straddle, chunk by chunk, to the same
+	// fraction (see SquareOff); the end of the exit takes them to the exact
+	// percentage.
+	extraInit := map[int64]int64{}
+	if extra, xerr := s.extraOpenLegs(tradeUID, tr); xerr == nil {
+		for _, l := range extra {
+			if q := abs64(l.Qty - l.WingQty); q > 0 {
+				extraInit[l.Token] = q
+			}
+		}
+	}
+	extraDone := map[int64]int64{}
+	var stepCE, stepPE int64
+
 	for chunkIdx, chunk := range chunks {
 		submitted := make(map[string]submittedOrderMeta)
 		requestedCE := int64(0)
@@ -2943,6 +3023,15 @@ func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
 			int64(tr.PEQty)-(peQty-remainingPE),
 			"PARTIAL-SQF",
 		)
+
+		if len(extraInit) > 0 && ceQty+peQty > 0 && (remainingCE > 0 || remainingPE > 0) {
+			frac := float64(ceQty-remainingCE+peQty-remainingPE) / float64(ceQty+peQty) * percentage / 100
+			xce, xpe, xerr := s.reduceExtraLegsInStep(tradeUID, tr, extraInit, extraDone, frac, "PSQF")
+			stepCE, stepPE = stepCE+xce, stepPE+xpe
+			if xerr != nil {
+				log.Printf("⚠️ PSQF in-step hedge reduction trade=%s: %v -- the rest is reduced at the end", tradeUID, xerr)
+			}
+		}
 	}
 
 	verifiedCE := ceQty - remainingCE
@@ -2966,7 +3055,13 @@ func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
 		if tr.CEQty == 0 && tr.PEQty == 0 {
 			extraPct = 100
 		}
-		extraCE, extraPE, extraErr := s.reduceExtraOpenLegs(tradeUID, tr, extraPct, "PSQFX", "PSQF")
+		// What the chunks already took off the hedges counts toward the
+		// percentage: only the remainder to exactly extraPct goes out now.
+		extraCE, extraPE, extraErr := s.reduceExtraLegsInStep(tradeUID, tr, extraInit, extraDone, extraPct/100, "PSQF")
+		if len(extraInit) == 0 {
+			extraCE, extraPE, extraErr = s.reduceExtraOpenLegs(tradeUID, tr, extraPct, "PSQFX", "PSQF")
+		}
+		extraCE, extraPE = extraCE+stepCE, extraPE+stepPE
 		// Wings follow whatever net short was actually removed (the
 		// straddle's verified trim plus the hedge trim), LIFO -- or all of
 		// them once nothing short is left.
