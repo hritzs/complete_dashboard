@@ -428,7 +428,7 @@ func (s *Service) pmTick() {
 	// Postgres: the live view (latest, every second) and one snapshot a minute.
 	if b, jerr := json.Marshal(map[string]interface{}{"config": cfg, "state": st, "view": view}); jerr == nil {
 		stateMirrorKey("portfolio_live_view", b)
-		if snap {
+		if snap && sbLiveWindow(time.Now().In(lutIST())) { // one a minute, in the session only
 			stateEvent("portfolio_snapshot", "portfolio_mtm", pmToday(), b)
 		}
 	}

@@ -234,7 +234,9 @@ func (s *Service) loadFreezeQty(ctx context.Context, provider FreezeQtyProvider,
 
 		info, err := provider.GetFreezeQty(ctx, atm.CEToken)
 		if err != nil || info.MaxOrderQty <= 0 {
-			log.Printf("[BOOT] ⚠️ FREEZE QTY %s: live fetch failed token=%d err=%v -- 1 lot per order until loaded (retrying)", sym, atm.CEToken, err)
+			if freezeWarnDue(sym) { // retried every minute; logged every 15 min
+				log.Printf("[BOOT] ⚠️ FREEZE QTY %s: live fetch failed token=%d err=%v -- 1 lot per order until loaded (retrying every minute; next note in 15 min)", sym, atm.CEToken, err)
+			}
 			failed = append(failed, sym)
 			continue
 		}
@@ -3489,4 +3491,15 @@ func chooseUnderlying(chain OptionChainSnapshot) float64 {
 		return chain.FutureLtp
 	}
 	return 0
+}
+
+var freezeWarnAt sync.Map // symbol -> last warning time
+
+// freezeWarnDue throttles the repeating freeze-qty warning to once per 15 min.
+func freezeWarnDue(sym string) bool {
+	if v, ok := freezeWarnAt.Load(sym); ok && time.Since(v.(time.Time)) < 15*time.Minute {
+		return false
+	}
+	freezeWarnAt.Store(sym, time.Now())
+	return true
 }
