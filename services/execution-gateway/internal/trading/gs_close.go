@@ -44,7 +44,6 @@ var gsc struct {
 	got      map[gsCloseKey]float64
 	inflight map[gsCloseKey]chan struct{}
 	day      string
-	recent   map[int64]time.Time // tokens asked for lately (kept warm)
 	warmOnce sync.Once
 }
 
@@ -53,11 +52,12 @@ var gsc struct {
 // 2026-10-09 right after a restart timed out). Once a minute (:50, ~10 s
 // before the boundary; the boundary fetch itself keeps the ATM / held legs
 // hot) and once at start it requests:
-//   - CE + PE of the ATM +/- gsWarmStrikes strikes of the nearest expiry
-//     (an ATM that jumps at the boundary is already warm),
-//   - every leg the open trades hold (portfolio view),
-//   - every token asked for in the last 10 minutes.
-const gsWarmStrikes = 3
+//   - CE + PE of the ATM +/- 1 strike of the nearest expiry (everything at
+//     the minute end is derived from the ATM; +/-1 covers an ATM shift),
+//   - every leg the open trades hold (their SL / TP use those closes).
+//
+// Nothing is warmed for display only: execution comes first.
+const gsWarmStrikes = 1
 
 func (s *Service) gsWarmLoop() {
 	s.gsWarmNow()
@@ -76,15 +76,6 @@ func (s *Service) gsWarmNow() {
 		return
 	}
 	toks := map[int64]bool{}
-	gsc.mu.Lock()
-	for tok, at := range gsc.recent {
-		if time.Since(at) < 10*time.Minute {
-			toks[tok] = true
-		} else {
-			delete(gsc.recent, tok)
-		}
-	}
-	gsc.mu.Unlock()
 	if s.Snapshot != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		if c, err := s.Snapshot.GetOptionChain(ctx, lutSymbol, ""); err == nil && c != nil {
@@ -160,10 +151,7 @@ func (s *Service) gsCloseAt(token int64, b time.Time) (float64, bool) {
 	if gsc.got == nil || gsc.day != day {
 		gsc.got, gsc.inflight, gsc.day = map[gsCloseKey]float64{}, map[gsCloseKey]chan struct{}{}, day
 	}
-	if gsc.recent == nil {
-		gsc.recent = map[int64]time.Time{}
-	}
-	gsc.recent[token] = time.Now()
+
 	if v, ok := gsc.got[k]; ok {
 		gsc.mu.Unlock()
 		return v, true

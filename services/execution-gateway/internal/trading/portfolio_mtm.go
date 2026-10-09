@@ -141,6 +141,7 @@ var pm struct {
 	lastTry  map[string]time.Time // loss side: last Full Exit attempt per trade
 	evalLock sync.Mutex           // one day-MTM evaluation at a time
 	lastSnap string               // HH:MM of the last minute snapshot saved
+	lastEval time.Time            // last day-MTM evaluation (throttled while OFF)
 }
 
 func pmPath() string {
@@ -402,6 +403,13 @@ func (s *Service) pmTick() {
 		pmSaveLocked()
 	}
 	cfg, st := pm.cfg, pm.st
+	// Execution first: while the rule is OFF / done the evaluation only
+	// feeds the screen -- every 3 s instead of every second.
+	if (st.Status == pmOff || st.Status == pmDoneProfit || st.Status == pmDoneLoss) && time.Since(pm.lastEval) < 3*time.Second {
+		pm.mu.Unlock()
+		return
+	}
+	pm.lastEval = time.Now()
 	pm.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
