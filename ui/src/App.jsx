@@ -2643,25 +2643,25 @@
                 <table class="positions-table" style={{ width: "100%", "border-collapse": "collapse", "white-space": "nowrap" }}>
                   <thead>
                     <tr style={{ background: "#202020", "text-align": "left" }}>
-                      <th style={{ padding: "10px" }}>UID</th>
+                      <th style={{ padding: "10px" }} title="Last 8 characters of the trade id -- click a row for full details">UID</th>
                       <th style={{ padding: "10px" }}>Symbol</th>
-                      <th style={{ padding: "10px" }}>Strike</th>
-                      <th style={{ padding: "10px" }}>Status</th>
-                      <th style={{ padding: "10px" }}>CE Qty</th>
-                      <th style={{ padding: "10px" }}>CE LTP</th>
-                      <th style={{ padding: "10px" }}>PE Qty</th>
-                      <th style={{ padding: "10px" }}>PE LTP</th>
-                      <th style={{ padding: "10px" }}>Net Δ</th>
-                      <th style={{ padding: "10px" }}>Points Out</th>
-                      <th style={{ padding: "10px" }}>Points Allowed</th>
+                      <th style={{ padding: "10px" }} title="Strike of the sold straddle">Strike</th>
+                      <th style={{ padding: "10px" }} title="ACTIVE = monitored; PARTIAL = built less than requested; CLOSED_* = how it was closed">Status</th>
+                      <th style={{ padding: "10px" }} title="Contracts of the CE leg currently sold">CE Qty</th>
+                      <th style={{ padding: "10px" }} title="Last traded price of the CE leg (avg exit price once closed)">CE LTP</th>
+                      <th style={{ padding: "10px" }} title="Contracts of the PE leg currently sold">PE Qty</th>
+                      <th style={{ padding: "10px" }} title="Last traded price of the PE leg (avg exit price once closed)">PE LTP</th>
+                      <th style={{ padding: "10px" }} title="Net delta of the whole position incl. hedge legs (wings excluded)">Net Δ</th>
+                      <th style={{ padding: "10px" }} title="How far the position has drifted (delta / straddle divisor) -- the minute-end hedge fires when this exceeds Points Allowed">Points Out</th>
+                      <th style={{ padding: "10px" }} title="Drift allowed before the minute-end hedge acts (from straddle / IV and the floor)">Points Allowed</th>
                       
                       
                       
                       
-                      <th style={{ padding: "10px" }}>Unrealized</th>
-                      <th style={{ padding: "10px" }}>Realized</th>
-                      <th style={{ padding: "10px" }}>Total PnL</th>
-                      <th style={{ padding: "10px" }}>PnL / Straddle</th>
+                      <th style={{ padding: "10px" }} title="Open P&L at last traded prices">Unrealized</th>
+                      <th style={{ padding: "10px" }} title="Booked P&L -- only partial / full / MTM exits book it (hedges do not)">Realized</th>
+                      <th style={{ padding: "10px" }} title="Unrealized + Realized">Total PnL</th>
+                      <th style={{ padding: "10px" }} title="Total P&L per straddle unit (P&L ÷ lots × lot size)">PnL / Straddle</th>
                       <th style={{ padding: "10px" }} title="Wings are RM only: not in Realized / Total PnL">Wing PnL</th>
                       <th style={{ padding: "10px" }}>Actions</th>
                     </tr>
@@ -3244,6 +3244,32 @@
                                       <ManualLegPanel item={item} onDone={() => refreshPortfolio()} />
                                       </Show>
 
+                                      <Show when={(item.config?.hedge_events || []).length > 0}>
+                                        <section class="trade-card position-details-card">
+                                          <div class="trade-card-title">Hedges — {item.config?.hedge_count || 0} filled · {(item.config?.hedge_events || []).length} attempt(s)</div>
+                                          <div class="position-table-wrap">
+                                            <table class="trade-position-table">
+                                              <thead><tr><th>Time</th><th>Trigger</th><th>Result</th><th>Lots / qty</th><th>CE</th><th>PE</th><th>Strike</th><th title="Net delta of the position before this hedge">Δ before</th><th>Tranches</th><th>Reason / error</th></tr></thead>
+                                              <tbody>
+                                                <For each={[...(item.config?.hedge_events || [])].reverse()}>{(h) => (
+                                                  <tr>
+                                                    <td>{h.time}</td>
+                                                    <td>{h.trigger}</td>
+                                                    <td class={h.result === 'FILLED' ? 'positive' : h.result === 'PARTIAL' ? 'yellow' : 'negative'}>{h.result}</td>
+                                                    <td>{h.lots} / {h.qty}</td>
+                                                    <td>{h.ce_side} {h.ce_filled}</td>
+                                                    <td>{h.pe_side} {h.pe_filled}</td>
+                                                    <td>{h.strike ? fmt(h.strike, 0) : '—'}</td>
+                                                    <td>{fmt(h.delta_before, 2)}</td>
+                                                    <td>{h.tranches}</td>
+                                                    <td style={{ "white-space": "normal", "max-width": "380px", opacity: 0.8 }}>{h.error || h.reason || ''}</td>
+                                                  </tr>
+                                                )}</For>
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                        </section>
+                                      </Show>
                                       <section class="trade-card position-details-card">
                                         <div class="trade-card-title">Trade Parameters (current values{(item.config?.modifications || []).filter((m) => m.field !== "Auto risk execution").length ? ", after modifications" : ""})</div>
                                         <div style={{ display: "grid", "grid-template-columns": "repeat(auto-fit, minmax(210px, 1fr))", gap: "4px 18px" }}>

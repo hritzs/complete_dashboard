@@ -34,3 +34,39 @@ html,body,#root{height:100%}body{margin:0;background:#0b1220;color:#e5e7eb;font-
 .testing-status-msg.err{color:#ff8080;border-color:rgba(239,68,68,.35)}
 .testing-modify-row{display:grid;grid-template-columns:repeat(3,minmax(160px,1fr)) auto;gap:12px;align-items:end}
 @media (max-width: 900px){.testing-modify-row{grid-template-columns:1fr}}
+
+/* ---- Readability layer (2026-10-09): calmer, aligned, less crowded ---- */
+:root{--row-alt:rgba(255,255,255,.022);--row-hover:rgba(56,189,248,.06);--hair:rgba(148,163,184,.14)}
+body{font-size:13px;line-height:1.45;letter-spacing:.005em}
+/* numbers line up in every table and KPI */
+table,td,th,strong,.metric-value,.trade-metric-row strong,.monitor-row strong{font-variant-numeric:tabular-nums}
+/* tables: soft zebra, hover, consistent rows, readable headers */
+.tab-panel table,.chain-panel table,.trade-dashboard table{border-collapse:collapse}
+.tab-panel table tbody tr:nth-child(even),.trade-dashboard table tbody tr:nth-child(even){background:var(--row-alt)}
+.tab-panel table tbody tr:hover,.trade-dashboard table tbody tr:hover{background:var(--row-hover)}
+.tab-panel table td,.tab-panel table th{border-bottom:1px solid var(--hair)}
+.tab-panel table th{color:var(--muted);font-weight:600;font-size:11px;letter-spacing:.03em;white-space:nowrap}
+.tab-panel table th[title]{cursor:help;text-decoration:underline dotted rgba(148,163,184,.45);text-underline-offset:3px}
+/* inputs / buttons: one consistent look */
+input,select,textarea{font-family:inherit}
+.symbol-select{border-radius:8px;padding:8px 10px;font-size:13px;transition:border-color .12s ease,box-shadow .12s ease}
+.tab-btn{border-radius:8px;padding:8px 13px;font-size:12.5px}
+.tab-btn:disabled{opacity:.45;cursor:not-allowed}
+.dashboard-btn{border-radius:6px;transition:filter .12s ease,transform .08s ease}
+.dashboard-btn:active{transform:translateY(1px)}
+button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+/* sections breathe a little more */
+.tab-panel{padding:16px 18px}
+.section-title{margin-top:22px}
+details>summary{cursor:pointer;user-select:none}
+details>summary:hover{color:var(--text)}
+/* status badges: readable, not shouty */
+.status-badge{font-weight:700;letter-spacing:.03em;padding:2px 8px}
+.status-badge.closed_mtm,.status-badge.closed_straddle,.status-badge.closed_portfolio,.status-badge.sbuild_closed{background:#94a3b81f;color:#9ca3af}
+.status-badge.squaring_off,.status-badge.partial,.status-badge.building{background:#fbbf2420;color:#fbbf24}
+.status-badge.reconciliation_required,.status-badge.failed{background:#ef444420;color:#f87171}
+/* scrollbars */
+*{scrollbar-width:thin;scrollbar-color:#334155 transparent}
+::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-thumb{background:#334155;border-radius:6px}::-webkit-scrollbar-track{background:transparent}
+/* small muted helper text everywhere */
+.hint{font-size:11.5px;color:var(--muted);line-height:1.4}
