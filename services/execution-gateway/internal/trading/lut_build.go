@@ -196,8 +196,8 @@ func (s *Service) lutFireBuildLocked(day string, rec LUTEvaluation, entry *LUTEn
 		log.Printf("[LUT-BUILD] ⛔ LUT YES at %s but the REAL build was REFUSED: %s", rec.Time, run.Error)
 		return
 	}
-	log.Printf("[LUT-BUILD] 🚀 LUT YES at %s -> REAL BUILD %s %s %.0f straddle %d lot(s), delta-neutral, SL %.2f bps TP %.2f bps exit %s, account %s",
-		rec.Time, lutSymbol, entry.Expiry, entry.Strike, c.Lots, risk.SlBps, risk.TpBps, c.ExitTime, run.Account)
+	log.Printf("[LUT-BUILD] 🚀 LUT YES at %s -> REAL BUILD %s %s %.0f straddle %d lot(s), delta-neutral, SL %.2f bps TP %.2f bps exit %s, %s, account %s",
+		rec.Time, lutSymbol, entry.Expiry, entry.Strike, c.Lots, risk.SlBps, risk.TpBps, c.ExitTime, lutWingsText(c.WingPct), run.Account)
 	s.lutSendBuild(run, lutBuildRequest(c, entry.Expiry, entry.Strike, risk))
 }
 
@@ -240,6 +240,14 @@ func (s *Service) lutSendBuild(run *LUTBuildRun, req FinalBuildRequest) {
 			e.saveDayLocked(e.day)
 		}
 	}()
+}
+
+// lutWingsText: "no wings" or "wings 2.00% OTM" for the logs.
+func lutWingsText(pct float64) string {
+	if pct <= 0 {
+		return "no wings"
+	}
+	return fmt.Sprintf("wings %.2f%% OTM", pct)
 }
 
 // Kind names the run in logs.
@@ -289,8 +297,8 @@ func (s *Service) lutTestFireLocked() (*LUTBuildRun, error) {
 		Account: c.BrokerName + "/" + c.AccountID}
 	e.tests = append(e.tests, run)
 	e.saveDayLocked(e.day)
-	log.Printf("[LUT-BUILD] 🧪 TEST FIRE (user) -> REAL ORDERS %s %s %.0f straddle %d lot(s), delta-neutral, SL %.2f bps TP %.2f bps exit %s, account %s",
-		lutSymbol, expiry, ev.Strike, c.Lots, risk.SlBps, risk.TpBps, c.ExitTime, run.Account)
+	log.Printf("[LUT-BUILD] 🧪 TEST FIRE (user) -> REAL ORDERS %s %s %.0f straddle %d lot(s), delta-neutral, SL %.2f bps TP %.2f bps exit %s, %s, account %s",
+		lutSymbol, expiry, ev.Strike, c.Lots, risk.SlBps, risk.TpBps, c.ExitTime, lutWingsText(c.WingPct), run.Account)
 	s.lutSendBuild(run, lutBuildRequest(c, expiry, ev.Strike, risk))
 	return run, nil
 }
@@ -403,7 +411,7 @@ func (h *Handlers) LUTBuildHandler(w http.ResponseWriter, r *http.Request) {
 		reply(http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
 		return
 	}
-	log.Printf("[LUT-BUILD] config saved: armed=%v lots=%d account=%s/%s exit=%s SL %.2f TP %.2f (0 = LUT's own)",
-		c.Armed, c.Lots, c.BrokerName, c.AccountID, c.ExitTime, c.SLBps, c.TPBps)
+	log.Printf("[LUT-BUILD] config saved: armed=%v lots=%d account=%s/%s exit=%s SL %.2f TP %.2f (0 = LUT's own), %s",
+		c.Armed, c.Lots, c.BrokerName, c.AccountID, c.ExitTime, c.SLBps, c.TPBps, lutWingsText(c.WingPct))
 	reply(http.StatusOK, nil)
 }

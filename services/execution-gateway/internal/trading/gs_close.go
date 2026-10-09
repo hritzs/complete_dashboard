@@ -30,16 +30,19 @@ type MinuteCloseProvider interface {
 }
 
 const (
-	// While a candle is missing a new request goes out every gsClosePoll
-	// with up to gsCloseInflight overlapping per token, so the close is seen
-	// ~one request time after GreekSoft publishes it (sequential request +
-	// 150 ms sleep missed it by up to ~250 ms).
-	gsClosePoll     = 60 * time.Millisecond
-	gsCloseInflight = 2
+	// While a candle is missing the next request goes out at most
+	// gsClosePoll after the previous answer, ONE request per token at a time:
+	// GreekSoft's REST slows down under load at the boundary (2 overlapping
+	// per token over 6-8 tokens took 350-750 ms per answer vs 50-100 ms one
+	// at a time, 13:16-13:17 2026-10-09), so fewer, back-to-back requests
+	// get the close sooner.
+	gsClosePoll     = 40 * time.Millisecond
+	gsCloseInflight = 1
 	gsCloseDeadline = 2 * time.Second // after the boundary: then the feed close is used
 	// gsCaptureStart: when the boundary capture starts asking (GreekSoft
-	// never had the candle earlier than ~+0.25 s).
-	gsCaptureStart = 150 * time.Millisecond
+	// never had the candle earlier than ~+0.25-0.3 s; earlier asks only add
+	// load).
+	gsCaptureStart = 250 * time.Millisecond
 )
 
 // gsArrived wakes the LUT loop as soon as a close is in (instead of its
@@ -119,7 +122,7 @@ func gsAfterBoundary() {
 }
 
 // gsTokens: CE + PE within band strikes of the ATM (band 0: the ATM, plus
-// the neighbouring strike when the synthetic is within 15 pts of the middle
+// the neighbouring strike when the synthetic is within 10 pts of the middle
 // between two strikes) and every leg the open positions hold.
 func (s *Service) gsTokens(band int) map[int64]bool {
 	toks := map[int64]bool{}
@@ -134,7 +137,7 @@ func (s *Service) gsTokens(band int) map[int64]bool {
 			for _, r := range c.Chain {
 				d := math.Abs(r.Strike - atm)
 				near := d <= float64(band)*lutStrikeStep+1e-6
-				if band == 0 && S > 0 && d > 0 && d <= lutStrikeStep+1e-6 && math.Abs(r.Strike-S) <= lutStrikeStep/2+15 {
+				if band == 0 && S > 0 && d > 0 && d <= lutStrikeStep+1e-6 && math.Abs(r.Strike-S) <= lutStrikeStep/2+10 {
 					near = true // the ATM may flip to this strike
 				}
 				if near {
@@ -312,13 +315,54 @@ func gsFetch(p MinuteCloseProvider, k gsCloseKey, day string, deadline time.Time
 
 // gsApplyCloses replaces the closes of the given tokens in cc (a chain
 // already priced at our feed closes for boundary b) with GreekSoft's, all
-// fetched in parallel; the synthetic future / ATM are re-derived when the
-// ATM pair changed. Returns how many legs came from GreekSoft and the feed
-// closes they replaced (token -> feed price), for the log.
+// fetched in parallel, then re-derives the synthetic future / ATM from the
+// ATM pair. When that moves the ATM to another strike (synthetic near the
+// middle between two strikes), the new ATM pair is priced at GreekSoft too
+// and the synthetic is taken from IT -- so the ATM, its closes and the
+// synthetic always belong together (13:17 2026-10-09: the ATM flipped
+// 22550 -> 22500 and the LUT kept feed closes for 22500 while the
+// synthetic came from the 22550 pair). Returns how many legs came from
+// GreekSoft and the feed closes they replaced (token -> feed price).
 func (s *Service) gsApplyCloses(cc *OptionChainSnapshot, b time.Time, tokens map[int64]bool) (int, map[int64]float64) {
 	feed := map[int64]float64{}
 	if cc == nil || len(tokens) == 0 {
 		return 0, feed
+	}
+	done := map[int64]bool{}
+	n := s.gsReplace(cc, b, tokens, done, feed)
+	if n == 0 {
+		return 0, feed
+	}
+	for i := 0; i < 3; i++ {
+		row := gsRowAt(cc, cc.ATM)
+		if row == nil || row.CELtp <= 0 || row.PELtp <= 0 {
+			break
+		}
+		syn := row.Strike + row.CELtp - row.PELtp
+		cc.SyntheticFuture, cc.SyntheticSpot = syn, syn
+		atm := math.Round(syn/lutStrikeStep) * lutStrikeStep
+		next := gsRowAt(cc, atm)
+		if atm == cc.ATM || next == nil {
+			break
+		}
+		cc.ATM = atm // the ATM moved: price the new pair at GreekSoft, then re-derive from it
+		extra := map[int64]bool{}
+		for _, t := range []int64{next.CEToken, next.PEToken} {
+			if t > 0 && !done[t] {
+				extra[t] = true
+			}
+		}
+		n += s.gsReplace(cc, b, extra, done, feed)
+	}
+	return n, feed
+}
+
+// gsReplace fetches the GreekSoft closes of tokens (in parallel) and writes
+// them into cc; done collects every token attempted, feed the replaced feed
+// prices. Returns the number of legs replaced.
+func (s *Service) gsReplace(cc *OptionChainSnapshot, b time.Time, tokens map[int64]bool, done map[int64]bool, feed map[int64]float64) int {
+	if len(tokens) == 0 {
+		return 0
 	}
 	type res struct {
 		tok int64
@@ -327,6 +371,7 @@ func (s *Service) gsApplyCloses(cc *OptionChainSnapshot, b time.Time, tokens map
 	}
 	ch := make(chan res, len(tokens))
 	for t := range tokens {
+		done[t] = true
 		go func(t int64) {
 			px, ok := s.gsCloseAt(t, b)
 			ch <- res{t, px, ok}
@@ -351,17 +396,16 @@ func (s *Service) gsApplyCloses(cc *OptionChainSnapshot, b time.Time, tokens map
 			n++
 		}
 	}
-	if n > 0 {
-		for i := range cc.Chain {
-			r := &cc.Chain[i]
-			if r.Strike == cc.ATM && r.CELtp > 0 && r.PELtp > 0 {
-				cc.SyntheticFuture = r.Strike + r.CELtp - r.PELtp
-				cc.SyntheticSpot = cc.SyntheticFuture
-				cc.ATM = math.Round(cc.SyntheticFuture/lutStrikeStep) * lutStrikeStep
-			}
+	return n
+}
+
+func gsRowAt(cc *OptionChainSnapshot, strike float64) *OptionChainRow {
+	for i := range cc.Chain {
+		if math.Abs(cc.Chain[i].Strike-strike) < 1e-6 {
+			return &cc.Chain[i]
 		}
 	}
-	return n, feed
+	return nil
 }
 
 // gsHaveAll: every token's GreekSoft close for b is already in (no wait).

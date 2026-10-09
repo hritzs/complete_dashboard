@@ -1254,19 +1254,13 @@ func (s *Service) minuteCloseChain(ctx context.Context, tradeUID string, trade S
 			}
 		}
 	}
-	feedATM := atmTokens(closed)
 	nGS, feedPx := s.gsApplyCloses(closed, boundary, toks)
 	mc := minuteCloseOf(closed, chain, boundary)
 	mc.Source = "feed"
 	if nGS > 0 {
 		mc.Source = "GreekSoft"
-		for _, r := range closed.Chain {
-			if feedATM[r.CEToken] {
-				mc.FeedCE = feedPx[r.CEToken]
-			}
-			if feedATM[r.PEToken] {
-				mc.FeedPE = feedPx[r.PEToken]
-			}
+		if r := gsRowAt(closed, closed.ATM); r != nil { // the final ATM (it may have moved)
+			mc.FeedCE, mc.FeedPE = feedPx[r.CEToken], feedPx[r.PEToken]
 		}
 	}
 	legs := ""

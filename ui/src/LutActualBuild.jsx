@@ -15,7 +15,7 @@ const FIELDS = [
   ['exit_time', 'Exit time', 'text'],
   ['sl_bps', 'SL bps (0 = LUT 14)', 'number'],
   ['tp_bps', 'TP bps (0 = LUT own)', 'number'],
-  ['wing_pct', 'Wing %', 'number'],
+  ['wing_pct', 'Wings % OTM (0 = no wings)', 'number'],
   ['hedge_div', 'Hedge div', 'number'],
   ['straddle_div', 'Straddle div', 'number'],
   ['buy_buffer', 'Buy buffer', 'number'],
