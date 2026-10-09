@@ -1,6 +1,7 @@
 package trading
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -108,4 +109,19 @@ func (h *Handlers) DebugGreeksoftQuote(w http.ResponseWriter, r *http.Request) {
 		"best_bid":         quote.BestBid,
 		"best_ask":         quote.BestAsk,
 	})
+}
+
+type BestQuote struct {
+	BestBid float64
+	BestAsk float64
+}
+
+// BestQuoteProvider is implemented by broker executors that can fetch a
+// current executable bid/ask quote for a normalized trading token.
+type BestQuoteProvider interface {
+	GetBestQuote(
+		ctx context.Context,
+		token int64,
+		exchangeSegment string,
+	) (BestQuote, error)
 }

@@ -153,11 +153,15 @@ func main() {
 
 	service := trading.NewService(store, appConfig.XTSClientID)
 	service.Snapshot = &trading.SnapshotClient{BaseURL: appConfig.SnapshotServiceURL}
+	// Platform state (rules, runs, LUT, paper, portfolio rule) also in
+	// postgres; before the engines so a missing file is restored from it.
+	service.StartStateDB()
 	// Always-on LUT entry check: PAPER only (YES/NO), never places orders.
 	service.StartLUTEngine()
 	// Straddle-target build: live straddle preview + SHADOW builds (no orders).
 	service.StartSBEngine()
 	service.StartBrokerAutoSync()
+	service.StartPortfolioMTM()
 
 	natsURL := strings.TrimSpace(os.Getenv("NATS_URL"))
 	if natsURL == "" {
@@ -483,6 +487,8 @@ func startHTTPServer(cfg *Config, handlers *trading.Handlers) {
 	mux.HandleFunc("/api/sbuild/quote", handlers.SBQuote)
 
 	mux.HandleFunc("/api/portfolio/today", handlers.PortfolioToday)
+	mux.HandleFunc("/api/portfolio/mtm-exit", handlers.PortfolioMTMHandler)
+	mux.HandleFunc("/api/portfolio/square-off-all", handlers.PortfolioSquareOffAll)
 	mux.HandleFunc("/api/straddles", handlers.GetStraddles)
 	mux.HandleFunc("/api/straddles/active", handlers.GetActiveStraddles)
 	mux.HandleFunc("/api/snapshots/", handlers.GetSnapshot)

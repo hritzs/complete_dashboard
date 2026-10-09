@@ -126,9 +126,6 @@ func (p *PMS) BuildAverages() (ce, pe float64) {
 	return ce, pe
 }
 
-// BuildLegQty returns the contracts sold by the build on each leg.
-func (p *PMS) BuildLegQty() (ce, pe int64) { return p.buildCE, p.buildPE }
-
 // Fills returns a copy of every verified fill.
 func (p *PMS) Fills() []PMSFill { return append([]PMSFill(nil), p.fills...) }
 

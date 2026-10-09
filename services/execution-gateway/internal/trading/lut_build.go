@@ -109,7 +109,7 @@ func lutBuildFile() string { return filepath.Join(lutDataDir(), "lut_build.json"
 
 func loadLUTBuildConfig() LUTBuildConfig {
 	var c LUTBuildConfig
-	if b, err := os.ReadFile(lutBuildFile()); err == nil {
+	if b, err := stateRead(lutBuildFile()); err == nil {
 		_ = json.Unmarshal(b, &c)
 	}
 	return lutBuildDefaults(c)

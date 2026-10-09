@@ -1202,6 +1202,84 @@ func (s *Service) executeAutoExitNow(tradeUID string, reason string, wantStatus 
 // runMonitorCycle, compared against pnlPerStraddle -- e.g. 1bps on a
 // 24,400 spot is a 2.44-point threshold. Always returns a non-negative
 // number; callers negate it for the SL (loss) side.
+// minuteCloseWait: how long after hh:mm:00 the minute-end check waits so
+// the chain it reads carries at least one decoder publish (fixed 100 ms
+// schedule) from after the boundary.
+const minuteCloseWait = 120 * time.Millisecond
+
+// minuteCloseChain returns the chain priced at the minute's candle closes
+// when this tick runs the minute-end checks (nil otherwise). It waits until
+// minuteCloseWait past the boundary (re-reading the chain), then takes every
+// leg's last trade before the boundary (lutCloseChain, no grace wait: at
+// that point the last trade so far IS the close) -- decision ~120-150 ms
+// after the minute, inside the same second. Strikes without close data
+// (beyond the two nearest expiries) keep their LTP.
+func (s *Service) minuteCloseChain(ctx context.Context, tradeUID string, trade StoredTrade, chain *OptionChainSnapshot) *OptionChainSnapshot {
+	rt, ok := s.Store.LoadRuntime(tradeUID)
+	if !ok || chain == nil {
+		return nil
+	}
+	now := time.Now()
+	boundary := now.Truncate(time.Minute)
+	if (!rt.LastMinuteCheck.IsZero() && rt.LastMinuteCheck.Equal(boundary)) || now.Sub(boundary) > 2*time.Second {
+		return nil // not the minute-end tick (or a check postponed by an exit: live prices)
+	}
+	if wait := minuteCloseWait - now.Sub(boundary); wait > 0 {
+		time.Sleep(wait)
+		if c, err := s.Snapshot.GetOptionChain(ctx, trade.Symbol, trade.Expiry); err == nil && c != nil {
+			chain = c
+		}
+	}
+	closed, _ := lutCloseChain(chain, boundary, time.Now())
+	if closed == nil || closed == chain {
+		return nil // feed carries no trade times: LTPs as they are
+	}
+	if closed.SyntheticFuture > 0 {
+		closed.SyntheticSpot = closed.SyntheticFuture
+	}
+	// GreekSoft's candle closes (built from every trade) for the trade's
+	// own legs and the ATM pair (synthetic future); shared with the LUT and
+	// other trades, ~0.3-0.5 s after the minute; feed closes if not in by
+	// gsCloseDeadline.
+	toks := atmTokens(closed)
+	toks[trade.CEToken], toks[trade.PEToken] = true, true
+	if gsClosesOn() { // every other leg the trade holds in this expiry (hedges, wings)
+		if extra, xerr := s.extraOpenLegs(tradeUID, trade); xerr == nil {
+			for _, l := range extra {
+				if strings.EqualFold(strings.TrimSpace(l.Expiry), "") || strings.EqualFold(strings.TrimSpace(l.Expiry), strings.TrimSpace(trade.Expiry)) {
+					toks[l.Token] = true
+				}
+			}
+		}
+	}
+	feedATM := atmTokens(closed)
+	nGS, feedPx := s.gsApplyCloses(closed, boundary, toks)
+	mc := minuteCloseOf(closed, chain, boundary)
+	mc.Source = "feed"
+	if nGS > 0 {
+		mc.Source = "GreekSoft"
+		for _, r := range closed.Chain {
+			if feedATM[r.CEToken] {
+				mc.FeedCE = feedPx[r.CEToken]
+			}
+			if feedATM[r.PEToken] {
+				mc.FeedPE = feedPx[r.PEToken]
+			}
+		}
+	}
+	legs := ""
+	for _, r := range closed.Chain {
+		if r.CEToken == trade.CEToken {
+			legs += fmt.Sprintf(" | own CE %.0f close %.2f", r.Strike, r.CELtp)
+		}
+		if r.PEToken == trade.PEToken {
+			legs += fmt.Sprintf(" | own PE %.0f close %.2f", r.Strike, r.PELtp)
+		}
+	}
+	log.Printf("[MONITOR][%s] minute-end on candle closes (%d leg(s) from GreekSoft): %s%s", tradeUID, nGS, mc, legs)
+	return closed
+}
+
 func bpsOfSpotThreshold(spot float64, bps float64) float64 {
 	return spot * bps / 10000.0
 }
@@ -1222,6 +1300,14 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 	if err != nil {
 		log.Printf("⚠ snapshot fetch failed for %s: %v", tradeUID, err)
 		return
+	}
+	// The minute-end tick (hedge / SL / TP / TIME below) decides on the
+	// exact 1-minute candle closes -- each leg's last trade before hh:mm:00
+	// by exchange trade time, and the synthetic future from the ATM closes
+	// -- not on whatever LTP the latest snapshot happened to carry.
+	var minuteB time.Time // set on the minute-end tick: every leg is priced at its minute close
+	if minuteChain := s.minuteCloseChain(ctx, tradeUID, trade, chain); minuteChain != nil {
+		chain, minuteB = minuteChain, time.Now().Truncate(time.Minute)
 	}
 
 	var ceRow, peRow *OptionChainRow
@@ -1282,6 +1368,22 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 			if cerr != nil || c == nil {
 				chains[key] = nil
 				return nil
+			}
+			// Minute-end tick: a leg in another expiry is priced at ITS
+			// minute close too (GreekSoft's when on, else the feed's).
+			if !minuteB.IsZero() {
+				if cc, _ := lutCloseChain(c, minuteB, time.Now()); cc != nil {
+					toks := map[int64]bool{}
+					for _, l := range extraLegs {
+						if strings.EqualFold(strings.TrimSpace(l.Expiry), key) {
+							toks[l.Token] = true
+						}
+					}
+					if gsClosesOn() {
+						s.gsApplyCloses(cc, minuteB, toks)
+					}
+					c = cc
+				}
 			}
 			chains[key] = c
 			return c
@@ -1489,7 +1591,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 		AllowedStrike:         allowedRow.Strike,
 		RealizedPNL: func() float64 {
 			switch trade.Status {
-			case "CLOSED", "CLOSEDSQF", "CLOSED_SQF", "CLOSED_SL", "CLOSED_TP", "CLOSED_TIME", "CLOSED_MTM", "CLOSED_STRADDLE", "CLOSED_MANUAL", "FAILED":
+			case "CLOSED", "CLOSEDSQF", "CLOSED_SQF", "CLOSED_SL", "CLOSED_TP", "CLOSED_TIME", "CLOSED_MTM", "CLOSED_STRADDLE", "CLOSED_PORTFOLIO", "CLOSED_MANUAL", "FAILED":
 				return totalPNL
 			default:
 				return 0
@@ -1497,7 +1599,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 		}(),
 		UnrealizedPNL: func() float64 {
 			switch trade.Status {
-			case "CLOSED", "CLOSEDSQF", "CLOSED_SQF", "CLOSED_SL", "CLOSED_TP", "CLOSED_TIME", "CLOSED_MTM", "CLOSED_STRADDLE", "CLOSED_MANUAL", "FAILED":
+			case "CLOSED", "CLOSEDSQF", "CLOSED_SQF", "CLOSED_SL", "CLOSED_TP", "CLOSED_TIME", "CLOSED_MTM", "CLOSED_STRADDLE", "CLOSED_PORTFOLIO", "CLOSED_MANUAL", "FAILED":
 				return 0
 			default:
 				return totalPNL
@@ -1599,7 +1701,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 						hedgeReason,
 					)
 
-					hedgeErr := s.ManualHedgeLots(context.Background(), tradeUID, int(decision.Lots))
+					hedgeErr := s.ManualHedgeLots(context.WithValue(context.Background(), hedgeTriggerKey{}, hedgeReason), tradeUID, int(decision.Lots))
 					if hedgeErr != nil {
 						hedgeAction = "HEDGE_FAILED"
 						hedgeReason += " error=" + hedgeErr.Error()
@@ -2001,10 +2103,12 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 			})
 		}
 
-		// Use aggressive chunking for SL-triggered square-off (max lots/order for fastest exit)
+		// Use aggressive chunking for SL-triggered square-off (max lots/order
+		// for fastest exit) -- the trade's SL, the portfolio SL and the
+		// emergency Square off ALL.
 		var chunks [][]ExecOrder
 		var err error
-		if reason == "SL" {
+		if reason == "SL" || reason == "PORTFOLIO" || reason == "EMERGENCY" {
 			chunks, err = GenerateAggressiveChunkedOrders(
 				fmt.Sprintf("S%sA%d", tradeUID, executionAttempt),
 				legs,
@@ -2068,6 +2172,12 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 					ExpectedPrice:   order.ExpectedPrice,
 				}
 
+				// Never close more than the trade holds on this token.
+				if gerr := s.closeQtyGuard(context.Background(), tradeUID, &intent); gerr != nil {
+					log.Printf("❌ SQF order not sent trade=%s leg=%s qty=%d: %v", tradeUID, order.OptionType, order.Quantity, gerr)
+					continue
+				}
+
 				// Persist order to DB before execution (required for fill tracking)
 				log.Printf("📝 Persisting SQF order to DB before execution: trade=%s intent_id=%s side=%s qty=%d", tradeUID, intent.IntentID, intent.Side, intent.Quantity)
 				s.Store.AppendIntent(tradeUID, intent)
@@ -2091,12 +2201,12 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 				submitted[res.BrokerOrderID] = submittedOrderMeta{
 					Token:    order.Token,
 					Leg:      order.OptionType,
-					Quantity: int64(order.Quantity),
+					Quantity: intent.Quantity, // after the close guard
 				}
 				if order.OptionType == "CE" {
-					requestedCE += int64(order.Quantity)
+					requestedCE += intent.Quantity
 				} else if order.OptionType == "PE" {
-					requestedPE += int64(order.Quantity)
+					requestedPE += intent.Quantity
 				}
 
 				if updater, ok := s.Store.(interface {
@@ -2333,6 +2443,8 @@ func closedStatusForReason(reason string) string {
 		return "CLOSED_MTM"
 	case "STRADDLE":
 		return "CLOSED_STRADDLE"
+	case "PORTFOLIO":
+		return "CLOSED_PORTFOLIO"
 	default:
 		return "CLOSEDSQF"
 	}
@@ -2757,6 +2869,12 @@ func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
 				AccountID:       tr.AccountID,
 			}
 
+			// Never close more than the trade holds on this token.
+			if gerr := s.closeQtyGuard(context.Background(), tradeUID, &intent); gerr != nil {
+				log.Printf("❌ PSQF chunk=%d leg=%s qty=%d not sent: %v", chunkIdx+1, order.OptionType, order.Quantity, gerr)
+				continue
+			}
+
 			s.Store.AppendIntent(tradeUID, intent)
 
 			res, execErr := executor.ExecuteOrderIntent(context.Background(), intent)
@@ -2772,12 +2890,12 @@ func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
 			submitted[res.BrokerOrderID] = submittedOrderMeta{
 				Token:    order.Token,
 				Leg:      order.OptionType,
-				Quantity: int64(order.Quantity),
+				Quantity: intent.Quantity, // after the close guard
 			}
 			if order.OptionType == "CE" {
-				requestedCE += int64(order.Quantity)
+				requestedCE += intent.Quantity
 			} else if order.OptionType == "PE" {
-				requestedPE += int64(order.Quantity)
+				requestedPE += intent.Quantity
 			}
 
 			if updater, ok := s.Store.(interface {
@@ -2929,13 +3047,6 @@ func bookHedgeFills(ceQty, peQty int, ceSide, peSide string, filledCE, filledPE 
 		return ceQty, peQty, fmt.Errorf("PE: %w", err)
 	}
 	return newCE, newPE, nil
-}
-
-// ManualHedge is "Hedge Now": neutralize the position's complete current
-// delta. See ManualHedgeNow.
-func (s *Service) ManualHedge(ctx context.Context, tradeUID string) error {
-	_, err := s.ManualHedgeNow(ctx, tradeUID)
-	return err
 }
 
 // ManualHedgeNow hedges the position's COMPLETE current net delta -- the
@@ -3161,11 +3272,23 @@ func (s *Service) executeHedgeTranche(
 }
 
 // ManualHedgeLots is ManualHedge for an explicit number of synthetic lots.
-func (s *Service) ManualHedgeLots(ctx context.Context, tradeUID string, lots int) error {
+func (s *Service) ManualHedgeLots(ctx context.Context, tradeUID string, lots int) (err error) {
 	if lots <= 0 {
 		return fmt.Errorf("hedge lots must be positive, got %d", lots)
 	}
 	defer s.lockTrade(tradeUID)()
+	// Every attempt is recorded on the trade (count + event) before the
+	// lock is released; "no hedge needed" is not an attempt.
+	ev := HedgeEvent{Time: time.Now().In(lutIST()).Format("15:04:05"), Trigger: "MANUAL", Lots: lots}
+	if t, ok := ctx.Value(hedgeTriggerKey{}).(string); ok && t != "" {
+		ev.Trigger, ev.Reason = "AUTO", t
+	}
+	attempted := false
+	defer func() {
+		if attempted {
+			s.recordHedge(tradeUID, ev, err)
+		}
+	}()
 
 	tr, ok := s.Store.LoadTrade(tradeUID)
 	if !ok {
@@ -3186,6 +3309,8 @@ func (s *Service) ManualHedgeLots(ctx context.Context, tradeUID string, lots int
 	if !needed {
 		return nil
 	}
+	attempted = true
+	ev.CESide, ev.PESide, ev.DeltaBefore = ceSide, peSide, snap.NetDelta
 
 	// A hedge is a synthetic future (buy CE + sell PE, or the reverse)
 	// and must be built at the CURRENT live ATM strike to best
@@ -3205,6 +3330,7 @@ func (s *Service) ManualHedgeLots(ctx context.Context, tradeUID string, lots int
 		return fmt.Errorf("hedge refused, nothing placed: resolve live ATM strike: %w", err)
 	}
 	hedgeCEToken, hedgePEToken := atmRow.CEToken, atmRow.PEToken
+	ev.Strike = atmRow.Strike
 	if hedgeCEToken <= 0 || hedgePEToken <= 0 {
 		return fmt.Errorf("hedge refused, nothing placed: live ATM row missing CE/PE tokens")
 	}
@@ -3222,6 +3348,7 @@ func (s *Service) ManualHedgeLots(ctx context.Context, tradeUID string, lots int
 	// a required 3445 qty down to 1755 and stopping there, leaving the
 	// position under-hedged with no error).
 	totalQty := int64(lotSize) * int64(lots)
+	ev.Qty = totalQty
 
 	// Refuse before placing anything if the booked result is unrepresentable.
 	// Only meaningful when the hedge actually lands on the trade's OWN
@@ -3280,6 +3407,7 @@ func (s *Service) ManualHedgeLots(ctx context.Context, tradeUID string, lots int
 		)
 		totalVerifiedCE += filledCE
 		totalVerifiedPE += filledPE
+		ev.CEFilled, ev.PEFilled, ev.Tranches = totalVerifiedCE, totalVerifiedPE, trancheIdx
 
 		// Book this tranche's real, broker-confirmed fill immediately --
 		// a later tranche failing must never lose track of an earlier

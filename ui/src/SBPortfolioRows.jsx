@@ -39,6 +39,8 @@ export const sbStore = createRoot(() => {
   return { runs, holding, load };
 });
 
+const rowBtn = { padding: '3px 7px', 'font-size': '11px', 'min-width': '0' };
+
 const post = async (url, body) => {
   try {
     const d = await (await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
@@ -129,10 +131,18 @@ function SBRow(props) {
         <td style={td} class={pnlCls(total())}>₹{fmt(total())}</td>
         <td style={td} class={pnlCls(p().pnl_per_straddle)}>₹{fmt(p().pnl_per_straddle)}</td>
         <td style={{ ...td, opacity: 0.8 }}>—</td>
+        <td style={{ ...td, padding: '6px 10px' }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ display: 'flex', gap: '4px', 'flex-wrap': 'nowrap' }}>
+            <Show when={s().phase === 'BUILDING'}><button class="dashboard-btn yellow" style={rowBtn} title="Pause Building" onClick={() => pause(true)}>Pause</button></Show>
+            <Show when={s().phase === 'PAUSED'}><button class="dashboard-btn blue" style={rowBtn} title="Resume Building" onClick={() => pause(false)}>Resume</button></Show>
+            <Show when={s().phase === 'BUILDING' || s().phase === 'PAUSED'}><button class="dashboard-btn purple" style={rowBtn} title="Stop Building (no more fills)" onClick={() => stopBuild()}>Stop</button></Show>
+            <Show when={!p().flat}><button class="dashboard-btn red" style={rowBtn} title="Full Exit" onClick={() => squareOff()}>Exit</button></Show>
+          </div>
+        </td>
       </tr>
       <Show when={open()}>
         <tr class="details-row">
-          <td colSpan="17" style={{ padding: '16px', background: '#101a33' }}>
+          <td colSpan="18" style={{ padding: '16px', background: '#101a33' }}>
             <div class="trade-dashboard">
               <div class="trade-dashboard-header">
                 <div>

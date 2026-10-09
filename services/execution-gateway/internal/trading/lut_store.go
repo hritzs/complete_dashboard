@@ -103,7 +103,23 @@ func lutAppend(path string, b []byte) error {
 		f.Close()
 		return err
 	}
+	if strings.HasSuffix(path, ".jsonl") { // and into postgres (platform_events)
+		key, day := stateKey(path), stateDayRe.FindString(filepath.Base(path))
+		for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				stateEvent(lutJSONLKind(path), key, day, []byte(line))
+			}
+		}
+	}
 	return f.Close()
+}
+
+// lutJSONLKind: the event kind of a LUT append-only file.
+func lutJSONLKind(path string) string {
+	if strings.Contains(filepath.Base(path), "_chain") {
+		return "lut_chain"
+	}
+	return "lut_minute"
 }
 
 // lutSaveDay writes the day state (09:16 capture + paper entry).
@@ -117,10 +133,11 @@ func lutSaveDay(st lutDayState) {
 // lutLoadDay reloads a day's recorded minutes and state (missing = empty).
 func lutLoadDay(day string) ([]LUTEvaluation, lutDayState) {
 	st := lutDayState{Day: day}
-	if b, err := os.ReadFile(filepath.Join(lutDataDir(), day+"_day.json")); err == nil {
+	if b, err := stateRead(filepath.Join(lutDataDir(), day+"_day.json")); err == nil {
 		_ = json.Unmarshal(b, &st)
 	}
 	var mins []LUTEvaluation
+	stateReadLines(filepath.Join(lutDataDir(), day+".jsonl"), "lut_minute")
 	f, err := os.Open(filepath.Join(lutDataDir(), day+".jsonl"))
 	if err != nil {
 		return nil, st
@@ -176,6 +193,11 @@ type lutChainMinute struct {
 	Expiry string        `json:"exp"`
 	Src    string        `json:"src,omitempty"`
 	Rows   []lutChainRow `json:"rows"`
+	// Close source of the ATM pair ("GreekSoft" / "feed") and the ATM
+	// straddle's high / low inside the minute (current set only).
+	CloseSrc string  `json:"cs,omitempty"`
+	StrLow   float64 `json:"slo,omitempty"`
+	StrHigh  float64 `json:"shi,omitempty"`
 }
 
 // lutChainFile is the minute-chain file of a set: "" = current expiry,
@@ -194,13 +216,13 @@ func lutChainImportFile(day, set string) string {
 	return filepath.Join(lutDataDir(), day+"_chain_"+set+"_import.jsonl")
 }
 
-// lutSaveChainMinute appends the whole current-expiry chain at this minute's first tick.
-func lutSaveChainMinute(day string, hhmm int, chain *OptionChainSnapshot) {
-	lutSaveChainMinuteTo(day, "", hhmm, chain)
-}
-
 // lutSaveChainMinuteTo appends a chain to a set's minute file.
 func lutSaveChainMinuteTo(day, set string, hhmm int, chain *OptionChainSnapshot) {
+	lutSaveChainMinuteWith(day, set, hhmm, chain, nil)
+}
+
+// lutSaveChainMinuteWith is lutSaveChainMinuteTo with extra fields set by fn.
+func lutSaveChainMinuteWith(day, set string, hhmm int, chain *OptionChainSnapshot, fn func(*lutChainMinute)) {
 	if chain == nil {
 		return
 	}
@@ -217,6 +239,9 @@ func lutSaveChainMinuteTo(day, set string, hhmm int, chain *OptionChainSnapshot)
 	if len(m.Rows) == 0 {
 		return
 	}
+	if fn != nil {
+		fn(&m)
+	}
 	b, err := json.Marshal(m)
 	if err == nil {
 		if err = os.MkdirAll(lutDataDir(), 0o755); err == nil {
@@ -227,11 +252,6 @@ func lutSaveChainMinuteTo(day, set string, hhmm int, chain *OptionChainSnapshot)
 		log.Printf("[LUT] ⚠ cannot save chain minute %s: %v", m.Time, err)
 	}
 }
-
-// lutLoadChainDay returns the chain minutes recorded here, then fills the
-// minutes / strikes they lack from YYYY-MM-DD_chain_import.jsonl (minute
-// data imported from another recorder; rows keep their Src tag).
-func lutLoadChainDay(day string) map[string]lutChainMinute { return lutLoadChainSet(day, "") }
 
 // lutLoadChainSet is lutLoadChainDay for a set ("" current / "next").
 func lutLoadChainSet(day, set string) map[string]lutChainMinute {
@@ -290,6 +310,7 @@ func lutNextExpiry(chain *OptionChainSnapshot) string {
 
 func lutLoadChainFile(path string) map[string]lutChainMinute {
 	out := map[string]lutChainMinute{}
+	stateReadLines(path, "lut_chain")
 	f, err := os.Open(path)
 	if err != nil {
 		return out

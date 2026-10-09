@@ -1,7 +1,6 @@
 package trading
 
 import (
-	"archive/zip"
 	"encoding/csv"
 	"math"
 	"os"
@@ -128,23 +127,6 @@ func TestLoadLUTDailyInputs_NormalisedChange(t *testing.T) {
 	}
 	if _, err := LoadLUTDailyInputs(p, "2026-12-31"); err == nil {
 		t.Fatal("missing date must be an error")
-	}
-}
-
-func TestLoadEventDates_ExcelSerials(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "ev.xlsx")
-	f, _ := os.Create(p)
-	zw := zip.NewWriter(f)
-	w, _ := zw.Create("xl/worksheets/sheet1.xml")
-	_, _ = w.Write([]byte(`<?xml version="1.0"?><worksheet><sheetData><row r="1"><c r="A1" s="1"><v>44228</v></c></row><row r="2"><c r="A2" s="1"><f>+A1+1</f><v>44229</v></c><c r="B2"><v>5</v></c></row></sheetData></worksheet>`))
-	zw.Close()
-	f.Close()
-	ev, err := LoadEventDates(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ev["2021-02-01"] || !ev["2021-02-02"] || len(ev) != 2 {
-		t.Fatalf("events = %v", ev)
 	}
 }
 

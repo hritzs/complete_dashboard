@@ -277,6 +277,24 @@ export default function LutBuildTab() {
       <Show when={live()?.inputs_error}><div class="negative" style={{ 'font-size': '13px' }}>Daily inputs: {live().inputs_error}</div></Show>
       <Show when={live()?.tables_error}><div class="negative" style={{ 'font-size': '13px' }}>Tables: {live().tables_error}</div></Show>
       <Show when={live()?.chain_error}><div class="negative" style={{ 'font-size': '13px' }}>Chain: {live().chain_error}</div></Show>
+      <Show when={live()?.last_close}>{(mc) => (
+        <div style={{ 'font-size': '13px', margin: '6px 0', padding: '6px 10px', 'border-radius': '6px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.10)', display: 'flex', gap: '16px', 'flex-wrap': 'wrap' }}
+          title="Every minute-end decision (LUT, hedge / SL / TP, Paper Sim) uses these candle closes: each leg's last trade before HH:MM:00 by exchange trade time">
+          <strong>Minute close {mc().time}</strong>
+          <span>ATM <strong>{fmt(mc().atm, 0)}</strong></span>
+          <span>CE close <strong>{fmt(mc().ce)}</strong> <span style={muted}>trade {mc().ce_trade || '—'}</span></span>
+          <span>PE close <strong>{fmt(mc().pe)}</strong> <span style={muted}>trade {mc().pe_trade || '—'}</span></span>
+          <span>Straddle <strong>{fmt(mc().straddle)}</strong></span>
+          <span>Syn fut <strong>{fmt(mc().syn_fut)}</strong> <span style={muted}>(ATM + CE − PE)</span></span>
+          <span style={muted}>live LTP CE {fmt(mc().live_ce)} · PE {fmt(mc().live_pe)} · fut {fmt(mc().live_fut)}</span>
+          <span style={muted}>taken +{mc().ready_ms} ms</span>
+        </div>
+      )}</Show>
+      <Show when={live()?.preopen}>
+        <div style={{ 'font-size': '13px', margin: '6px 0', padding: '6px 10px', 'border-radius': '6px', background: 'rgba(77,208,225,0.10)', border: '1px solid rgba(77,208,225,0.5)' }}>
+          <strong style={{ color: '#4dd0e1' }}>Pre-open estimate</strong> — {live().preopen}. Shown only, never recorded or entered. Type a manual future (e.g. from GIFT Nifty) under "Manual what-if inputs" to move the strike, gap and sell zone.
+        </div>
+      </Show>
       <Show when={live()?.eval_error}><div class="negative" style={{ 'font-size': '13px' }}>{live().eval_error}</div></Show>
       <Show when={live()?.manual}><div style={{ 'font-size': '13px', color: '#ffb74d' }}>MANUAL WHAT-IF — overriding {(live().manual_fields || []).join(', ')}. Live minutes are still recorded from the feed.</div></Show>
     </div>
@@ -433,8 +451,8 @@ export default function LutBuildTab() {
           <table class="trade-position-table">
             <thead>
               <tr>
-                <th>Time</th><th>Table</th><th>Answer</th><th>Future</th><th>ATM</th><th>CE / PE</th><th>Build IV</th><th>Adj build IV</th>
-                <th>IV ratio</th><th>Straddle</th><th>Str ratio</th><th>DTE / OG / Adj</th><th>Coord</th><th>TP bps</th>
+                <th>Time</th><th>Table</th><th>Answer</th><th title="synthetic future from the minute's candle closes">Future (close)</th><th>ATM</th><th title="last trade before the minute boundary">CE / PE close</th><th>Build IV</th><th>Adj build IV</th>
+                <th>IV ratio</th><th>Straddle (close)</th><th>Str ratio</th><th>DTE / OG / Adj</th><th>Coord</th><th>TP bps</th>
               </tr>
             </thead>
             <tbody>
@@ -521,15 +539,15 @@ export default function LutBuildTab() {
       <div style={{ display: 'flex', gap: '12px', 'flex-wrap': 'wrap', 'align-items': 'flex-end' }}>
         <label class="control-block">
           <span class="control-label">Size (lots)</span>
-          <input class="symbol-select" type="number" min="1" value={lots()} onInput={(e) => setLots(e.currentTarget.value)} />
+          <input class="symbol-select" type="text" inputmode="decimal" min="1" value={lots()} onInput={(e) => setLots(e.currentTarget.value)} />
         </label>
         <label class="control-block">
           <span class="control-label">Expiry (blank = nearest)</span>
-          <input class="symbol-select" type="text" placeholder="06-OCT-26" value={expiry()} onInput={(e) => setExpiry(e.currentTarget.value)} />
+          <input class="symbol-select" type="text" placeholder={live()?.expiry ? `nearest: ${live().expiry}` : 'nearest'} value={expiry()} onInput={(e) => setExpiry(e.currentTarget.value)} />
         </label>
         <label class="control-block">
           <span class="control-label">09:16 future override (blank = captured live)</span>
-          <input class="symbol-select" type="number" step="0.05" value={og0916()} onInput={(e) => setOg0916(e.currentTarget.value)} />
+          <input class="symbol-select" type="text" inputmode="decimal" step="0.05" value={og0916()} onInput={(e) => setOg0916(e.currentTarget.value)} />
         </label>
         <button class="tab-btn" onClick={saveConfig}>Save settings</button>
         <button class="tab-btn" onClick={startNow} title="Record a paper entry at this tick (not executed)">Start now</button>

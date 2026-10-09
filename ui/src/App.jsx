@@ -4,6 +4,7 @@
   import PaperSimTab from './PaperSimTab.jsx';
   import SBPortfolioRows, { sbStore } from './SBPortfolioRows.jsx';
   import ManualLegPanel, { closeManualLeg } from './ManualLegPanel.jsx';
+  import PortfolioMTMPanel from './PortfolioMTMPanel.jsx';
   import './App.css';
   import LatencyDashboard from './LatencyDashboard.jsx';
 
@@ -22,6 +23,9 @@
   const fmt = (v, d = 2) => {
     return hasValue(v) ? Number(v).toFixed(d) : '—';
   };
+
+  // Compact action buttons on a Portfolio row.
+  const rowBtn = { padding: "3px 7px", "font-size": "11px", "min-width": "0" };
 
   // HH:MM:SS (IST) of a broker rejection.
   const rejectTime = (r) => {
@@ -1188,6 +1192,7 @@
             "CLOSED_TIME",
             "CLOSED_MTM",
             "CLOSED_STRADDLE",
+            "CLOSED_PORTFOLIO",
             "FAILED"
           ].includes(status);
         })
@@ -1275,7 +1280,8 @@
       "CLOSED_TP",
       "CLOSED_TIME",
       "CLOSED_MTM",
-      "CLOSED_STRADDLE"
+      "CLOSED_STRADDLE",
+      "CLOSED_PORTFOLIO"
     ]);
 
     const isTradeClosed = (item) =>
@@ -2134,7 +2140,7 @@
                 <div class="metric-input-row">
                   <input
                     class="symbol-select"
-                    type="number"
+                    type="text" inputmode="decimal"
                     min={lotSize()}
                     step={lotSize()}
                     value={terminalSellQtyText()}
@@ -2165,21 +2171,21 @@
                   />
                   <input
                     class="symbol-select"
-                    type="number"
+                    type="text" inputmode="decimal"
                     title="SL (bps of spot)"
                     value={manualRiskConfig().sl_bps}
                     onInput={(e) => setManualRiskConfig((prev) => ({ ...prev, sl_bps: Number(e.target.value) || 0 }))}
                   />
                   <input
                     class="symbol-select"
-                    type="number"
+                    type="text" inputmode="decimal"
                     title="TP (bps of spot)"
                     value={manualRiskConfig().tp_bps}
                     onInput={(e) => setManualRiskConfig((prev) => ({ ...prev, tp_bps: Number(e.target.value) || 0 }))}
                   />
                   <input
                     class="symbol-select"
-                    type="number"
+                    type="text" inputmode="decimal"
                     step="0.5"
                     min="0"
                     title="Wings % (0 = no wings)"
@@ -2216,14 +2222,14 @@
                 <div class="custom-strike-inputs metric-input-row">
                   <input
                     class="symbol-select"
-                    type="number"
+                    type="text" inputmode="decimal"
                     placeholder="CE Strike"
                     value={customCeStrike()}
                     onInput={(e) => setCustomCeStrike(e.target.value)}
                   />
                   <input
                     class="symbol-select"
-                    type="number"
+                    type="text" inputmode="decimal"
                     placeholder="PE Strike"
                     value={customPeStrike()}
                     onInput={(e) => setCustomPeStrike(e.target.value)}
@@ -2381,7 +2387,7 @@
                 <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
                   SL (points / lot)
                   <input
-                    type="number"
+                    type="text" inputmode="decimal"
                     step="0.01"
                     value={modifyTradeForm().sl_points_per_lot}
                     onInput={(event) => setModifyTradeForm((form) => ({ ...form, sl_points_per_lot: event.currentTarget.value }))}
@@ -2392,7 +2398,7 @@
                 <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
                   SL (bps of spot)
                   <input
-                    type="number"
+                    type="text" inputmode="decimal"
                     step="0.01"
                     value={modifyTradeForm().sl_pnl_bps_of_spot}
                     onInput={(event) => setModifyTradeForm((form) => ({ ...form, sl_pnl_bps_of_spot: event.currentTarget.value }))}
@@ -2403,7 +2409,7 @@
                 <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
                   TP (bps of spot)
                   <input
-                    type="number"
+                    type="text" inputmode="decimal"
                     step="0.01"
                     value={modifyTradeForm().tp_pnl_bps_of_spot}
                     onInput={(event) => setModifyTradeForm((form) => ({ ...form, tp_pnl_bps_of_spot: event.currentTarget.value }))}
@@ -2415,7 +2421,7 @@
                   MTM exit above (blank = ∞)
                   <div style={{ display: "flex", gap: "6px" }}>
                     <input
-                      type="number"
+                      type="text" inputmode="decimal"
                       step="any"
                       placeholder="∞"
                       value={modifyTradeForm().mtm_exit_level}
@@ -2424,7 +2430,7 @@
                       style={{ flex: 1, padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
                     />
                     <input
-                      type="number"
+                      type="text" inputmode="decimal"
                       min="1"
                       max="100"
                       value={modifyTradeForm().mtm_exit_pct}
@@ -2448,7 +2454,7 @@
                   ATM straddle exit below (blank = off) · % of position
                   <div style={{ display: "flex", gap: "6px" }}>
                     <input
-                      type="number"
+                      type="text" inputmode="decimal"
                       step="0.05"
                       placeholder="off"
                       value={modifyTradeForm().straddle_exit_below}
@@ -2457,7 +2463,7 @@
                       style={{ flex: 1, padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
                     />
                     <input
-                      type="number"
+                      type="text" inputmode="decimal"
                       min="1"
                       max="100"
                       value={modifyTradeForm().straddle_exit_pct}
@@ -2471,7 +2477,7 @@
                 <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
                   Hedge Delta Threshold
                   <input
-                    type="number"
+                    type="text" inputmode="decimal"
                     step="0.01"
                     value={modifyTradeForm().hedge_threshold_delta}
                     onInput={(event) => setModifyTradeForm((form) => ({ ...form, hedge_threshold_delta: event.currentTarget.value }))}
@@ -2482,7 +2488,7 @@
                 <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
                   Straddle Divisor
                   <input
-                    type="number"
+                    type="text" inputmode="decimal"
                     min="0.01"
                     step="0.01"
                     value={modifyTradeForm().straddle_div}
@@ -2494,7 +2500,7 @@
                 <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
                   Min Hedge Threshold (bps of spot)
                   <input
-                    type="number"
+                    type="text" inputmode="decimal"
                     min="0"
                     step="0.1"
                     value={modifyTradeForm().hedge_min_threshold_bps}
@@ -2506,7 +2512,7 @@
                 <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
                   Hedge Divisor
                   <input
-                    type="number"
+                    type="text" inputmode="decimal"
                     min="0.01"
                     step="0.01"
                     value={modifyTradeForm().hedge_div}
@@ -2608,6 +2614,8 @@
               </div>
             </Show>
 
+            <PortfolioMTMPanel />
+
 
             <Show when={portfolioItems().length > 0}>
               <div class="portfolio-live-totals" style={{ display: "flex", gap: "18px", "flex-wrap": "wrap", "align-items": "baseline", margin: "0 0 14px", padding: "10px 12px", border: "1px solid rgba(255,255,255,0.08)", "border-radius": "8px" }}>
@@ -2655,6 +2663,7 @@
                       <th style={{ padding: "10px" }}>Total PnL</th>
                       <th style={{ padding: "10px" }}>PnL / Straddle</th>
                       <th style={{ padding: "10px" }} title="Wings are RM only: not in Realized / Total PnL">Wing PnL</th>
+                      <th style={{ padding: "10px" }}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2846,10 +2855,23 @@
                               <td style={{ padding: "10px", opacity: 0.8 }} class={wingPnlValue() >= 0 ? "positive" : "negative"}>
                                 <Show when={wingPnlValue() !== 0 || Number(live().wing_pct) > 0} fallback={"—"}>₹{fmt(wingPnlValue(), 2)}</Show>
                               </td>
+                              <td style={{ padding: "6px 10px" }} onClick={(event) => event.stopPropagation()}>
+                                <Show when={!isClosed()} fallback={"—"}>
+                                  <div style={{ display: "flex", gap: "4px", "flex-wrap": "nowrap" }}>
+                                    <Show when={String(status()).toUpperCase() === "BUILDING"}>
+                                      <button class="dashboard-btn yellow" style={rowBtn} title="Stop Building" onClick={() => handlePortfolioStopBuild(item)}>Stop</button>
+                                    </Show>
+                                    <button class="dashboard-btn purple" style={rowBtn} title="Modify Config (SL / TP / MTM / exit time / hedge)" onClick={() => openModifyTradeModal(item)}>Config</button>
+                                    <button class="dashboard-btn blue" style={rowBtn} title="Hedge Now" onClick={() => handlePortfolioHedge(item)}>Hedge</button>
+                                    <button class="dashboard-btn yellow" style={rowBtn} title="Partial Exit" onClick={() => handlePortfolioPartialSquareOff(item)}>Partial</button>
+                                    <button class="dashboard-btn red" style={rowBtn} title="Full Exit" onClick={() => handlePortfolioSquareOff(item)}>Exit</button>
+                                  </div>
+                                </Show>
+                              </td>
                             </tr>
                             <Show when={isExpanded()}>
                               <tr class="details-row">
-                                <td colSpan="17" style={{ padding: "16px", background: "#101a33" }}>
+                                <td colSpan="18" style={{ padding: "16px", background: "#101a33" }}>
                                   <div class="trade-dashboard">
 
                                     <div class="trade-dashboard-header">
@@ -3540,7 +3562,7 @@
                 <label class="control-label">Total quantity to sell</label>
                 <input
                   class="symbol-select"
-                  type="number"
+                  type="text" inputmode="decimal"
                   min={lotSize()}
                   step={lotSize()}
                   value={automationSizeText()}
@@ -3587,7 +3609,7 @@
                 <label class="control-label">SL (bps of spot)</label>
                 <input
                   class="symbol-select"
-                  type="number"
+                  type="text" inputmode="decimal"
                   value={automationConfig().sl_bps}
                   onInput={(e) => setAutomationConfig((prev) => ({ ...prev, sl_bps: Number(e.target.value) || 0 }))}
                 />
@@ -3597,7 +3619,7 @@
                 <label class="control-label">TP (bps of spot)</label>
                 <input
                   class="symbol-select"
-                  type="number"
+                  type="text" inputmode="decimal"
                   value={automationConfig().tp_bps}
                   onInput={(e) => setAutomationConfig((prev) => ({ ...prev, tp_bps: Number(e.target.value) || 0 }))}
                 />
@@ -3607,7 +3629,7 @@
                 <label class="control-label">Wings % (0 = off)</label>
                 <input
                   class="symbol-select"
-                  type="number"
+                  type="text" inputmode="decimal"
                   step="0.5"
                   min="0"
                   value={automationConfig().wing_pct}
@@ -3621,7 +3643,7 @@
                 <label class="control-label">Hedge Divisor</label>
                 <input
                   class="symbol-select"
-                  type="number"
+                  type="text" inputmode="decimal"
                   value={automationConfig().hedge_div}
                   onInput={(e) => setAutomationConfig((prev) => ({ ...prev, hedge_div: Number(e.target.value) || 0 }))}
                 />
@@ -3631,7 +3653,7 @@
                 <label class="control-label">Straddle Divisor</label>
                 <input
                   class="symbol-select"
-                  type="number"
+                  type="text" inputmode="decimal"
                   value={automationConfig().straddle_div}
                   onInput={(e) => setAutomationConfig((prev) => ({ ...prev, straddle_div: Number(e.target.value) || 0 }))}
                 />
@@ -3641,7 +3663,7 @@
                 <label class="control-label">Buy Buffer</label>
                 <input
                   class="symbol-select"
-                  type="number"
+                  type="text" inputmode="decimal"
                   value={automationConfig().buy_buffer}
                   onInput={(e) => setAutomationConfig((prev) => ({ ...prev, buy_buffer: Number(e.target.value) || 0 }))}
                 />
@@ -3651,7 +3673,7 @@
                 <label class="control-label">Sell Buffer</label>
                 <input
                   class="symbol-select"
-                  type="number"
+                  type="text" inputmode="decimal"
                   value={automationConfig().sell_buffer}
                   onInput={(e) => setAutomationConfig((prev) => ({ ...prev, sell_buffer: Number(e.target.value) || 0 }))}
                 />
@@ -3661,7 +3683,7 @@
                 <label class="control-label">Lots per order</label>
                 <input
                   class="symbol-select"
-                  type="number"
+                  type="text" inputmode="decimal"
                   value={automationConfig().order_lots_per_call}
                   onInput={(e) => setAutomationConfig((prev) => ({ ...prev, order_lots_per_call: Number(e.target.value) || 1 }))}
                 />
@@ -3675,7 +3697,7 @@
                   <label class="control-label">Roll Straddle Divisor</label>
                   <input
                     class="symbol-select"
-                    type="number"
+                    type="text" inputmode="decimal"
                     value={automationConfig().roll_straddle_div}
                     onInput={(e) => setAutomationConfig((prev) => ({ ...prev, roll_straddle_div: Number(e.target.value) || 0 }))}
                   />
@@ -3685,7 +3707,7 @@
                   <label class="control-label">IDV</label>
                   <input
                     class="symbol-select"
-                    type="number"
+                    type="text" inputmode="decimal"
                     step="0.1"
                     value={automationConfig().idv}
                     onInput={(e) => setAutomationConfig((prev) => ({ ...prev, idv: Number(e.target.value) || 0 }))}
@@ -3696,7 +3718,7 @@
                   <label class="control-label">IDV Divisor</label>
                   <input
                     class="symbol-select"
-                    type="number"
+                    type="text" inputmode="decimal"
                     step="0.1"
                     value={automationConfig().idv_divisor}
                     onInput={(e) => setAutomationConfig((prev) => ({ ...prev, idv_divisor: Number(e.target.value) || 0 }))}
@@ -3707,7 +3729,7 @@
                   <label class="control-label">Straddle Price Filter</label>
                   <input
                     class="symbol-select"
-                    type="number"
+                    type="text" inputmode="decimal"
                     value={automationConfig().straddle_filter}
                     onInput={(e) => setAutomationConfig((prev) => ({ ...prev, straddle_filter: Number(e.target.value) || 0 }))}
                   />
@@ -3717,7 +3739,7 @@
                   <label class="control-label">SL Interval (s)</label>
                   <input
                     class="symbol-select"
-                    type="number"
+                    type="text" inputmode="decimal"
                     value={automationConfig().sl_monitor_interval}
                     onInput={(e) => setAutomationConfig((prev) => ({ ...prev, sl_monitor_interval: Number(e.target.value) || 60 }))}
                   />
@@ -3727,7 +3749,7 @@
                   <label class="control-label">Hedge Interval (s)</label>
                   <input
                     class="symbol-select"
-                    type="number"
+                    type="text" inputmode="decimal"
                     value={automationConfig().hedge_monitor_interval}
                     onInput={(e) => setAutomationConfig((prev) => ({ ...prev, hedge_monitor_interval: Number(e.target.value) || 60 }))}
                   />
@@ -3737,7 +3759,7 @@
                   <label class="control-label">Roll Interval (s)</label>
                   <input
                     class="symbol-select"
-                    type="number"
+                    type="text" inputmode="decimal"
                     value={automationConfig().roll_monitor_interval}
                     onInput={(e) => setAutomationConfig((prev) => ({ ...prev, roll_monitor_interval: Number(e.target.value) || 60 }))}
                   />
@@ -3837,7 +3859,7 @@
                 <div class="testing-field">
                   <label>Net Delta</label>
                   <input
-                    type="number"
+                    type="text" inputmode="decimal"
                     step="0.01"
                     value={manualHedgeConfig().net_delta}
                     onInput={(e) => setManualHedgeConfig((prev) => ({ ...prev, net_delta: Number(e.target.value) || 0 }))}
@@ -3847,7 +3869,7 @@
                 <div class="testing-field">
                   <label>Lot Size</label>
                   <input
-                    type="number"
+                    type="text" inputmode="decimal"
                     value={manualHedgeConfig().lot_size}
                     onInput={(e) => setManualHedgeConfig((prev) => ({ ...prev, lot_size: Number(e.target.value) || 0 }))}
                   />
@@ -3856,7 +3878,7 @@
                 <div class="testing-field">
                   <label>Qty to Hedge/Sell</label>
                   <input
-                    type="number"
+                    type="text" inputmode="decimal"
                     value={manualHedgeConfig().quantity}
                     onInput={(e) => setManualHedgeConfig((prev) => ({ ...prev, quantity: Number(e.target.value) || 0 }))}
                   />
@@ -3889,7 +3911,7 @@
                 <div class="testing-field">
                   <label>Total lots to sell</label>
                   <input
-                    type="number"
+                    type="text" inputmode="decimal"
                     min="1"
                     step="1"
                     value={manualTotalLots()}
@@ -3900,7 +3922,7 @@
                 <div class="testing-field">
                   <label>Lots in each order</label>
                   <input
-                    type="number"
+                    type="text" inputmode="decimal"
                     min="1"
                     step="1"
                     value={manualLotsPerOrder()}
@@ -4008,7 +4030,7 @@
                 <div class="testing-field">
                   <label>New price</label>
                   <input
-                    type="number"
+                    type="text" inputmode="decimal"
                     step="0.05"
                     value={modifyOrderPrice()}
                     onInput={(e) => setModifyOrderPrice(e.currentTarget.value)}

@@ -292,8 +292,25 @@ func mtmRowLookup(chain *OptionChainSnapshot) func(mtmLeg) *OptionChainRow {
 	}
 }
 
+// mtmRunOpts says what a lot-by-lot MTM close is for.
+type mtmRunOpts struct {
+	// floor: the trade's MTM floor in rupees, re-read before every lot
+	// (constant for the trade's own rule; for the portfolio rule it is the
+	// level minus every other trade's MTM, which moves with the market).
+	floor  func() (float64, error)
+	all    bool   // close everything (portfolio rule), not the trade rule's share
+	status string // terminal status once flat
+	tag    string // log tag
+}
+
 // mtmExitRun closes the trade lot by lot while the level holds.
 func (s *Service) mtmExitRun(tradeUID string, floor float64) {
+	s.mtmExitRunOpts(tradeUID, mtmRunOpts{floor: func() (float64, error) { return floor, nil }, status: "CLOSED_MTM", tag: "MTM-EXIT"})
+}
+
+// mtmExitRunOpts closes the trade lot by lot, each lot priced so the
+// trade's executable MTM stays >= the floor.
+func (s *Service) mtmExitRunOpts(tradeUID string, o mtmRunOpts) {
 	defer s.lockTrade(tradeUID)()
 	tr, ok := s.Store.LoadTrade(tradeUID)
 	if !ok || tr.Status != "ACTIVE" {
@@ -304,7 +321,7 @@ func (s *Service) mtmExitRun(tradeUID string, floor float64) {
 	})
 	executor, err := s.BrokerFactory.GetExecutor(tr.UserID, tr.BrokerName, tr.AccountID)
 	if err != nil || src == nil || s.OrderEvents == nil {
-		log.Printf("[MTM-EXIT] trade=%s cannot run: executor/fills/order events unavailable (%v)", tradeUID, err)
+		log.Printf("[%s] trade=%s cannot run: executor/fills/order events unavailable (%v)", o.tag, tradeUID, err)
 		return
 	}
 	tr.Status, tr.LastUpdateTime = "SQUARING_OFF", time.Now()
@@ -312,7 +329,7 @@ func (s *Service) mtmExitRun(tradeUID string, floor float64) {
 	stopAt := func(status, why string) {
 		tr.Status, tr.LastUpdateTime = status, time.Now()
 		s.Store.UpdateTrade(tr)
-		log.Printf("[MTM-EXIT] trade=%s -> %s: %s", tradeUID, status, why)
+		log.Printf("[%s] trade=%s -> %s: %s", o.tag, tradeUID, status, why)
 	}
 	lot := int64(tr.LotSize)
 	if lot <= 0 {
@@ -333,6 +350,14 @@ func (s *Service) mtmExitRun(tradeUID string, floor float64) {
 	rem := ruleRemaining(tr.Config.MTMExitPct, orig, tr.Config.MTMExitClosedQty, open0, lot)
 	complete := rem >= open0
 	targets := legCloseTargets(legs0, rem, open0, lot)
+	if o.all { // portfolio rule: every open non-wing leg, whole
+		complete, targets = true, map[int64]int64{}
+		for _, l := range legs0 {
+			if l.NetShort != 0 {
+				targets[l.Token] = abs64(l.NetShort)
+			}
+		}
+	}
 	var shortChangeCE, shortChangePE int64
 	misses := 0
 	for step := 0; step < 2000; step++ {
@@ -360,7 +385,7 @@ func (s *Service) mtmExitRun(tradeUID string, floor float64) {
 				anyOpen = anyOpen || l.NetShort != 0
 			}
 			if complete || !anyOpen {
-				s.mtmExitFinish(tr)
+				s.mtmExitFinish(tr, o.status)
 				return
 			}
 			// Partial share done: wings follow the short removed (as PSQF).
@@ -374,6 +399,11 @@ func (s *Service) mtmExitRun(tradeUID string, floor float64) {
 		execMTM, priced := mtmExecMTM(legs, rowOf)
 		if !priced {
 			stopAt("ACTIVE", "an open leg has no price in the chain -- retry next tick")
+			return
+		}
+		floor, ferr := o.floor()
+		if ferr != nil {
+			stopAt("ACTIVE", fmt.Sprintf("MTM floor unavailable (%v) -- retry next tick", ferr))
 			return
 		}
 		if execMTM < floor {
@@ -409,15 +439,15 @@ func (s *Service) mtmExitRun(tradeUID string, floor float64) {
 			continue
 		}
 		misses = 0
-		log.Printf("[MTM-EXIT] trade=%s %s %s %d/%d @%.2f (IOC limit %.2f) -- executable MTM before %.2f, level %.2f",
-			tradeUID, side, pick.Leg, got, qty, px, limit, execMTM, floor)
+		log.Printf("[%s] trade=%s %s %s %d/%d @%.2f (IOC limit %.2f) -- executable MTM before %.2f, floor %.2f",
+			o.tag, tradeUID, side, pick.Leg, got, qty, px, limit, execMTM, floor)
 		targets[pick.Token] -= got
 		if pick.Leg == "CE" {
 			shortChangeCE += shortChangeFromFill(side, got)
 		} else {
 			shortChangePE += shortChangeFromFill(side, got)
 		}
-		if pick.Token == tr.CEToken || pick.Token == tr.PEToken {
+		if !o.all && (pick.Token == tr.CEToken || pick.Token == tr.PEToken) {
 			tr.Config.MTMExitClosedQty += got
 		}
 		if pick.Token == tr.CEToken && tr.CEQty > 0 {
@@ -434,7 +464,7 @@ func (s *Service) mtmExitRun(tradeUID string, floor float64) {
 }
 
 // mtmExitFinish closes the wings (outside the MTM) and marks the trade.
-func (s *Service) mtmExitFinish(tr StoredTrade) {
+func (s *Service) mtmExitFinish(tr StoredTrade, status string) {
 	{ // every wing held, configured or not (no wings = nothing to do)
 		if err := s.closeAllWings(context.Background(), tr, "SQF-MTM"); err != nil {
 			tr.Status, tr.LastUpdateTime = "ACTIVE", time.Now()
@@ -443,7 +473,7 @@ func (s *Service) mtmExitFinish(tr StoredTrade) {
 			return
 		}
 	}
-	tr.Status, tr.ClosedAt, tr.LastUpdateTime = "CLOSED_MTM", time.Now(), time.Now()
+	tr.Status, tr.ClosedAt, tr.LastUpdateTime = status, time.Now(), time.Now()
 	if calc, ok := s.Store.(interface {
 		TradeRealizedPnL(ctx context.Context, tradeUID string) (float64, error)
 	}); ok {
@@ -452,7 +482,7 @@ func (s *Service) mtmExitFinish(tr StoredTrade) {
 		}
 	}
 	s.Store.UpdateTrade(tr)
-	log.Printf("[MTM-EXIT] ✅ trade=%s CLOSED_MTM realized %.2f", tr.TradeUID, tr.RealizedPnL)
+	log.Printf("[MTM-EXIT] ✅ trade=%s %s realized %.2f", tr.TradeUID, status, tr.RealizedPnL)
 	if rt, ok := s.Store.LoadRuntime(tr.TradeUID); ok {
 		close(rt.StopCh)
 		s.Store.DeleteRuntime(tr.TradeUID)

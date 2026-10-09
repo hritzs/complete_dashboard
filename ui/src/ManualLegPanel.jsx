@@ -88,7 +88,7 @@ export default function ManualLegPanel(props) {
           </select>
         </label>
         <label style={field}>Strike
-          <input style={{ ...input, width: '90px' }} type="number" step="50" value={strike()} onInput={(e) => setStrike(e.currentTarget.value)} />
+          <input style={{ ...input, width: '90px' }} type="text" inputmode="decimal" step="50" value={strike()} onInput={(e) => setStrike(e.currentTarget.value)} />
         </label>
         <label style={field}>Type
           <select style={input} value={opt()} onChange={(e) => setOpt(e.currentTarget.value)}><option>CE</option><option>PE</option></select>
@@ -97,7 +97,7 @@ export default function ManualLegPanel(props) {
           <select style={input} value={side()} onChange={(e) => setSide(e.currentTarget.value)}><option>BUY</option><option>SELL</option></select>
         </label>
         <label style={field}>Lots ({it().lotSize || '—'} each)
-          <input style={{ ...input, width: '70px' }} type="number" min="1" step="1" value={lots()} onInput={(e) => setLots(e.currentTarget.value)} />
+          <input style={{ ...input, width: '70px' }} type="text" inputmode="decimal" min="1" step="1" value={lots()} onInput={(e) => setLots(e.currentTarget.value)} />
         </label>
         <label style={{ ...field, 'flex-direction': 'row', 'align-items': 'center', gap: '6px', 'font-size': '12px' }}>
           <input type="checkbox" checked={inRisk()} onChange={(e) => setInRisk(e.currentTarget.checked)} />

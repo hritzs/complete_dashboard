@@ -15,9 +15,7 @@ package trading
 // unit-tested against the reference's numbers.
 
 import (
-	"archive/zip"
 	"encoding/csv"
-	"encoding/xml"
 	"fmt"
 	"io"
 	"math"
@@ -385,64 +383,6 @@ func LoadLUTDailyInputs(path, date string) (LUTDailyInputs, error) {
 		return in, fmt.Errorf("daily inputs not usable: %+v", in)
 	}
 	return in, nil
-}
-
-// LoadEventDates reads column A of the first sheet of an .xlsx (Excel date
-// serials) using only the standard library.
-func LoadEventDates(path string) (map[string]bool, error) {
-	z, err := zip.OpenReader(path)
-	if err != nil {
-		return nil, err
-	}
-	defer z.Close()
-	var sheet *zip.File
-	for _, f := range z.File {
-		if f.Name == "xl/worksheets/sheet1.xml" {
-			sheet = f
-		}
-	}
-	if sheet == nil {
-		return nil, fmt.Errorf("sheet1 not found")
-	}
-	rc, err := sheet.Open()
-	if err != nil {
-		return nil, err
-	}
-	defer rc.Close()
-	type cell struct {
-		Ref string `xml:"r,attr"`
-		T   string `xml:"t,attr"`
-		V   string `xml:"v"`
-	}
-	out := map[string]bool{}
-	dec := xml.NewDecoder(rc)
-	base := time.Date(1899, 12, 30, 0, 0, 0, 0, time.UTC)
-	for {
-		tok, err := dec.Token()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		se, ok := tok.(xml.StartElement)
-		if !ok || se.Name.Local != "c" {
-			continue
-		}
-		var c cell
-		if err := dec.DecodeElement(&c, &se); err != nil {
-			continue
-		}
-		if !strings.HasPrefix(c.Ref, "A") || c.T == "s" {
-			continue
-		}
-		v, err := strconv.ParseFloat(strings.TrimSpace(c.V), 64)
-		if err != nil || v < 1 {
-			continue
-		}
-		out[base.AddDate(0, 0, int(v)).Format("2006-01-02")] = true
-	}
-	return out, nil
 }
 
 // --- Black-Scholes (r=0), exactly the reference kernels ------------------

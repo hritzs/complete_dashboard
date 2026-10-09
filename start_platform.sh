@@ -30,9 +30,11 @@ case "$MODE" in
     BUILD_CPP=0
     CLEAR_LOGS=1
     ;;
+  stop)
+    ;;
   *)
     echo "Unknown mode: $MODE"
-    echo "Usage: ./start_platform.sh [normal|fast|fast-restart]"
+    echo "Usage: ./start_platform.sh [normal|fast|fast-restart|stop]"
     exit 1
     ;;
 esac
@@ -118,9 +120,9 @@ safe_curl() {
   curl -s "$URL" || true
 }
 
-if [ "$MODE" = "normal" ]; then
-  echo "Cleaning old processes"
-
+# stop_services stops every platform service (used to clean up before a
+# normal start, and when this terminal is closed -- see the end of file).
+stop_services() {
   for port in 8003 8005 8010 8021 8022 8023 5556 5557 3000; do
     kill_by_port "$port"
   done
@@ -137,6 +139,19 @@ if [ "$MODE" = "normal" ]; then
   pkill -9 -f "feedrec_nse.sh|nse-feedrec" || true
 
   sleep 1
+}
+
+if [ "$MODE" = "stop" ]; then
+  echo "Stopping every platform service"
+  stop_services
+  echo "$(date '+%F %T') ./start_platform.sh stop -- all platform services stopped" >> "$LOG_DIR/platform_stop.log"
+  echo "All platform services stopped."
+  exit 0
+fi
+
+if [ "$MODE" = "normal" ]; then
+  echo "Cleaning old processes"
+  stop_services
 fi
 
 # One continuous log per service per DAY: every restart APPENDS to the same
@@ -394,6 +409,30 @@ echo
 echo "SYSTEM READY"
 echo "UI: ${HTTP_PROTO}://localhost:3000"
 echo
+
+# Closing THIS terminal or Ctrl+C stops the WHOLE platform (every service:
+# gateway, monitors, feeds, UI) -- a kill switch: nothing can send another
+# order. The services are detached with setsid, so the hang-up / Ctrl+C
+# must be turned into a stop here. ./start_platform.sh brings everything
+# back (trades and their monitors are restored from the DB); positions at
+# the broker stay as they are until you exit them (Portfolio -> Square off
+# ALL).
+STOP_LOG="$LOG_DIR/platform_stop.log"
+stop_everything() {
+  trap - HUP TERM INT
+  echo
+  echo "Stopping every platform service ($1)..."
+  {
+    echo "$(date '+%F %T') $1 -- stopping every platform service (open positions are NOT monitored until restart)"
+    stop_services
+    echo "$(date '+%F %T') all platform services stopped"
+  } >> "$STOP_LOG" 2>&1
+  echo "All platform services stopped. Restart with ./start_platform.sh" 2>/dev/null || true
+  exit 0
+}
+trap 'stop_everything "terminal closed"' HUP TERM
+trap 'stop_everything "Ctrl+C"' INT
+set +e # the viewer's exit status must not skip the traps
 
 if compgen -G "$LOG_DIR/*.log" > /dev/null; then
   # Readable, colour-coded merged view (key events by default). Other views:

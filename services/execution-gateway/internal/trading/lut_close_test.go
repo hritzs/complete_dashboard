@@ -40,7 +40,7 @@ func TestLUTCloseChainWaitsForFinalOrGrace(t *testing.T) {
 	chain := &OptionChainSnapshot{SyntheticFuture: 22611, Chain: []OptionChainRow{{
 		Strike: 22600, CELtp: 166.80, PELtp: 155.85, CELTT: bs - 1, PELTT: bs - 2,
 	}}}
-	if _, ready := lutCloseChain(chain, b, b.Add(500*time.Millisecond)); ready {
+	if _, ready := lutCloseChain(chain, b, b.Add(lutCloseGrace/2)); ready {
 		t.Fatal("not final and inside the grace -- must wait")
 	}
 	cc, ready := lutCloseChain(chain, b, b.Add(lutCloseGrace))

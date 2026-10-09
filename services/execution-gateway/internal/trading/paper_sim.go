@@ -20,7 +20,6 @@ import (
 	"log"
 	"math"
 	"net/http"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -195,9 +194,6 @@ type simMinute struct {
 	hasChainSpots bool
 	imported      bool // every chain row of this minute came from an import
 }
-
-// lutLoadSimDay merges the LUT minutes and the recorded chain minutes.
-func lutLoadSimDay(day string) []simMinute { return lutLoadSimSet(day, "") }
 
 // lutLoadSimSet loads a view: "" / "current" = the current expiry (LUT
 // minutes + recorded / imported chain), "next" = the next weekly expiry
@@ -878,7 +874,7 @@ func paperHiddenFile(day string) string { return filepath.Join(lutDataDir(), day
 
 func loadPaperHidden(day string) map[string]bool {
 	out := map[string]bool{}
-	if b, err := os.ReadFile(paperHiddenFile(day)); err == nil {
+	if b, err := stateRead(paperHiddenFile(day)); err == nil {
 		var ids []string
 		if json.Unmarshal(b, &ids) == nil {
 			for _, id := range ids {
@@ -907,7 +903,7 @@ func paperFile(day string) string { return filepath.Join(lutDataDir(), day+"_pap
 
 func loadPaperStarts(day string) []PaperSimConfig {
 	var out []PaperSimConfig
-	if b, err := os.ReadFile(paperFile(day)); err == nil {
+	if b, err := stateRead(paperFile(day)); err == nil {
 		_ = json.Unmarshal(b, &out)
 	}
 	return out

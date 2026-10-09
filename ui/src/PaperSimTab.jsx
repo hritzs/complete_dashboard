@@ -243,8 +243,8 @@ function SimDetail(props) {
           <div class="position-table-wrap" style={{ 'max-height': '460px', overflow: 'auto' }}>
             <table class="trade-position-table" style={{ 'font-size': '12px' }}>
               <thead><tr>
-                <th>Time</th><th>Recorded at</th><th style={S.th}>Future</th><th style={S.th}>ATM</th><th style={S.th}>ATM CE</th><th style={S.th}>ATM PE</th>
-                <th style={S.th}>Pos K</th><th style={S.th}>CE</th><th style={S.th}>PE</th><th style={S.th}>Straddle</th>
+                <th>Time</th><th>Recorded at</th><th style={S.th} title="synthetic future from the minute's candle closes">Future (close)</th><th style={S.th}>ATM</th><th style={S.th} title="last trade before the minute boundary">ATM CE close</th><th style={S.th} title="last trade before the minute boundary">ATM PE close</th>
+                <th style={S.th}>Pos K</th><th style={S.th}>CE close</th><th style={S.th}>PE close</th><th style={S.th}>Straddle (close)</th>
                 <th style={S.th}>Option</th><th style={S.th}>Hedge</th><th style={S.th}>Total</th><Show when={s().config.mtm_sqf_on}><th style={S.th} title="MTM if closed now at bid/ask">Exec MTM</th></Show><th style={S.th}>Δ</th><th style={S.th}>Γ</th><th style={S.th}>Θ</th><th style={S.th}>V</th>
                 <th style={S.th}>Hedge / qty</th><th style={S.th}>Out / allowed</th><th>Check</th><th>Event</th>
               </tr></thead>
@@ -407,15 +407,15 @@ export default function PaperSimTab() {
       <div style={{ display: 'flex', gap: '14px', 'flex-wrap': 'wrap', 'align-items': 'flex-end', padding: '4px 0 2px' }}>
         <Field label="Day"><input class="symbol-select" type="date" value={day()} onChange={(e) => { setDay(e.currentTarget.value); load(); }} /></Field>
         <Field label="Expiry"><Seg value={view()} onChange={reload(setView)} options={[['current', 'Current'], ['next', 'Next week']]} /></Field>
-        <Field label="Size (qty)"><input class="symbol-select" style={{ width: '90px' }} type="number" min="1" value={size()} onInput={(e) => setSize(e.currentTarget.value)} onChange={load} title="1 = one straddle (per-qty values); 65 = one NIFTY lot" /></Field>
+        <Field label="Size (qty)"><input class="symbol-select" style={{ width: '90px' }} type="text" inputmode="decimal" min="1" value={size()} onInput={(e) => setSize(e.currentTarget.value)} onChange={load} title="1 = one straddle (per-qty values); 65 = one NIFTY lot" /></Field>
         <Field label="Hedge"><Seg value={hedge()} onChange={reload(setHedge)} options={[['synthetic', 'Synthetic'], ['lots', 'ATM lots'], ['off', 'Off']]} /></Field>
         <Field label="MTM square-off (every build)">
           <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
-            <input class="symbol-select" style={{ width: '90px' }} type="number" step="any" placeholder="off" value={mtmLevel()}
+            <input class="symbol-select" style={{ width: '90px' }} type="text" inputmode="decimal" step="any" placeholder="off" value={mtmLevel()}
               onInput={(e) => setMtmLevel(e.currentTarget.value)} onChange={load}
               title="Close the trade lot by lot at bid/ask once it can end with total MTM at or above this level (may be negative). Blank = off." />
             <Seg value={mtmUnit()} onChange={reload(setMtmUnit)} options={[['rs', '₹'], ['pts', 'pts'], ['bps', 'bps']]} />
-            <input class="symbol-select" style={{ width: '60px' }} type="number" min="1" max="100" value={mtmPct()}
+            <input class="symbol-select" style={{ width: '60px' }} type="text" inputmode="decimal" min="1" max="100" value={mtmPct()}
               onInput={(e) => setMtmPct(e.currentTarget.value)} onChange={load} title="% of the position to square off (100 = complete)" />
             <span style={S.muted}>%</span>
           </div>

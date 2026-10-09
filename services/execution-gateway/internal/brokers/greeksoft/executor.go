@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -149,97 +148,6 @@ func (e *Executor) ExecuteOrderIntent(
 	}, nil
 }
 
-func (e *Executor) waitOrderStatusFromOrderBook(
-	ctx context.Context,
-	brokerOrderID string,
-	attempts int,
-	delay time.Duration,
-) (string, string, int64, float64, error) {
-	brokerOrderID = strings.TrimSpace(brokerOrderID)
-	if brokerOrderID == "" {
-		return "", "", 0, 0, fmt.Errorf("broker order id is empty")
-	}
-
-	if attempts <= 0 {
-		attempts = 1
-	}
-
-	if delay <= 0 {
-		delay = 250 * time.Millisecond
-	}
-
-	var lastErr error
-
-	for i := 0; i < attempts; i++ {
-		select {
-		case <-ctx.Done():
-			return "", "", 0, 0, ctx.Err()
-		default:
-		}
-
-		book, err := e.Client.GetOrderBook(ctx)
-		if err != nil {
-			lastErr = err
-			fmt.Printf(
-				"[GREEKSOFT ORDERBOOK] order=%s error=%v\n",
-				brokerOrderID,
-				err,
-			)
-		} else {
-			fmt.Printf(
-				"[GREEKSOFT ORDERBOOK] order=%s lookup_success\n",
-				brokerOrderID,
-			)
-
-			status, raw, matched, ok := findGreeksoftOrderStatus(
-				book,
-				brokerOrderID,
-			)
-
-			if ok {
-				fmt.Printf(
-					"[GREEKSOFT ORDERBOOK] matched order=%s status=%s\n",
-					brokerOrderID,
-					status,
-				)
-
-				fmt.Printf(
-					"[GREEKSOFT ORDERBOOK] matched fields order=%s keys=%v\n",
-					brokerOrderID,
-					sortedScalarKeys(matched),
-				)
-
-				fill, hasFill := greeksoftMapToVerifiedFill(matched)
-				if hasFill {
-					return status, raw, fill.FilledQty, fill.AveragePrice, nil
-				}
-
-				return status, raw, 0, 0, nil
-			}
-
-			rawBytes, _ := json.Marshal(book)
-			fmt.Printf(
-				"[GREEKSOFT ORDERBOOK] order=%s not_found response=%s\n",
-				brokerOrderID,
-				string(rawBytes),
-			)
-		}
-
-		if i < attempts-1 {
-			time.Sleep(delay)
-		}
-	}
-
-	if lastErr != nil {
-		return "", "", 0, 0, lastErr
-	}
-
-	return "", "", 0, 0, fmt.Errorf(
-		"order %s not found in Greeksoft order book",
-		brokerOrderID,
-	)
-}
-
 func normalizeGreeksoftOrderStatus(status string) string {
 	s := strings.ToUpper(strings.TrimSpace(status))
 
@@ -286,38 +194,6 @@ func normalizeGreeksoftOrderStatus(status string) string {
 	default:
 		return s
 	}
-}
-
-func mapHasOrderID(m map[string]interface{}, target string) bool {
-	target = strings.TrimSpace(target)
-	if target == "" {
-		return false
-	}
-
-	keys := []string{
-		"gorderid",
-		"gOrderID",
-		"gOrderId",
-		"ordID",
-		"orderId",
-		"orderID",
-		"OrderID",
-		"AppOrderID",
-		"broker_order_id",
-	}
-
-	for _, key := range keys {
-		v, ok := m[key]
-		if !ok {
-			continue
-		}
-
-		if normalizeGreeksoftOrderID(v) == target {
-			return true
-		}
-	}
-
-	return false
 }
 
 func normalizeGreeksoftOrderID(v interface{}) string {
@@ -370,50 +246,6 @@ func normalizeGreeksoftOrderID(v interface{}) string {
 	default:
 		return strings.TrimSpace(fmt.Sprintf("%v", x))
 	}
-}
-
-func findGreeksoftOrderStatus(
-	v interface{},
-	brokerOrderID string,
-) (string, string, map[string]interface{}, bool) {
-	target := strings.TrimSpace(brokerOrderID)
-
-	switch x := v.(type) {
-	case map[string]interface{}:
-		if mapHasOrderID(x, target) {
-			status := firstStringValue(
-				x,
-				"OrderStatus",
-				"orderStatus",
-				"order_status",
-				"status",
-				"Status",
-				"ordStatus",
-				"order_state",
-			)
-
-			rawBytes, _ := json.Marshal(x)
-			return status, string(rawBytes), x, true
-		}
-
-		for _, child := range x {
-			if status, raw, matched, ok := findGreeksoftOrderStatus(child, target); ok {
-				return status, raw, matched, true
-			}
-		}
-
-	case []interface{}:
-		for _, child := range x {
-			if status, raw, matched, ok := findGreeksoftOrderStatus(child, target); ok {
-				return status, raw, matched, true
-			}
-		}
-
-	default:
-		return "", "", nil, false
-	}
-
-	return "", "", nil, false
 }
 
 func firstStringValue(m map[string]interface{}, keys ...string) string {
@@ -788,22 +620,6 @@ func greeksoftTimeValue(
 	// available for later timestamp-format validation.
 	_ = m
 	return time.Time{}
-}
-
-func sortedScalarKeys(m map[string]interface{}) []string {
-	keys := make([]string, 0)
-
-	for key, value := range m {
-		switch value.(type) {
-		case map[string]interface{}, []interface{}:
-			continue
-		default:
-			keys = append(keys, key)
-		}
-	}
-
-	sort.Strings(keys)
-	return keys
 }
 
 // ModifyOrderPrice re-prices a resting LIMIT order via GreekSoft's

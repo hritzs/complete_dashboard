@@ -296,6 +296,10 @@ func (s *Service) submitOrderIntent(
 	tradeUID string,
 	intent OrderIntent,
 ) (brokerOrderID string, status string, err error) {
+	// Never close more than the trade holds on this token (caps or refuses).
+	if gerr := s.closeQtyGuard(ctx, tradeUID, &intent); gerr != nil {
+		return "", "", gerr
+	}
 	s.Store.AppendIntent(tradeUID, intent)
 
 	// Never send an order whose intent_id is recorded under ANOTHER trade:

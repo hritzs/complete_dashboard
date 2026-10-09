@@ -3,7 +3,8 @@ package trading
 // Straddle-target build -- LIVE OMS. Real GreekSoft orders, only for a run
 // the user started in LIVE mode with the typed confirmation.
 //
-// Entry: one lot per order, IOC LIMIT at the tranche plan's own price for
+// Entry: multi-lot IOC LIMIT orders (each leg's remaining planned quantity,
+// up to the freeze qty per order) at the tranche plan's own price for
 // the leg (the deepest bid level its depth walk authorised, after the
 // plan's VWAP test above target) -- never a price derived from earlier
 // fills (sbPlanLimits). An IOC limit sell fills at the best bids at or
@@ -233,26 +234,6 @@ func (s *Service) sbLiveHaltLocked(r *sbRunner, why string) {
 	r.persistLocked()
 }
 
-// sbRounds splits a tranche into rounds: CE+PE pairs first (both legs sent
-// at the same moment), then the larger leg's extra (delta) lots one by one.
-func sbRounds(ceLots, peLots int) [][]string {
-	var out [][]string
-	pairs := ceLots
-	if peLots < pairs {
-		pairs = peLots
-	}
-	for i := 0; i < pairs; i++ {
-		out = append(out, []string{"CE", "PE"})
-	}
-	for i := pairs; i < ceLots; i++ {
-		out = append(out, []string{"CE"})
-	}
-	for i := pairs; i < peLots; i++ {
-		out = append(out, []string{"PE"})
-	}
-	return out
-}
-
 // sbPlanLimits: each lot's IOC limit is the tranche plan's own price for
 // its leg -- the deepest bid level the plan's depth walk (shown in the UI)
 // authorised, so the lot fills at the best bids at or above it. No cushion
@@ -369,35 +350,43 @@ const sbCompleteRetries = 3
 func (s *Service) sbExecuteLiveAsync(r *sbRunner, plan DepthEntryPlan, atm OptionChainRow) {
 	r.busy = true
 	lot := int64(r.lotSize)
-	rounds := sbRounds(int(plan.CEQty/lot), int(plan.PEQty/lot))
 	tranche, tradeUID, symbol, expiry := r.tranches, r.tradeUID, r.cfg.Symbol, r.expiry
 	bestBid, l5 := sbRowBids(atm), sbRowL5(atm)
 	token := map[string]int64{"CE": atm.CEToken, "PE": atm.PEToken}
+	planQty := map[string]int64{"CE": plan.CEQty, "PE": plan.PEQty}
+	maxQ := s.resolveMaxOrderQty(symbol, lot) / lot * lot // freeze qty, whole lots
+	if maxQ < lot {
+		maxQ = lot
+	}
 	go func() {
 		filled := map[string]int64{}
 		stopWhy := ""
-		// send sends legs concurrently at their limits; returns lots filled
-		// per leg. Caller must NOT hold r.mu.
-		send := func(limits map[string]float64, role string) map[string]bool {
+		// send sends each leg's order (qty at its limit) concurrently and
+		// returns what filled per leg. Caller must NOT hold r.mu.
+		type order struct {
+			qty int64
+			lim float64
+		}
+		send := func(orders map[string]order, role string) map[string]int64 {
 			type out struct {
 				leg string
 				res sbLiveOrderResult
 			}
-			ch := make(chan out, len(limits))
-			for leg, lim := range limits {
-				go func(leg string, lim float64) {
-					l := lim
-					ch <- out{leg, s.sbLiveSendOne(r, tradeUID, symbol, lot, token[leg], atm.Strike, leg, "SELL", lot, &l, "BUILD")}
-				}(leg, lim)
+			ch := make(chan out, len(orders))
+			for leg, o := range orders {
+				go func(leg string, o order) {
+					l := o.lim
+					ch <- out{leg, s.sbLiveSendOne(r, tradeUID, symbol, lot, token[leg], atm.Strike, leg, "SELL", o.qty, &l, "BUILD")}
+				}(leg, o)
 			}
 			// Collect every result WITHOUT r.mu: each sbLiveSendOne takes
 			// r.mu itself (write-ahead pending record). Holding it here
 			// deadlocked the run (2026-10-06 14:50:58 -- nothing was sent).
-			results := make([]out, 0, len(limits))
-			for range limits {
+			results := make([]out, 0, len(orders))
+			for range orders {
 				results = append(results, <-ch)
 			}
-			got := map[string]bool{}
+			got := map[string]int64{}
 			r.mu.Lock()
 			defer r.mu.Unlock()
 			for _, o := range results {
@@ -405,12 +394,12 @@ func (s *Service) sbExecuteLiveAsync(r *sbRunner, plan DepthEntryPlan, atm Optio
 					r.pms.ApplyFill(PMSFill{Token: token[o.leg], Strike: atm.Strike, OptionType: o.leg, Side: "SELL", Qty: o.res.Filled, Price: o.res.AvgPrice, Role: "BUILD", Tranche: tranche})
 					filled[o.leg] += o.res.Filled
 					ceA, peA := r.pms.BuildAverages()
-					r.event("FILL", "LIVE %s%s SELL %d @%.2f (IOC limit %.2f) -- build avg CE %.2f + PE %.2f = %.2f vs target %.2f",
-						role, o.leg, o.res.Filled, o.res.AvgPrice, limits[o.leg], ceA, peA, ceA+peA, r.cfg.TargetStraddle)
+					r.event("FILL", "LIVE %s%s SELL %d/%d @%.2f (IOC limit %.2f) -- build avg CE %.2f + PE %.2f = %.2f vs target %.2f",
+						role, o.leg, o.res.Filled, orders[o.leg].qty, o.res.AvgPrice, orders[o.leg].lim, ceA, peA, ceA+peA, r.cfg.TargetStraddle)
 				}
 				switch {
 				case o.res.Unknown:
-					s.sbLiveHaltLocked(r, fmt.Sprintf("%s lot order unconfirmed: %s", o.leg, o.res.Reason))
+					s.sbLiveHaltLocked(r, fmt.Sprintf("%s order unconfirmed: %s", o.leg, o.res.Reason))
 					stopWhy = "halted"
 				case o.res.Status == "REJECTED":
 					r.sbRejectLocked(o.leg+" order", o.res.Reason)
@@ -418,7 +407,7 @@ func (s *Service) sbExecuteLiveAsync(r *sbRunner, plan DepthEntryPlan, atm Optio
 				case o.res.Filled > 0:
 					r.rejects = 0
 				}
-				got[o.leg] = o.res.Filled >= lot
+				got[o.leg] = o.res.Filled
 			}
 			r.persistLocked()
 			return got
@@ -435,48 +424,87 @@ func (s *Service) sbExecuteLiveAsync(r *sbRunner, plan DepthEntryPlan, atm Optio
 			}
 			return stopWhy == ""
 		}
+		left := func(leg string) int64 { return planQty[leg] - filled[leg] }
 
-		for i, legs := range rounds {
+		// Multi-lot shots: each leg's whole remaining planned quantity (up
+		// to the freeze qty per order) at the plan's own price -- the IOC
+		// takes every contract resting at or above it, the rest cancels.
+		for shot := 0; shot < 200 && (left("CE") >= lot || left("PE") >= lot); shot++ {
 			if !canSend() {
 				break
 			}
-			if i > 0 {
+			if shot > 0 {
 				bestBid, l5 = s.sbFreshBids(symbol, expiry, atm.Strike, bestBid, l5)
 			}
+			var legs []string
+			for _, leg := range []string{"CE", "PE"} {
+				if left(leg) >= lot {
+					legs = append(legs, leg)
+				}
+			}
 			limits, why := sbPlanLimits(legs, plan, bestBid)
-			stopWhy = why
+			if stopWhy = why; stopWhy != "" {
+				break
+			}
+			orders := map[string]order{}
+			for _, leg := range legs {
+				orders[leg] = order{qty: min(left(leg)/lot*lot, maxQ), lim: limits[leg]}
+			}
+			got := send(orders, "")
 			if stopWhy != "" {
 				break
 			}
-
-			got := send(limits, "")
-			if len(legs) == 2 && got["CE"] != got["PE"] && stopWhy == "" {
-				// One leg of the pair filled, its partner didn't: complete
-				// the partner NOW at the fresh best bid (not held to target).
-				miss := "CE"
-				if got["CE"] {
-					miss = "PE"
-				}
-				done := false
-				for k := 0; k < sbCompleteRetries && !done && canSend(); k++ {
+			// Keep the tranche's CE:PE ratio: a leg that filled less than
+			// its share of what its partner filled is completed now at the
+			// fresh L5 bid (not held to the target), multi-lot.
+			if plan.CEQty > 0 && plan.PEQty > 0 {
+				for k := 0; k < sbCompleteRetries && canSend(); k++ {
+					needCE := filled["PE"] * plan.CEQty / plan.PEQty / lot * lot
+					needPE := filled["CE"] * plan.PEQty / plan.CEQty / lot * lot
+					miss, deficit := "", int64(0)
+					if d := needCE - filled["CE"]; d >= lot {
+						miss, deficit = "CE", d
+					} else if d := needPE - filled["PE"]; d >= lot {
+						miss, deficit = "PE", d
+					}
+					if miss == "" {
+						break
+					}
 					bestBid, l5 = s.sbFreshBids(symbol, expiry, atm.Strike, bestBid, l5)
 					if l5[miss] <= 0 {
 						continue
 					}
+					q := min(deficit, maxQ)
 					r.mu.Lock()
-					r.event("COMPLETE", "LIVE pair leg %s missed (partner filled) -- completing at the L5 bid %.2f (best %.2f, attempt %d/%d)", miss, l5[miss], bestBid[miss], k+1, sbCompleteRetries)
+					r.event("COMPLETE", "LIVE %s behind its partner by %d -- completing %d at the L5 bid %.2f (best %.2f, attempt %d/%d)", miss, deficit, q, l5[miss], bestBid[miss], k+1, sbCompleteRetries)
 					r.mu.Unlock()
-					done = send(map[string]float64{miss: l5[miss]}, "COMPLETE ")[miss]
+					send(map[string]order{miss: {qty: q, lim: l5[miss]}}, "COMPLETE ")
 				}
-				if !done && stopWhy == "" {
-					stopWhy = fmt.Sprintf("%s pair leg not filled after %d completion attempts", miss, sbCompleteRetries)
+				if stopWhy == "" {
+					if d := filled["PE"]*plan.CEQty/plan.PEQty/lot*lot - filled["CE"]; d >= lot {
+						stopWhy = fmt.Sprintf("CE still %d behind its partner after %d completion attempts", d, sbCompleteRetries)
+					} else if d := filled["CE"]*plan.PEQty/plan.CEQty/lot*lot - filled["PE"]; d >= lot {
+						stopWhy = fmt.Sprintf("PE still %d behind its partner after %d completion attempts", d, sbCompleteRetries)
+					}
 				}
-			} else if !got["CE"] && !got["PE"] && stopWhy == "" {
-				stopWhy = "lot(s) not filled at the limit (IOC cancelled)"
-			} else if len(legs) == 1 && !got[legs[0]] && stopWhy == "" {
-				stopWhy = fmt.Sprintf("%s lot not filled at limit %.2f (IOC cancelled)", legs[0], limits[legs[0]])
 			}
 			if stopWhy != "" {
+				break
+			}
+			// Nothing at all filled, or the book did not hold the rest at
+			// the plan's price: re-plan from the fresh book.
+			if got["CE"]+got["PE"] == 0 {
+				stopWhy = "nothing filled at the plan's prices (IOC cancelled)"
+				break
+			}
+			partial := false
+			for _, leg := range legs {
+				if got[leg] < orders[leg].qty {
+					partial = true
+				}
+			}
+			if partial && (left("CE") >= lot || left("PE") >= lot) {
+				stopWhy = "the book did not hold the whole level at the plan's price -- re-plan"
 				break
 			}
 		}

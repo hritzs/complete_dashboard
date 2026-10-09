@@ -33,7 +33,7 @@ const S = {
 const phaseColor = { BUILDING: '#1e6fd0', PAUSED: '#f9a825', HANDED_OFF: '#00897b', COMPLETE: '#2e7d32', EXITING: '#ef6c00', EXITED: '#7b1fa2', HALTED: '#c62828', STOPPED: '#5d4037', IDLE: '#455a64' };
 const kindColor = { PLAN: '#64b5f6', TRANCHE: '#81c784', HEDGE: '#ffb74d', RISK: '#90a4ae', EXIT: '#e57373', RULE: '#ba68c8', ATM: '#4dd0e1', RESUME: '#fff176', FILL: '#a5d6a7', COMPLETE: '#4db6ac', HANDOFF: '#80cbc4', ORDER: '#ef9a9a', LIVE: '#ff8a65', HALT: '#ff5252', INFO: '#b0bec5' };
 const SYMBOLS = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'];
-const FIELDS = ['name', 'symbol', 'expiry', 'target_straddle', 'straddles', 'sl_bps', 'tp_bps', 'exit_time', 'straddle_div', 'hedge_div', 'hedge_min_bps'];
+const FIELDS = ['name', 'symbol', 'expiry', 'target_straddle', 'straddles', 'sl_bps', 'tp_bps', 'exit_time', 'straddle_div', 'hedge_div', 'hedge_min_bps', 'tranche_gap_ms', 'participation'];
 const TEXT_FIELDS = ['name', 'symbol', 'expiry', 'exit_time'];
 const isRunning = (s) => ['BUILDING', 'PAUSED', 'COMPLETE', 'EXITING', 'HALTED'].includes(s?.phase);
 const isLive = (s) => s?.mode === 'LIVE';
@@ -198,7 +198,7 @@ export default function StraddleBuildTab() {
     const c = s?.config || {};
     if (!window.confirm(
       `REAL ORDERS on the broker account.\n\n${c.symbol} sell ATM straddle strictly ABOVE ₹${c.target_straddle} (avg CE + avg PE sold always > target), ` +
-      `${2 * (c.straddles || 0)} contracts in total (CE + PE), split DELTA-NEUTRAL by the live deltas (not ${c.straddles}/${c.straddles}), one lot per IOC limit order. Hedge / SL / TP / exit ${c.exit_time || '—'} with MARKET orders.\n\n` +
+      `${2 * (c.straddles || 0)} contracts in total (CE + PE), split DELTA-NEUTRAL by the live deltas (not ${c.straddles}/${c.straddles}), multi-lot IOC limit orders (up to the freeze qty each). Hedge / SL / TP / exit ${c.exit_time || '—'} with MARKET orders.\n\n` +
       'Sell?')) return;
     if (await call('/api/sbuild/shadow/start', { id: rid, mode: 'LIVE', confirm: 'SELL LIVE' })) { setMsg(`LIVE build started (${rid}) — real orders`); loadState(); }
   };
@@ -294,7 +294,7 @@ export default function StraddleBuildTab() {
   const In = (p) => (
     <label style={{ display: 'flex', 'flex-direction': 'column', gap: '4px', 'min-width': 0 }}>
       <span style={S.label}>{p.label}</span>
-      <input class="symbol-select" style={S.input} type={p.type || 'number'} step="any" placeholder={p.ph || ''} value={rule()[p.k] ?? ''} onInput={setField(p.k)} onBlur={p.onBlur} disabled={p.disabled} />
+      <input class="symbol-select" style={S.input} type={p.type || 'text'} inputmode={p.type ? undefined : 'decimal'} step="any" placeholder={p.ph || ''} value={rule()[p.k] ?? ''} onInput={setField(p.k)} onBlur={p.onBlur} disabled={p.disabled} />
       <Show when={p.hint}><span style={{ ...S.muted, 'font-size': '11px' }}>{p.hint}</span></Show>
     </label>
   );
@@ -414,6 +414,8 @@ export default function StraddleBuildTab() {
               </Group>
               <Group title="Entry">
                 <In label="Target straddle ₹ (sell above)" k="target_straddle" ph={mkt()?.bid_straddle ? fmt(mkt().bid_straddle) : ''} />
+                <In label="Tranche gap (ms)" k="tranche_gap_ms" ph="250" />
+                <In label="Participation (0-1 of fillable depth)" k="participation" ph="0.75" />
                 <In label="Qty per leg (contracts)" k="straddles" ph={String(lotSize() || 65)} onBlur={roundQty} hint={`${lotsTxt()} · total ${totalQty()} CE+PE, split delta-neutral (not equal legs)`} />
               </Group>
               <Group title="Risk">
@@ -450,7 +452,7 @@ export default function StraddleBuildTab() {
               </span>
             </div>
             <div style={{ ...S.muted, 'margin-top': '8px', 'font-size': '11px' }}>
-              Sells the current ATM, one lot per order, sized off 50% of fillable L1–L5 depth (shared across rules on the same book); avg CE + avg PE sold always stays above the target; tail ≤ 2 lots trims net delta.
+              Sells the current ATM with multi-lot IOC orders (each leg's planned quantity, up to the freeze qty per order), sized off 75% (participation) of fillable L1–L5 depth (shared across rules on the same book); avg CE + avg PE sold always stays above the target; tail ≤ 2 lots trims net delta.
             </div>
           </div>
 

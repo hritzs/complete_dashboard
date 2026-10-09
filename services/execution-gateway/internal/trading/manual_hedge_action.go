@@ -457,6 +457,14 @@ func (s *Service) ManualHedgeExecute(ctx context.Context, req ManualHedgeTestReq
 			Quantity: intent.Quantity,
 		}
 
+		// Never close more than the trade holds on this token.
+		if gerr := s.closeQtyGuard(ctx, intent.TradeUID, &intent); gerr != nil {
+			item.Success, item.Error, allOK = false, gerr.Error(), false
+			executions = append(executions, item)
+			continue
+		}
+		item.Quantity = intent.Quantity
+
 		res, err := executor.ExecuteOrderIntent(ctx, intent)
 		if err != nil {
 			item.Success = false

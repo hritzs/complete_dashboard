@@ -269,6 +269,8 @@ func closeReasonForStatus(status string) string {
 		return "MTM EXIT"
 	case "CLOSED_STRADDLE":
 		return "ATM STRADDLE EXIT"
+	case "CLOSED_PORTFOLIO":
+		return "PORTFOLIO MTM EXIT"
 	case "CLOSEDSQF", "CLOSED_SQF", "CLOSED", "CLOSED_MANUAL":
 		return "MANUAL SQUARE-OFF"
 	case sbStatusClosed:

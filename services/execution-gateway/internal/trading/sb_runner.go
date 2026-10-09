@@ -44,9 +44,9 @@ type SBConfig struct {
 	Expiry         string  `json:"expiry,omitempty"` // blank = nearest
 	TargetStraddle float64 `json:"target_straddle"`  // sell only above this
 	Straddles      int64   `json:"straddles"`        // straddle qty in CONTRACTS per leg (lot multiple); total = 2 x this
-	Participation  float64 `json:"participation"`    // default 0.5 (split across rules on the same book)
+	Participation  float64 `json:"participation"`    // default 0.75 (split across rules on the same book)
 	MaxLevels      int     `json:"max_levels"`       // default 5
-	TrancheGapMs   int     `json:"tranche_gap_ms"`   // min gap between tranches, default 1000
+	TrancheGapMs   int     `json:"tranche_gap_ms"`   // min gap between tranches, default 250
 	SLBps          float64 `json:"sl_bps"`           // 0 = off
 	TPBps          float64 `json:"tp_bps"`           // 0 = off
 	ExitTime       string  `json:"exit_time"`        // HH:MM[:SS], blank = none
@@ -289,14 +289,20 @@ func sbDefaults(c SBConfig) SBConfig {
 	c.Name = strings.TrimSpace(c.Name)
 	c.Expiry = strings.TrimSpace(c.Expiry)
 	c.ExitTime = strings.TrimSpace(c.ExitTime)
-	if c.Participation <= 0 || c.Participation > 1 {
-		c.Participation = 0.5
+	// 75% of the fillable depth per tranche (2026-10-09: 50% left a 10,010
+	// build in 44 small tranches). Rules saved with the old 0.5 default move
+	// to 0.75; set any other value on the rule.
+	if c.Participation <= 0 || c.Participation > 1 || c.Participation == 0.5 {
+		c.Participation = 0.75
 	}
 	if c.MaxLevels <= 0 || c.MaxLevels > 5 {
 		c.MaxLevels = 5
 	}
-	if c.TrancheGapMs <= 0 {
-		c.TrancheGapMs = 1000
+	// 250 ms between tranches (the loop runs every 100 ms). Rules saved with
+	// the old 1000 ms default move to 250 (2026-10-09: 44 one-second pauses
+	// were ~55 s of a 76 s build); set any other value on the rule.
+	if c.TrancheGapMs <= 0 || c.TrancheGapMs == 1000 {
+		c.TrancheGapMs = 250
 	}
 	if c.StraddleDiv <= 0 {
 		c.StraddleDiv = 4
@@ -1104,7 +1110,11 @@ func sbWriteAtomic(path string, b []byte) error {
 	if err := os.WriteFile(tmp, b, 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	stateMirror(path, b) // and into postgres (platform_state)
+	return nil
 }
 
 // restoreLocked reloads a saved run. Today's BUILDING / COMPLETE runs
@@ -1113,7 +1123,7 @@ func sbWriteAtomic(path string, b []byte) error {
 // the first tick (an exit time / SL / TP hit while down exits at once).
 // Runs from an earlier day are not resumed.
 func (r *sbRunner) restoreLocked() {
-	b, err := os.ReadFile(sbRunPath(r.cfg.ID))
+	b, err := stateRead(sbRunPath(r.cfg.ID))
 	if err != nil {
 		return
 	}

@@ -281,25 +281,6 @@ func (s *PostgresBackedStore) TradeSummaries(ctx context.Context, from, to time.
 	return out, tradeRows.Err()
 }
 
-// openShortQuantities is sold minus bought (filled quantity) per option leg,
-// never negative. Unlike the PnL it does not need a price: any filled order
-// changes the position.
-func openShortQuantities(execs []OrderExecution) (ce, pe int64) {
-	net := map[string]int64{}
-	for _, e := range execs {
-		if e.FilledQty <= 0 {
-			continue
-		}
-		switch strings.ToUpper(e.Side) {
-		case "SELL":
-			net[e.Leg] += e.FilledQty
-		case "BUY":
-			net[e.Leg] -= e.FilledQty
-		}
-	}
-	return maxInt64(net["CE"], 0), maxInt64(net["PE"], 0)
-}
-
 // TradeOpenQuantities returns the short CE and PE quantity a trade really
 // has open. Sourced from the fills table (via a JOIN on orders/contracts
 // for side and option_type), NOT orders.filled_qty -- confirmed live

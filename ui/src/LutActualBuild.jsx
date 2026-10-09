@@ -99,12 +99,13 @@ export default function LutActualBuild() {
   const today = () => st()?.today;
 
   return (
-    <div style={{ ...box, border: `1px solid ${armed() ? '#b23b3b' : 'rgba(255,255,255,0.18)'}`, background: armed() ? 'rgba(178,59,59,0.08)' : '' }}>
-      <div style={{ display: 'flex', 'align-items': 'center', gap: '10px', 'flex-wrap': 'wrap' }}>
-        <strong>Actual build — REAL ORDERS</strong>
-        <span style={{ 'font-size': '12px', padding: '2px 8px', 'border-radius': '10px', background: armed() ? '#b23b3b' : '#455a64' }}>
-          {armed() ? `ARMED since ${st()?.config?.armed_at}` : 'DISARMED — paper only'}
-        </span>
+    <div style={{ ...box, margin: '22px 0', padding: '0 12px 12px', border: `2px solid ${armed() ? '#e53935' : '#78909c'}`, 'border-radius': '10px', background: armed() ? 'rgba(229,57,53,0.10)' : 'rgba(120,144,156,0.08)', 'box-shadow': armed() ? '0 0 0 3px rgba(229,57,53,0.18)' : 'none', overflow: 'hidden' }}>
+      <div style={{ background: armed() ? '#c62828' : '#455a64', color: '#fff', padding: '8px 14px', margin: '0 -12px', display: 'flex', 'align-items': 'center', gap: '12px', 'flex-wrap': 'wrap' }}>
+        <strong style={{ 'font-size': '16px', 'letter-spacing': '0.04em' }}>⚠ ACTUAL BUILD — REAL ORDERS</strong>
+        <strong style={{ 'font-size': '14px' }}>{armed() ? `ARMED since ${st()?.config?.armed_at}` : 'DISARMED — paper only'}</strong>
+        <span style={{ 'font-size': '12px', opacity: 0.9 }}>the LUT check above is paper; this panel is the one that sells</span>
+      </div>
+      <div style={{ 'padding-top': '10px', display: 'flex', 'align-items': 'center', gap: '10px', 'flex-wrap': 'wrap' }}>
         <span style={muted}>FIRST minute-end YES while ARMED → delta-neutral full-size build at the LUT's strike/expiry · that YES only, once per day</span>
       </div>
 
@@ -133,7 +134,7 @@ export default function LutActualBuild() {
           <For each={FIELDS}>{([k, label, type]) => (
             <label class="control-block">
               <span class="control-label">{label}</span>
-              <input class="symbol-select" style={{ width: type === 'number' ? '90px' : '110px' }} type={type} step="any" value={form()[k] ?? ''}
+              <input class="symbol-select" style={{ width: type === 'number' ? '90px' : '110px' }} type={type === 'number' ? 'text' : type} inputmode={type === 'number' ? 'decimal' : undefined} step="any" value={form()[k] ?? ''}
                 onInput={(e) => { setForm({ ...form(), [k]: e.currentTarget.value }); setDirty(true); }} />
             </label>
           )}</For>

@@ -1,7 +1,6 @@
 package trading
 
 import (
-	"fmt"
 	"math"
 	"path/filepath"
 	"testing"
@@ -32,16 +31,6 @@ func TestPMS_BuildAverages(t *testing.T) {
 	}
 	if v := p.View(nil); math.Abs(v.BuildStraddle-170.78) > 1e-9 {
 		t.Fatalf("build straddle %v want 170.78", v.BuildStraddle)
-	}
-}
-
-func TestSBRounds_PairsTogetherThenExtras(t *testing.T) {
-	got := fmt.Sprint(sbRounds(1, 2))
-	if got != "[[CE PE] [PE]]" {
-		t.Fatalf("rounds %s", got)
-	}
-	if fmt.Sprint(sbRounds(2, 2)) != "[[CE PE] [CE PE]]" {
-		t.Fatal("2+2 must be two pairs")
 	}
 }
 

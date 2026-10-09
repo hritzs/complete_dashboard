@@ -51,7 +51,7 @@ func newSBRuleID() string {
 // LoadSBRules returns the saved rules (migrating the old single rule).
 func LoadSBRules() []SBConfig {
 	var rules []SBConfig
-	if b, err := os.ReadFile(sbRulesPath()); err == nil {
+	if b, err := stateRead(sbRulesPath()); err == nil {
 		if err := json.Unmarshal(b, &rules); err != nil {
 			log.Printf("[SBUILD-SHADOW] rules file unreadable: %v", err)
 			rules = nil

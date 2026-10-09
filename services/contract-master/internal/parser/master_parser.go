@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -26,128 +25,6 @@ type MasterParseConfig struct {
 }
 
 type LotSizeLookup map[string]int
-
-func ParseConfigFromEnv() MasterParseConfig {
-	return MasterParseConfig{
-		Delimiter:         getenvDefault("XTS_MASTER_DELIMITER", "|"),
-		IdxExchange:       getenvInt("XTS_MASTER_IDX_EXCHANGE", 0),
-		IdxBrokerToken:    getenvInt("XTS_MASTER_IDX_TOKEN", 1),
-		IdxSymbol:         getenvInt("XTS_MASTER_IDX_SYMBOL", 3),
-		IdxTradingSymbol:  getenvInt("XTS_MASTER_IDX_TRADINGSYMBOL", 4),
-		IdxInstrumentType: getenvInt("XTS_MASTER_IDX_TYPE", 5),
-		IdxTickSize:       getenvInt("XTS_MASTER_IDX_TICKSIZE", 11),
-		IdxLotSize:        getenvInt("XTS_MASTER_IDX_LOTSIZE", 12),
-		IdxExpiry:         getenvInt("XTS_MASTER_IDX_EXPIRY", 16),
-	}
-}
-
-func ParseMaster(raw map[string]interface{}, cfg MasterParseConfig) ([]persistence.Contract, error) {
-	result, ok := raw["result"]
-	if !ok {
-		return nil, fmt.Errorf("master response missing result")
-	}
-
-	lines, err := extractLines(result)
-	if err != nil {
-		return nil, err
-	}
-
-	var contracts []persistence.Contract
-
-	maxIdx := maxInt(
-		cfg.IdxExchange,
-		cfg.IdxBrokerToken,
-		cfg.IdxSymbol,
-		cfg.IdxTradingSymbol,
-		cfg.IdxInstrumentType,
-		cfg.IdxTickSize,
-		cfg.IdxLotSize,
-		cfg.IdxExpiry,
-	)
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-
-		cols := strings.Split(line, cfg.Delimiter)
-		if len(cols) <= maxIdx {
-			continue
-		}
-
-		exchange := strings.ToUpper(strings.TrimSpace(cols[cfg.IdxExchange]))
-		tokenStr := strings.TrimSpace(cols[cfg.IdxBrokerToken])
-		symbol := strings.ToUpper(strings.TrimSpace(cols[cfg.IdxSymbol]))
-		tradingSymbol := strings.TrimSpace(cols[cfg.IdxTradingSymbol])
-		instrumentType := strings.ToUpper(strings.TrimSpace(cols[cfg.IdxInstrumentType]))
-		tickStr := strings.TrimSpace(cols[cfg.IdxTickSize])
-		lotStr := strings.TrimSpace(cols[cfg.IdxLotSize])
-		expiryStr := strings.TrimSpace(cols[cfg.IdxExpiry])
-
-		if exchange == "" || tokenStr == "" || symbol == "" || lotStr == "" {
-			continue
-		}
-
-		token, err := strconv.ParseInt(tokenStr, 10, 64)
-		if err != nil || token == 0 {
-			continue
-		}
-
-		lotSize, err := strconv.Atoi(lotStr)
-		if err != nil || lotSize <= 0 {
-			continue
-		}
-
-		tickSize, _ := strconv.ParseFloat(tickStr, 64)
-
-		expiry, err := parseExpiryFlexible(expiryStr)
-		if err != nil {
-			continue
-		}
-
-		optionType := deriveOptionType(tradingSymbol)
-		strike := deriveStrike(instrumentType, tradingSymbol)
-
-		rawRow, _ := json.Marshal(map[string]string{
-			"source": "xts-master",
-			"line":   line,
-		})
-
-		contracts = append(contracts, persistence.Contract{
-			BrokerToken:    token,
-			Exchange:       exchange,
-			Symbol:         symbol,
-			InstrumentType: instrumentType,
-			ExpiryDate:     expiry,
-			StrikePrice:    strike,
-			OptionType:     optionType,
-			LotSize:        lotSize,
-			TickSize:       tickSize,
-			RawDetails:     rawRow,
-		})
-	}
-
-	return contracts, nil
-}
-
-func BuildLotSizeLookup(rows []persistence.Contract) LotSizeLookup {
-	out := make(LotSizeLookup)
-
-	for _, r := range rows {
-		if r.LotSize <= 0 {
-			continue
-		}
-
-		k1 := lotKey(r.Exchange, r.Symbol, r.ExpiryDate, "")
-		out[k1] = r.LotSize
-
-		k2 := lotKey(r.Exchange, r.Symbol, r.ExpiryDate, r.InstrumentType)
-		out[k2] = r.LotSize
-	}
-
-	return out
-}
 
 func ParseTokenCSVFile(path string, lots LotSizeLookup) ([]persistence.Contract, error) {
 	f, err := os.Open(path)
@@ -391,66 +268,6 @@ func looksLikeHeader(parts ...string) bool {
 		strings.Contains(joined, "INSTRUMENT")
 }
 
-func deriveOptionType(tradingSymbol string) string {
-	ts := strings.ToUpper(strings.TrimSpace(tradingSymbol))
-	switch {
-	case strings.HasSuffix(ts, "CE"):
-		return "CE"
-	case strings.HasSuffix(ts, "PE"):
-		return "PE"
-	default:
-		return ""
-	}
-}
-
-func deriveStrike(instrumentType, tradingSymbol string) float64 {
-	inst := strings.ToUpper(strings.TrimSpace(instrumentType))
-	ts := strings.ToUpper(strings.TrimSpace(tradingSymbol))
-
-	if strings.HasPrefix(inst, "FUT") {
-		return 0
-	}
-
-	re := regexp.MustCompile(`(\d+)(CE|PE)$`)
-	m := re.FindStringSubmatch(ts)
-	if len(m) != 3 {
-		return 0
-	}
-
-	v, err := strconv.ParseFloat(m[1], 64)
-	if err != nil {
-		return 0
-	}
-	return v
-}
-
-func extractLines(result any) ([]string, error) {
-	switch v := result.(type) {
-	case []interface{}:
-		out := make([]string, 0, len(v))
-		for _, item := range v {
-			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
-				out = append(out, s)
-			}
-		}
-		return out, nil
-
-	case string:
-		var out []string
-		for _, line := range strings.Split(v, "\n") {
-			line = strings.TrimSpace(line)
-			if line != "" {
-				out = append(out, line)
-			}
-		}
-		return out, nil
-
-	default:
-		b, _ := json.Marshal(result)
-		return nil, fmt.Errorf("unsupported master result format: %s", string(b))
-	}
-}
-
 func parseExpiryFlexible(v string) (time.Time, error) {
 	candidates := []string{
 		time.RFC3339,
@@ -484,34 +301,4 @@ func cleanNumeric(v string) string {
 	s := cleanCell(v)
 	s = strings.ReplaceAll(s, ",", "")
 	return s
-}
-
-func getenvDefault(key, fallback string) string {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return fallback
-	}
-	return v
-}
-
-func getenvInt(key string, fallback int) int {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return fallback
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return fallback
-	}
-	return n
-}
-
-func maxInt(vals ...int) int {
-	m := 0
-	for i, v := range vals {
-		if i == 0 || v > m {
-			m = v
-		}
-	}
-	return m
 }

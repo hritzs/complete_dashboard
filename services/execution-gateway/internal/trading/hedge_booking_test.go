@@ -261,7 +261,7 @@ func TestManualHedge_BooksVerifiedFillsAndExitClosesEverything(t *testing.T) {
 	tr := newTestSquareOffTrade("TRD_HEDGE_ROUNDTRIP")
 	svc, store, exec := newHedgeTestService(tr, -65) // exactly one lot
 
-	if err := svc.ManualHedge(context.Background(), tr.TradeUID); err != nil {
+	if _, err := svc.ManualHedgeNow(context.Background(), tr.TradeUID); err != nil {
 		t.Fatalf("ManualHedge: %v", err)
 	}
 
@@ -376,7 +376,7 @@ func TestManualHedge_RefusalsPlaceNothing(t *testing.T) {
 		tr := newTestSquareOffTrade("TRD_HEDGE_PARTIAL")
 		tr.Status = "PARTIAL"
 		svc, _, exec := newHedgeTestService(tr, -65)
-		if err := svc.ManualHedge(context.Background(), tr.TradeUID); err == nil {
+		if _, err := svc.ManualHedgeNow(context.Background(), tr.TradeUID); err == nil {
 			t.Fatal("want error for non-ACTIVE trade")
 		}
 		if len(exec.submitted) != 0 {
@@ -401,7 +401,7 @@ func TestManualHedge_RefusalsPlaceNothing(t *testing.T) {
 		tr := newTestSquareOffTrade("TRD_HEDGE_NOSHORT")
 		tr.CEQty = 0 // negative delta would BUY CE, but there is no short CE to buy back
 		svc, store, exec := newHedgeTestService(tr, -65)
-		if err := svc.ManualHedge(context.Background(), tr.TradeUID); err == nil {
+		if _, err := svc.ManualHedgeNow(context.Background(), tr.TradeUID); err == nil {
 			t.Fatal("want refusal")
 		}
 		if len(exec.submitted) != 0 {

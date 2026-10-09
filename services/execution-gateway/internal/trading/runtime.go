@@ -6,22 +6,6 @@ import (
 	"time"
 )
 
-func getLegLtpsFromSnapshot(snap TradeSnapshot, ceToken, peToken int64, ceFallback, peFallback float64) (ceLTP, peLTP float64) {
-	ceLTP = ceFallback
-	peLTP = peFallback
-
-	for _, leg := range snap.LivePositions {
-		if leg.Token == ceToken && leg.OptionType == "CE" {
-			ceLTP = leg.LTP
-		}
-		if leg.Token == peToken && leg.OptionType == "PE" {
-			peLTP = leg.LTP
-		}
-	}
-
-	return ceLTP, peLTP
-}
-
 // startRuntime spins up a background monitor for the given trade.
 // Ensure this function exists only here (remove any duplicate from service.go).
 func (s *Service) startRuntime(trade StoredTrade) {
@@ -123,7 +107,7 @@ func (s *Service) ResumeRuntime(trade StoredTrade) {
 // should be monitoring it any more.
 func isTerminalTradeStatus(status string) bool {
 	switch status {
-	case "CLOSED", "CLOSEDSQF", "CLOSED_SQF", "CLOSED_SL", "CLOSED_TP", "CLOSED_TIME", "CLOSED_MTM", "CLOSED_STRADDLE", "CLOSED_MANUAL", "FAILED":
+	case "CLOSED", "CLOSEDSQF", "CLOSED_SQF", "CLOSED_SL", "CLOSED_TP", "CLOSED_TIME", "CLOSED_MTM", "CLOSED_STRADDLE", "CLOSED_PORTFOLIO", "CLOSED_MANUAL", "FAILED":
 		return true
 	}
 	return false

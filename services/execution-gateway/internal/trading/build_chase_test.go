@@ -320,19 +320,3 @@ func TestSquareOff_PartialTradeWithNothingFilledPlacesNothing(t *testing.T) {
 		t.Fatalf("placed %d orders for a trade with nothing filled", len(exec.submitted))
 	}
 }
-
-func TestOpenShortQuantities(t *testing.T) {
-	ce, pe := openShortQuantities([]OrderExecution{
-		{Leg: "CE", Side: "SELL", FilledQty: 65}, {Leg: "PE", Side: "SELL", FilledQty: 65},
-		{Leg: "PE", Side: "SELL", FilledQty: 0},               // unfilled
-		{Leg: "CE", Side: "BUY", FilledQty: 65},               // exit
-		{Leg: "PE", Side: "BUY", FilledQty: 130, AvgPrice: 0}, // fills count even without a price
-	})
-	if ce != 0 || pe != 0 {
-		t.Fatalf("open short CE/PE = %d/%d, want 0/0 (never negative)", ce, pe)
-	}
-	ce, pe = openShortQuantities([]OrderExecution{{Leg: "CE", Side: "SELL", FilledQty: 65}})
-	if ce != 65 || pe != 0 {
-		t.Fatalf("open short CE/PE = %d/%d, want 65/0", ce, pe)
-	}
-}

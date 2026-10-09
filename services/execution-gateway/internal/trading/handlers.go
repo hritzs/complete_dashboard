@@ -655,35 +655,6 @@ func (h *Handlers) GetOrders(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *Handlers) TradeStatus(w http.ResponseWriter, r *http.Request) {
-	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(parts) < 3 {
-		http.Error(w, "invalid trade path", http.StatusBadRequest)
-		return
-	}
-	tradeUID := parts[2]
-
-	tr, ok := h.Store.LoadTrade(tradeUID)
-	if !ok {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": false,
-			"error":   "trade not found",
-		})
-		return
-	}
-
-	intents := h.Store.LoadIntents(tradeUID)
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"trade":   tr,
-		"intents": intents,
-	})
-}
-
 // ModifyTradeRequest holds fields that can be updated for an active trade
 type ModifyTradeRequest struct {
 	SLPointsPerLot *float64 `json:"sl_points_per_lot,omitempty"`
@@ -1022,15 +993,6 @@ func (h *Handlers) ResetTradingData(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"message": "trading data cleared",
 		"deleted": deleted,
-	})
-}
-
-func (h *Handlers) BrokerSync(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	// Trigger state/position reconciliation
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"message": "Broker position synchronization triggered successfully.",
 	})
 }
 

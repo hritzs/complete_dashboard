@@ -100,6 +100,8 @@ type LUTEntry struct {
 
 // LUTLive is the tick-rate payload pushed to the UI.
 type LUTLive struct {
+	Preopen        string         `json:"preopen,omitempty"`    // pre-open estimate in use (lut_preopen.go)
+	LastClose      *MinuteClose   `json:"last_close,omitempty"` // last minute's ATM candle closes
 	Now            string         `json:"now"`
 	Day            string         `json:"day"`
 	Config         LUTConfig      `json:"config"`
@@ -137,6 +139,16 @@ type LUTState struct {
 
 type lutEngine struct {
 	mu sync.Mutex
+
+	preopen   lutPreopen   // pre-open estimate (lut_preopen.go)
+	lastClose *MinuteClose // the last minute's ATM candle closes
+	gsKick    int64        // boundary the GreekSoft close fetch was started for
+	// ATM straddle high / low: the minute being built, the finished one
+	// (keyed HHMM of the minute it covers) and the day so far.
+	strMin, strPrevMin int
+	strCur, strPrev    lutStrHL
+	strDay             lutStrHL
+	preopenAt          time.Time
 
 	cfg LUTConfig
 
@@ -239,6 +251,7 @@ func (e *lutEngine) newDay(day string) {
 	e.minutes, e.lastMinute, e.lastIV, e.entry = nil, 0, 0, nil
 	e.build, e.tests = nil, nil
 	e.lastLTP = nil
+	e.strMin, e.strPrevMin, e.strCur, e.strPrev, e.strDay = 0, 0, lutStrHL{}, lutStrHL{}, lutStrHL{}
 	e.lastChain, e.lastNext = 0, 0
 	for t := range lutLoadChainRecorded(day) {
 		if hm := lutHHMM(t); hm > e.lastChain {
@@ -411,10 +424,38 @@ func (s *Service) lutComputeLocked(now time.Time, day string, hhmm int, chain *O
 	// The minute's record uses candle closes (last trade before hh:mm:00 by
 	// exchange trade time), built once the ATM closes are final or the
 	// grace period is over -- see lut_close.go.
+	// High / low of the ATM straddle inside each minute (every 100 ms tick).
+	if chain != nil {
+		e.trackStraddle(now, chain)
+	}
+	// The minute's closes: GreekSoft's candle closes for the ATM CE / PE
+	// (gs_close.go) once they are in (~0.3-0.5 s), else after
+	// gsCloseDeadline our feed closes. Fetched in the background so this
+	// 100 ms tick never blocks.
 	var closed *OptionChainSnapshot
+	closeSrc, feedPx := "feed", map[int64]float64{}
 	if chain != nil && (hhmm != e.lastChain || hhmm != e.lastMinute || e.u0916 <= 0) {
-		if cc, ready := lutCloseChain(chain, now.Truncate(time.Minute), now); ready {
-			closed = cc
+		b := now.Truncate(time.Minute)
+		if cc, ready := lutCloseChain(chain, b, now); ready {
+			toks := atmTokens(cc)
+			if gsClosesOn() && e.gsKick != b.Unix() {
+				e.gsKick = b.Unix()
+				for t := range toks {
+					go s.gsCloseAt(t, b)
+				}
+			}
+			switch {
+			case !gsClosesOn():
+				closed = cc // GreekSoft closes switched off: feed closes, no wait
+			case gsHaveAll(toks, b):
+				n, fp := s.gsApplyCloses(cc, b, toks)
+				if n > 0 {
+					closeSrc, feedPx = "GreekSoft", fp
+				}
+				closed = cc
+			case now.Sub(b) >= gsCloseDeadline:
+				closed = cc // GreekSoft not in time: feed closes
+			}
 		}
 	}
 	if closed != nil {
@@ -422,7 +463,22 @@ func (s *Service) lutComputeLocked(now time.Time, day string, hhmm int, chain *O
 		// next weekly expiry's chain (Paper Sim "Next" view).
 		if hhmm >= 915 && hhmm <= lutRecordUntil && hhmm != e.lastChain {
 			e.lastChain = hhmm
-			lutSaveChainMinute(day, hhmm, closed)
+			mc := minuteCloseOf(closed, chain, now.Truncate(time.Minute))
+			mc.Source = closeSrc
+			for _, r := range closed.Chain {
+				if r.Strike == mc.ATM {
+					mc.FeedCE, mc.FeedPE = feedPx[r.CEToken], feedPx[r.PEToken]
+				}
+			}
+			if hl := e.strPrev; e.strPrevMin == lutPrevMinute(hhmm) && hl.hi > 0 {
+				mc.StrLow, mc.StrHigh, mc.StrLowAt, mc.StrHighAt = hl.lo, hl.hi, hl.loAt, hl.hiAt
+			}
+			mc.DayLow, mc.DayHigh, mc.DayLowAt, mc.DayHighAt = e.strDay.lo, e.strDay.hi, e.strDay.loAt, e.strDay.hiAt
+			lutSaveChainMinuteWith(day, "", hhmm, closed, func(m *lutChainMinute) {
+				m.CloseSrc, m.StrLow, m.StrHigh = closeSrc, mc.StrLow, mc.StrHigh
+			})
+			e.lastClose = &mc
+			log.Printf("[MINUTE-CLOSE] %s", mc)
 			if nx := lutNextExpiry(chain); nx != "" && hhmm != e.lastNext {
 				e.lastNext = hhmm
 				go func(nx string, hhmm int, b time.Time) {
@@ -445,6 +501,7 @@ func (s *Service) lutComputeLocked(now time.Time, day string, hhmm int, chain *O
 			e.saveDayLocked(day)
 		}
 	}
+	live.LastClose = e.lastClose
 	live.Expiry, live.LotSize = e.expiry, e.lotSize
 	if live.Expiry == "" {
 		live.Expiry = cfg.Expiry
@@ -463,7 +520,24 @@ func (s *Service) lutComputeLocked(now time.Time, day string, hhmm int, chain *O
 	if whatIf {
 		dispMan = man
 	}
-	shown := e.evaluate(now, next, chain, cfg, dispMan)
+	// Before the open (or with no live chain): the estimate from the last
+	// trading day's close stands in for the live prices -- display only.
+	dispChain := chain
+	if hhmm < 915 || chain == nil {
+		exp := cfg.Expiry
+		if exp == "" {
+			exp = e.expiry
+		}
+		if pc, note := e.lutPreopenLocked(now, exp); pc != nil {
+			dispChain, live.Preopen = pc, note
+			if live.Expiry == "" {
+				live.Expiry = pc.Expiry
+			}
+		} else {
+			live.Preopen = note
+		}
+	}
+	shown := e.evaluate(now, next, dispChain, cfg, dispMan)
 	if shown.Ev != nil && shown.EvalHHMM != hhmm {
 		shown.Ev.Preview = true
 	}

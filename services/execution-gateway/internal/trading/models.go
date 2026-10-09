@@ -252,21 +252,25 @@ type MonitorConfig struct {
 
 	// Explicit safety gate. Stage 1 records/logs signals only; live broker
 	// execution remains blocked until SquareOff is hardened and verified.
-	AutoRiskExecutionEnabled     bool      `json:"auto_risk_execution_enabled,omitempty"`
-	HedgeThresholdDelta          float64   `json:"hedge_threshold_delta"`
-	HedgeDeltaThreshold          float64   `json:"hedge_delta_threshold"`
-	StraddleStopPrice            float64   `json:"straddle_stop_price"`
-	StraddlePriceExit            float64   `json:"straddle_price_exit"`
-	OrderLotsPerCall             int       `json:"order_lots_per_call"`
-	PollIntervalSec              int       `json:"poll_interval_sec"`
-	StraddleDiv                  float64   `json:"straddle_div"`
-	HedgeDiv                     float64   `json:"hedge_div"`
-	RollTimeThreshold            float64   `json:"roll_time_threshold"`
-	SquareOffTime                time.Time `json:"square_off_time,omitempty"`
-	ForceOneLotHedgeTest         bool      `json:"force_one_lot_hedge_test,omitempty"`
-	HedgePointsFloor             float64   `json:"hedge_points_floor,omitempty"`
-	HedgeTestExecuted            bool      `json:"hedge_test_executed,omitempty"`
-	ForceHedgeRegardlessOfPoints bool      `json:"force_hedge_regardless_of_points,omitempty"`
+	AutoRiskExecutionEnabled bool      `json:"auto_risk_execution_enabled,omitempty"`
+	HedgeThresholdDelta      float64   `json:"hedge_threshold_delta"`
+	HedgeDeltaThreshold      float64   `json:"hedge_delta_threshold"`
+	StraddleStopPrice        float64   `json:"straddle_stop_price"`
+	StraddlePriceExit        float64   `json:"straddle_price_exit"`
+	OrderLotsPerCall         int       `json:"order_lots_per_call"`
+	PollIntervalSec          int       `json:"poll_interval_sec"`
+	StraddleDiv              float64   `json:"straddle_div"`
+	HedgeDiv                 float64   `json:"hedge_div"`
+	RollTimeThreshold        float64   `json:"roll_time_threshold"`
+	SquareOffTime            time.Time `json:"square_off_time,omitempty"`
+	ForceOneLotHedgeTest     bool      `json:"force_one_lot_hedge_test,omitempty"`
+	HedgePointsFloor         float64   `json:"hedge_points_floor,omitempty"`
+	HedgeTestExecuted        bool      `json:"hedge_test_executed,omitempty"`
+	// HedgeCount: hedges that actually filled; HedgeEvents: every hedge
+	// attempt (auto / manual) with what filled -- saved with the trade.
+	HedgeCount                   int          `json:"hedge_count,omitempty"`
+	HedgeEvents                  []HedgeEvent `json:"hedge_events,omitempty"`
+	ForceHedgeRegardlessOfPoints bool         `json:"force_hedge_regardless_of_points,omitempty"`
 
 	// Floor under points_allowed for the minute-end hedge trigger, in basis
 	// points of the live synthetic spot (the reference system's
@@ -464,4 +468,22 @@ type RuntimeTrade struct {
 	StopCh          chan struct{}
 	DoneCh          chan struct{}
 	LastMinuteCheck time.Time
+}
+
+// HedgeEvent is one hedge attempt on a trade.
+type HedgeEvent struct {
+	Time        string  `json:"time"`    // HH:MM:SS IST
+	Trigger     string  `json:"trigger"` // AUTO (minute-end check) / MANUAL
+	Reason      string  `json:"reason,omitempty"`
+	Lots        int     `json:"lots"`
+	Qty         int64   `json:"qty"`
+	CESide      string  `json:"ce_side,omitempty"`
+	PESide      string  `json:"pe_side,omitempty"`
+	CEFilled    int64   `json:"ce_filled"`
+	PEFilled    int64   `json:"pe_filled"`
+	Strike      float64 `json:"strike,omitempty"`
+	DeltaBefore float64 `json:"delta_before"`
+	Tranches    int     `json:"tranches"`
+	Result      string  `json:"result"` // FILLED / PARTIAL / REFUSED / FAILED
+	Error       string  `json:"error,omitempty"`
 }
