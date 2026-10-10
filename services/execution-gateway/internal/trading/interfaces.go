@@ -59,6 +59,13 @@ type OrderCanceller interface {
 	CancelOrder(ctx context.Context, brokerOrderID string) error
 }
 
+// OrderBookProvider lists every order of the broker's order book with its
+// current status / filled quantity / average price (ad-hoc orders that are
+// not part of a platform trade: the Mock tab).
+type OrderBookProvider interface {
+	OrderBookOrders(ctx context.Context) ([]BrokerFill, error)
+}
+
 // FreezeInfo is a contract's order-size limits as reported live by the
 // broker -- nothing in it is hardcoded.
 type FreezeInfo struct {

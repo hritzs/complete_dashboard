@@ -46,3 +46,4 @@ refernce_py_code/
 backups/
 __pycache__/
 services/execution-gateway/internal/trading/a.txt
+exports/

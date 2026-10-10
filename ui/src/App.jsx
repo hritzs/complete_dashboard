@@ -2,6 +2,7 @@
   import LutBuildTab from './LutBuildTab.jsx';
   import StraddleBuildTab from './StraddleBuildTab.jsx';
   import PaperSimTab from './PaperSimTab.jsx';
+  import MockTab from './MockTab.jsx';
   import SBPortfolioRows, { sbStore } from './SBPortfolioRows.jsx';
   import ManualLegPanel, { closeManualLeg } from './ManualLegPanel.jsx';
   import PortfolioMTMPanel from './PortfolioMTMPanel.jsx';
@@ -2065,6 +2066,12 @@ function App() {
             onClick={() => setActiveTab('papersim')}
           >
             Paper Sim
+          </button>
+          <button
+            class={`tab-btn ${activeTab() === 'mock' ? 'active' : ''}`}
+            onClick={() => setActiveTab('mock')}
+          >
+            Mock
           </button>
           <button
             class={`tab-btn ${activeTab() === 'logs' ? 'active' : ''}`}
@@ -4215,6 +4222,10 @@ function App() {
 
         <Show when={activeTab() === 'papersim'}>
           <PaperSimTab />
+        </Show>
+
+        <Show when={activeTab() === 'mock'}>
+          <MockTab />
         </Show>
 
         <Show when={activeTab() === 'logs'}>

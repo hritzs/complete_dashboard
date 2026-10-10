@@ -480,6 +480,7 @@ func startHTTPServer(cfg *Config, handlers *trading.Handlers) {
 	mux.HandleFunc("/api/build/stop", handlers.StopBuild)
 	mux.HandleFunc("/api/trade/broker-sync", handlers.TradeBrokerSync)
 	mux.HandleFunc("/api/lut/build", handlers.LUTBuildHandler)
+	mux.HandleFunc("/api/mock", handlers.MockHandler)
 	mux.HandleFunc("/api/lut/build/test", handlers.LUTBuildTestHandler)
 	mux.HandleFunc("/api/trade/open-legs", handlers.TradeOpenLegs)
 	mux.HandleFunc("/api/trade/manual-leg", handlers.ManualLegHandler)
