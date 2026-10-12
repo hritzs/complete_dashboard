@@ -47,7 +47,7 @@ func (m *fakeMarket) px(tok int64) float64 {
 func (m *fakeMarket) MinuteCloses(_ context.Context, tok int64, _ string) (map[int64]float64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return map[int64]float64{1000: m.px(tok)}, nil
+	return map[int64]float64{time.Now().Unix() - 5: m.px(tok)}, nil // one fresh bar
 }
 func (m *fakeMarket) Limits(context.Context, int64) (int64, int64, error) { return 65, 3510, nil }
 func (m *fakeMarket) Positions(context.Context) (map[int64]int64, error) {
@@ -187,7 +187,7 @@ func TestPicksNearestDeltaLowerStrikeOnTie(t *testing.T) {
 		t.Fatal(err)
 	}
 	if sc.ATM != 23500 {
-		t.Fatalf("ATM = %v, want 23500 (synthetic %v)", sc.ATM, sc.Synth)
+		t.Fatalf("ATM = %v, want 23500 (future %v)", sc.ATM, sc.Fut)
 	}
 	pk := sc.picks(0.25)
 	if pk == nil || pk.CE == nil || pk.PE == nil {
@@ -209,11 +209,11 @@ func TestPicksNearestDeltaLowerStrikeOnTie(t *testing.T) {
 				opt = "CE"
 			}
 			in, _ := s.chain.leg(k, opt)
-			iv, ok := impliedVol(m.px(in.Token), sc.Synth, k, tt, call)
+			iv, ok := impliedVol(m.px(in.Token), sc.Fut, k, tt, call)
 			if !ok {
 				continue
 			}
-			d := delta76(sc.Synth, k, tt, iv, call)
+			d := delta76(sc.Fut, k, tt, iv, call)
 			if d < 0 {
 				d = -d
 			}
@@ -229,7 +229,7 @@ func TestPicksNearestDeltaLowerStrikeOnTie(t *testing.T) {
 			t.Fatalf("call=%v picked %v, brute force says %v", call, got, best)
 		}
 	}
-	if sc.Requests > 14 {
+	if sc.Requests > 16 {
 		t.Fatalf("first minute used %d candle requests", sc.Requests)
 	}
 }
@@ -378,4 +378,53 @@ func TestLiveChunkWaitsModifiesAndTags(t *testing.T) {
 	if pe := p.held("PE"); pe == nil || pe.Qty != 3900 {
 		t.Fatalf("PE changed on a rejected order: %+v", pe)
 	}
+}
+
+// The bar patterns seen live on the monthly contracts (2026-10-12).
+func TestCloseFromBars(t *testing.T) {
+	at := func(hms string) int64 {
+		x, _ := time.ParseInLocation("2006-01-02 15:04:05", "2026-10-12 "+hms, ist())
+		return x.Unix()
+	}
+	end := at("12:43:00")
+	// Busy strike: finished bars stamped just after each minute, newest still forming.
+	busy := map[int64]float64{at("12:41:00"): 22459.70, at("12:42:04"): 22462.00, at("12:43:01"): 22465.00, at("12:43:34"): 22464.80}
+	if px, fresh := closeFromBars(busy, end); px != 22465.00 || !fresh {
+		t.Fatalf("busy: %v %v", px, fresh)
+	}
+	// Asked before the 12:43 bar is closed: the forming bar is the last trade so far.
+	early := map[int64]float64{at("12:41:00"): 22459.70, at("12:42:04"): 22462.00, at("12:42:58"): 22464.00}
+	if px, fresh := closeFromBars(early, end); px != 22464.00 || !fresh {
+		t.Fatalf("early: %v %v", px, fresh)
+	}
+	// Quiet strike: the 12:40-12:41 bar was only closed at 12:41:38.
+	quiet := map[int64]float64{at("12:40:05"): 316.25, at("12:41:38"): 309.80, at("12:42:28"): 303.15}
+	if px, _ := closeFromBars(quiet, at("12:41:00")); px != 309.80 {
+		t.Fatalf("quiet: %v", px)
+	}
+	// Cut-off reply (ends at 09:15): not fresh, never trusted on its own.
+	cut := map[int64]float64{at("09:15:00"): 340.95}
+	if px, fresh := closeFromBars(cut, end); fresh || px != 340.95 {
+		t.Fatalf("cut-off: %v %v", px, fresh)
+	}
+}
+
+// A stale candle is replaced by the websocket tick.
+func TestStaleCandleUsesTick(t *testing.T) {
+	stale := &staleBroker{}
+	cb := newCloseBook(context.Background(), stale, time.Now(), map[int64]Quote{7: {LTP: 217.8, Bid: 217.9, Ask: 218.7}})
+	px, ok := cb.at(7)
+	if !ok || px < 218.2 || px > 218.4 || cb.src[7] != "ws" || stale.calls != 2 {
+		t.Fatalf("px=%v ok=%v src=%s calls=%d", px, ok, cb.src[7], stale.calls)
+	}
+}
+
+type staleBroker struct {
+	paperBroker
+	calls int
+}
+
+func (b *staleBroker) MinuteCloses(context.Context, int64, string) (map[int64]float64, error) {
+	b.calls++
+	return map[int64]float64{time.Now().Add(-3 * time.Hour).Unix(): 340.95}, nil
 }

@@ -3,10 +3,9 @@ package overnight
 // The minute-end scenario: every number is a GreekSoft 1-minute candle
 // CLOSE of the monthly contracts at that minute end.
 //
-//	future     close of the monthly future
-//	ATM        listed strike nearest the synthetic future
-//	synthetic  ATM strike + CE close - PE close
-//	delta      Black-76 on the synthetic, each strike's own implied vol
+//	future     close of the monthly future -- the underlying for everything
+//	ATM        listed strike nearest the future
+//	delta      Black-76 on the future, each strike's own implied vol
 //	CE pick    strike at / above ATM whose delta is closest to +target
 //	PE pick    strike at / below ATM whose delta is closest to -target
 //	           (distance compared to 4 decimals; a tie takes the LOWER strike)
@@ -23,6 +22,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 )
@@ -34,6 +34,7 @@ type Pick struct {
 	Price  float64 `json:"price"`
 	IV     float64 `json:"iv"`
 	Delta  float64 `json:"delta"`
+	Src    string  `json:"src,omitempty"` // gs = candle close, ws = websocket tick, old = stale candle
 }
 
 type Picks struct {
@@ -58,7 +59,6 @@ type Scenario struct {
 	Ts       int64             `json:"ts"`
 	Spot     float64           `json:"spot"`
 	Fut      float64           `json:"fut"`
-	Synth    float64           `json:"synth"`
 	ATM      float64           `json:"atm"`
 	ATMCE    float64           `json:"atm_ce"`
 	ATMPE    float64           `json:"atm_pe"`
@@ -81,25 +81,79 @@ func (sc *Scenario) picks(d float64) *Picks {
 	return sc.Picks[deltaKey(d)]
 }
 
-// closeBook fetches candle closes once per token for one minute end, two
-// requests at a time (what GreekSoft's REST serves in parallel).
+// closeFromBars reads "the last traded price at the minute end" out of one
+// get_ohlc reply (verified live 2026-10-12 on the monthly contracts):
+//
+//   - a finished bar is stamped when it was closed, i.e. at the first trade
+//     AFTER its minute -- 12:40:05 for the 12:39-12:40 bar of a busy strike,
+//     12:41:38 for a quiet one;
+//   - the newest bar is still forming, stamped with its latest trade.
+//
+// So the close at end is the first finished bar stamped at / after end,
+// and when there is none (nothing traded since) the newest bar. fresh is
+// false when the newest bar is over 3 minutes older than end: GreekSoft
+// sometimes returns a cut-off list (seen: 376 bars ending 09:15 instead of
+// 584), and a quiet strike looks the same -- either way the candle is not
+// trusted on its own.
+func closeFromBars(bars map[int64]float64, end int64) (px float64, fresh bool) {
+	if len(bars) == 0 {
+		return 0, false
+	}
+	keys := make([]int64, 0, len(bars))
+	for ts, c := range bars {
+		if c > 0 {
+			keys = append(keys, ts)
+		}
+	}
+	if len(keys) == 0 {
+		return 0, false
+	}
+	sort.Slice(keys, func(a, b int) bool { return keys[a] < keys[b] })
+	newest := keys[len(keys)-1]
+	px = bars[newest]
+	for _, ts := range keys[:len(keys)-1] {
+		if ts >= end {
+			px = bars[ts]
+			break
+		}
+	}
+	return px, newest >= end-180
+}
+
+// tickPrice is a live tick as a price: the middle of bid and ask when the
+// book is two-sided and tight, else the last trade.
+func tickPrice(q Quote) float64 {
+	if q.Bid > 0 && q.Ask >= q.Bid {
+		mid := (q.Bid + q.Ask) / 2
+		if q.Ask-q.Bid <= math.Max(0.1*mid, 2) {
+			return mid
+		}
+	}
+	return q.LTP
+}
+
+// closeBook prices tokens at one minute end, once each, two candle
+// requests at a time (what GreekSoft's REST serves in parallel). A candle
+// that is not fresh is asked for once more and then replaced by the
+// GreekSoft websocket tick taken at the start of the computation.
 type closeBook struct {
-	ctx  context.Context
-	b    Broker
-	end  time.Time
-	sem  chan struct{}
-	mu   sync.Mutex
-	got  map[int64]float64
-	miss map[int64]bool
-	n    int
+	ctx   context.Context
+	b     Broker
+	end   time.Time
+	sem   chan struct{}
+	ticks map[int64]Quote // by exchange token
+	mu    sync.Mutex
+	got   map[int64]float64
+	src   map[int64]string // "gs" candle | "ws" tick | "old" stale candle
+	miss  map[int64]bool
+	n     int
 }
 
-func newCloseBook(ctx context.Context, b Broker, end time.Time) *closeBook {
-	return &closeBook{ctx: ctx, b: b, end: end, sem: make(chan struct{}, 2), got: map[int64]float64{}, miss: map[int64]bool{}}
+func newCloseBook(ctx context.Context, b Broker, end time.Time, ticks map[int64]Quote) *closeBook {
+	return &closeBook{ctx: ctx, b: b, end: end, sem: make(chan struct{}, 2), ticks: ticks,
+		got: map[int64]float64{}, src: map[int64]string{}, miss: map[int64]bool{}}
 }
 
-// at is the token's close at the minute end: that minute's bar, else the
-// last earlier bar (no trade in the minute leaves the price where it was).
 func (cb *closeBook) at(token int64) (float64, bool) {
 	cb.mu.Lock()
 	if v, ok := cb.got[token]; ok {
@@ -112,27 +166,41 @@ func (cb *closeBook) at(token int64) (float64, bool) {
 	}
 	cb.mu.Unlock()
 
-	cb.sem <- struct{}{}
-	bars, err := cb.b.MinuteCloses(cb.ctx, token, cb.end.Format("20060102"))
-	<-cb.sem
-
-	end := cb.end.Unix()
-	var bestTs int64
-	var best float64
-	for ts, c := range bars {
-		if ts <= end && ts > bestTs && c > 0 {
-			bestTs, best = ts, c
+	var px float64
+	src := ""
+	for try := 0; try < 2 && src == ""; try++ {
+		cb.sem <- struct{}{}
+		bars, err := cb.b.MinuteCloses(cb.ctx, token, cb.end.Format("20060102"))
+		<-cb.sem
+		cb.mu.Lock()
+		cb.n++
+		cb.mu.Unlock()
+		if err != nil {
+			continue
+		}
+		v, fresh := closeFromBars(bars, cb.end.Unix())
+		if v > 0 {
+			px = v
+		}
+		if fresh && v > 0 {
+			src = "gs"
+		}
+	}
+	if src == "" {
+		if t := tickPrice(cb.ticks[token]); t > 0 {
+			px, src = t, "ws"
+		} else if px > 0 {
+			src = "old"
 		}
 	}
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
-	cb.n++
-	if err != nil || bestTs == 0 {
+	if px <= 0 {
 		cb.miss[token] = true
 		return 0, false
 	}
-	cb.got[token] = best
-	return best, true
+	cb.got[token], cb.src[token] = px, src
+	return px, true
 }
 
 // pickSide finds the strike of one option type whose |delta| is closest to
@@ -157,6 +225,9 @@ func pickSide(c *Chain, cb *closeBook, f, t, target float64, call bool, atmIdx, 
 		p := &Pick{Strike: k, Token: in.Token, GToken: in.GToken}
 		if px, ok := cb.at(in.Token); ok {
 			p.Price = px
+			cb.mu.Lock()
+			p.Src = cb.src[in.Token]
+			cb.mu.Unlock()
 			if iv, ok := impliedVol(px, f, k, t, call); ok {
 				p.IV = round4(iv)
 				p.Delta = round4(delta76(f, k, t, iv, call))
@@ -233,17 +304,24 @@ func (s *Service) compute(ctx context.Context, end time.Time) (*Scenario, error)
 		return nil, fmt.Errorf("monthly chain not loaded")
 	}
 
-	cb := newCloseBook(ctx, s.live, end)
+	// Websocket ticks of the band, taken now: the stand-in for any strike
+	// whose candle is not fresh.
+	ticks := map[int64]Quote{}
+	if q, _, err := s.feed.quotes(ctx, s.bandTokens()); err == nil {
+		for g, v := range q {
+			ticks[g%1000000] = v // gtoken 102051352 -> exchange token 51352
+		}
+	}
+	cb := newCloseBook(ctx, s.live, end, ticks)
+	// The monthly future's own price is the underlying for everything
+	// (ATM and delta) -- no synthetic.
 	fut, ok := cb.at(c.Fut.Token)
 	if !ok {
-		return nil, fmt.Errorf("no GreekSoft candle for the %s future yet", c.Expiry)
+		return nil, fmt.Errorf("no GreekSoft price for the %s future yet", c.Expiry)
 	}
 	sc := &Scenario{Day: end.Format("2006-01-02"), Minute: end.Format("15:04"), Ts: end.Unix(), Fut: fut, Picks: map[string]*Picks{}}
-
-	// ATM from the synthetic; one correction if the synthetic sits nearer
-	// another strike than the future did.
 	atmIdx := c.idx(fut)
-	for try := 0; try < 2; try++ {
+	{
 		k := c.Strikes[atmIdx]
 		var ce, pe float64
 		var okC, okP bool
@@ -253,16 +331,11 @@ func (s *Service) compute(ctx context.Context, end time.Time) (*Scenario, error)
 		go func() { defer wg.Done(); pe, okP = cb.at(c.PE[k].Token) }()
 		wg.Wait()
 		if !okC || !okP {
-			return nil, fmt.Errorf("no GreekSoft candle for the %.0f pair yet", k)
+			return nil, fmt.Errorf("no GreekSoft price for the %.0f pair yet", k)
 		}
-		sc.ATM, sc.ATMCE, sc.ATMPE, sc.Straddle, sc.Synth = k, ce, pe, round2(ce+pe), round2(k+ce-pe)
-		if n := c.idx(sc.Synth); n != atmIdx {
-			atmIdx = n
-			continue
-		}
-		break
+		sc.ATM, sc.ATMCE, sc.ATMPE, sc.Straddle = k, ce, pe, round2(ce+pe)
 	}
-	f := sc.Synth
+	f := fut
 	t := c.ExpiryAt.Sub(end).Hours() / (365 * 24)
 	if t <= 0 {
 		return nil, fmt.Errorf("%s has expired", c.Expiry)
@@ -372,13 +445,13 @@ func (s *Service) minuteEnd(end time.Time) (*Scenario, error) {
 	pk := sc.picks(s.delta())
 	ce, pe := "-", "-"
 	if pk != nil && pk.CE != nil {
-		ce = fmt.Sprintf("%.0f CE d=%.4f @%.2f", pk.CE.Strike, pk.CE.Delta, pk.CE.Price)
+		ce = fmt.Sprintf("%.0f CE d=%.4f @%.2f %s", pk.CE.Strike, pk.CE.Delta, pk.CE.Price, pk.CE.Src)
 	}
 	if pk != nil && pk.PE != nil {
-		pe = fmt.Sprintf("%.0f PE d=%.4f @%.2f", pk.PE.Strike, pk.PE.Delta, pk.PE.Price)
+		pe = fmt.Sprintf("%.0f PE d=%.4f @%.2f %s", pk.PE.Strike, pk.PE.Delta, pk.PE.Price, pk.PE.Src)
 	}
-	log.Printf("[OVERNIGHT] %s %s fut=%.2f synth=%.2f atm=%.0f straddle=%.2f | %s | %s | pnl=%.2f (%d req, %d ms)",
-		s.chain.Expiry, sc.Minute, sc.Fut, sc.Synth, sc.ATM, sc.Straddle, ce, pe, sc.PnL, sc.Requests, sc.TookMs)
+	log.Printf("[OVERNIGHT] %s %s fut=%.2f atm=%.0f straddle=%.2f | %s | %s | pnl=%.2f (%d req, %d ms)",
+		s.chain.Expiry, sc.Minute, sc.Fut, sc.ATM, sc.Straddle, ce, pe, sc.PnL, sc.Requests, sc.TookMs)
 	s.resubscribe(sc)
 	return sc, nil
 }
@@ -412,47 +485,41 @@ func (s *Service) markDay(p *Position, sc *Scenario) {
 	sc.PnL, sc.DayPnL = m.Cum, round2(m.Cum-prevCum)
 }
 
-// resubscribe keeps the bridge sending ticks for the future, the ATM pair,
-// the picked strikes with a neighbour each side, and the held legs.
-func (s *Service) resubscribe(sc *Scenario) {
+// bandTokens: gtokens of the future and of every strike within 1500
+// points of the last known future price (all strikes before any price is
+// known is too many; then just the future) plus the held legs.
+func (s *Service) bandTokens() []int64 {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	c := s.chain
-	toks := map[int64]bool{c.Fut.GToken: true}
-	add := func(k float64) {
-		i := c.idx(k)
-		for j := i - 1; j <= i+1; j++ {
-			if j >= 0 && j < len(c.Strikes) {
-				toks[c.CE[c.Strikes[j]].GToken] = true
-				toks[c.PE[c.Strikes[j]].GToken] = true
-			}
-		}
+	if c == nil {
+		return nil
 	}
-	if sc != nil {
-		add(sc.ATM)
-		for _, pk := range sc.Picks {
-			if pk.CE != nil {
-				add(pk.CE.Strike)
-			}
-			if pk.PE != nil {
-				add(pk.PE.Strike)
+	out := []int64{c.Fut.GToken}
+	if n := len(s.rows); n > 0 && s.rows[n-1].Fut > 0 {
+		ref := s.rows[n-1].Fut
+		for _, k := range c.Strikes {
+			if math.Abs(k-ref) <= 1500 {
+				out = append(out, c.CE[k].GToken, c.PE[k].GToken)
 			}
 		}
 	}
 	if p := s.st.Position; p != nil {
 		for _, l := range p.Legs {
 			if l.Qty > 0 {
-				toks[l.GToken] = true
+				out = append(out, l.GToken)
 			}
 		}
 	}
-	s.mu.Unlock()
-	list := make([]int64, 0, len(toks))
-	for g := range toks {
-		list = append(list, g)
-	}
+	return out
+}
+
+// resubscribe keeps the bridge sending ticks for the band (re-sent every
+// minute: the bridge forgets its list when it restarts).
+func (s *Service) resubscribe(_ *Scenario) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if err := s.feed.subscribe(ctx, list, true); err != nil {
+	if err := s.feed.subscribe(ctx, s.bandTokens(), true); err != nil {
 		s.setFeedErr(err.Error())
 		return
 	}

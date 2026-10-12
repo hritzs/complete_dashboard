@@ -7,14 +7,11 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
-	"sync"
 
 	greeksoftbroker "execution-gateway/internal/brokers/greeksoft"
 	"execution-gateway/internal/overnight"
@@ -43,8 +40,6 @@ func overnightHandler(w http.ResponseWriter, r *http.Request) {
 type overnightBroker struct {
 	factory trading.BrokerFactory
 	symbol  string
-
-	once sync.Once // the trade-detail shape is logged once, to verify it live
 }
 
 func overnightAccount() string {
@@ -115,95 +110,33 @@ func (b *overnightBroker) Cancel(ctx context.Context, orderID string) error {
 	return e.CancelOrder(ctx, orderID)
 }
 
-// Orders reads the broker's typed order book: trdQty is the filled
-// quantity, status is Pending / Traded / RMS Rejected / Exchange Rejected /
-// Cancelled.
+// Orders reads the broker's REST order book: filled quantity, average
+// traded price and the rejection text all come from it.
 func (b *overnightBroker) Orders(ctx context.Context) ([]overnight.Order, error) {
 	e, err := b.exec()
 	if err != nil {
 		return nil, err
 	}
-	book, err := e.Client.GetOrderBookTyped(ctx, "")
+	book, err := e.BookOrders(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]overnight.Order, 0, len(book.Data))
-	for _, o := range book.Data {
-		st := strings.ToUpper(o.Status)
+	out := make([]overnight.Order, 0, len(book))
+	for _, o := range book {
 		status := "OPEN"
-		switch {
-		case strings.Contains(st, "REJECT"):
-			status = "REJECTED"
-		case strings.Contains(st, "CANCEL"):
-			status = "CANCELLED"
-		case o.Qty > 0 && o.TrdQty >= o.Qty:
-			status = "FILLED"
+		switch o.Status {
+		case "FILLED", "REJECTED", "CANCELLED":
+			status = o.Status
 		}
-		out = append(out, overnight.Order{ID: strconv.FormatInt(o.OrdID, 10), Status: status, Qty: o.Qty, Filled: o.TrdQty, Price: o.Price,
-			Reason: strings.TrimSpace(o.Status + " " + o.Remarks)})
+		out = append(out, overnight.Order{ID: o.ID, Status: status, Qty: o.Qty, Filled: o.Filled, Price: o.Price, AvgFill: o.AvgFill,
+			Reason: strings.TrimSpace(o.Raw + " " + o.Reason)})
 	}
 	return out, nil
 }
 
-// FillPrice: the quantity-weighted traded price of one order from the
-// broker's trade detail. The reply's shape is read generically (any object
-// carrying a traded price and quantity counts); ok=false leaves the engine
-// on the order's limit price.
-func (b *overnightBroker) FillPrice(ctx context.Context, orderID string) (float64, bool) {
-	e, err := b.exec()
-	if err != nil || e.Client.Session == nil {
-		return 0, false
-	}
-	gscid := fmt.Sprintf("%v", e.Client.Session.BrokerSpecific["gscid"])
-	detail, err := e.Client.GetTradeDetail(ctx, orderID, gscid)
-	if err != nil {
-		return 0, false
-	}
-	b.once.Do(func() {
-		raw, _ := json.Marshal(detail)
-		if len(raw) > 1500 {
-			raw = raw[:1500]
-		}
-		log.Printf("[OVERNIGHT] trade detail shape (first order %s): %s", orderID, raw)
-	})
-	num := func(m map[string]interface{}, keys ...string) float64 {
-		for _, k := range keys {
-			if v, ok := m[k]; ok {
-				f, _ := strconv.ParseFloat(strings.TrimSpace(fmt.Sprintf("%v", v)), 64)
-				if f > 0 {
-					return f
-				}
-			}
-		}
-		return 0
-	}
-	var value, qty float64
-	var walk func(v interface{})
-	walk = func(v interface{}) {
-		switch n := v.(type) {
-		case map[string]interface{}:
-			p := num(n, "traded_price", "tradedPrice", "trdPrice", "tradePrice", "TradePrice", "trade_price")
-			q := num(n, "traded_qty", "tradedQty", "trdQty", "tradeQty", "TradeQty", "trade_qty")
-			if p > 0 && q > 0 {
-				value += p * q
-				qty += q
-				return
-			}
-			for _, c := range n {
-				walk(c)
-			}
-		case []interface{}:
-			for _, c := range n {
-				walk(c)
-			}
-		}
-	}
-	walk(detail)
-	if qty <= 0 {
-		return 0, false
-	}
-	return value / qty, true
-}
+// FillPrice: the order book already carries the average traded price
+// (Order.AvgFill), so there is nothing more to ask.
+func (b *overnightBroker) FillPrice(context.Context, string) (float64, bool) { return 0, false }
 
 func (b *overnightBroker) Positions(ctx context.Context) (map[int64]int64, error) {
 	e, err := b.exec()

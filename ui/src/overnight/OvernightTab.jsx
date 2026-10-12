@@ -23,6 +23,8 @@ const n2 = (v) => (v == null || v === 0 ? '—' : Number(v).toFixed(2));
 const n4 = (v) => (v == null || v === 0 ? '—' : Number(v).toFixed(4));
 const money = (v) => (v == null ? '—' : (v < 0 ? '−' : '') + '₹' + Math.abs(Number(v)).toLocaleString('en-IN', { maximumFractionDigits: 2 }));
 const pnlColor = (v) => ({ color: v > 0 ? '#4caf50' : v < 0 ? '#ef5350' : 'inherit' });
+const srcMark = (s) => (s === 'ws' ? ' ᵗ' : s === 'old' ? ' ⚠' : '');
+const srcText = (s) => (s === 'ws' ? 'candle not fresh: GreekSoft websocket tick used' : s === 'old' ? 'stale candle, no live tick' : 'GreekSoft 1-minute candle close');
 const badge = (s) => ({ background: STATUS_BG[s] || '#546e7a', color: '#fff', padding: '1px 7px', 'border-radius': '10px', 'font-size': '11px' });
 
 export default function OvernightTab() {
@@ -118,7 +120,7 @@ export default function OvernightTab() {
         </div>
         <table style={{ width: '100%', 'border-collapse': 'collapse' }}>
           <thead><tr>
-            <th style={{ ...th, ...left }}></th><th style={th}>Spot</th><th style={th}>Future</th><th style={th}>Synthetic</th>
+            <th style={{ ...th, ...left }}></th><th style={th}>Spot</th><th style={th}>Future</th>
             <th style={th}>ATM strike</th><th style={th}>ATM straddle</th>
             <th style={th}>CE strike</th><th style={th}>CE delta</th><th style={th}>CE price</th>
             <th style={th}>PE strike</th><th style={th}>PE delta</th><th style={th}>PE price</th>
@@ -126,14 +128,14 @@ export default function OvernightTab() {
           <tbody>
             <tr>
               <td style={{ ...td, ...left }}>Minute end {last() ? last().minute : ''}</td>
-              <td style={td}>{n2(last()?.spot)}</td><td style={td}>{n2(last()?.fut)}</td><td style={td}>{n2(last()?.synth)}</td>
+              <td style={td}>{n2(last()?.spot)}</td><td style={td}>{n2(last()?.fut)}</td>
               <td style={td}>{last()?.atm || '—'}</td><td style={td}>{n2(last()?.straddle)}</td>
-              <td style={td}><b>{picks()?.ce?.strike || '—'}</b></td><td style={td}>{n4(picks()?.ce?.delta)}</td><td style={td}>{n2(picks()?.ce?.price)}</td>
-              <td style={td}><b>{picks()?.pe?.strike || '—'}</b></td><td style={td}>{n4(picks()?.pe?.delta)}</td><td style={td}>{n2(picks()?.pe?.price)}</td>
+              <td style={td}><b>{picks()?.ce?.strike || '—'}</b></td><td style={td}>{n4(picks()?.ce?.delta)}</td><td style={td} title={srcText(picks()?.ce?.src)}>{n2(picks()?.ce?.price)}{srcMark(picks()?.ce?.src)}</td>
+              <td style={td}><b>{picks()?.pe?.strike || '—'}</b></td><td style={td}>{n4(picks()?.pe?.delta)}</td><td style={td} title={srcText(picks()?.pe?.src)}>{n2(picks()?.pe?.price)}{srcMark(picks()?.pe?.src)}</td>
             </tr>
             <tr>
               <td style={{ ...td, ...left }}>Live {live() ? live().at : ''}</td>
-              <td style={td}>{n2(live()?.spot)}</td><td style={td}>{n2(live()?.fut)}</td><td style={td}>{n2(live()?.synth)}</td>
+              <td style={td}>{n2(live()?.spot)}</td><td style={td}>{n2(live()?.fut)}</td>
               <td style={td}>{live()?.atm || '—'}</td><td style={td}>{n2(live()?.straddle)}</td>
               <td style={td}>{liveRow('DELTA', 'CE')?.strike || '—'}</td><td style={td}>{n4(liveRow('DELTA', 'CE')?.delta)}</td><td style={td}>{n2(liveRow('DELTA', 'CE')?.ltp)}</td>
               <td style={td}>{liveRow('DELTA', 'PE')?.strike || '—'}</td><td style={td}>{n4(liveRow('DELTA', 'PE')?.delta)}</td><td style={td}>{n2(liveRow('DELTA', 'PE')?.ltp)}</td>
@@ -141,6 +143,10 @@ export default function OvernightTab() {
           </tbody>
         </table>
 
+        <div style={{ ...muted, 'margin-top': '4px' }}>
+          Underlying is the monthly future itself. Minute end: strikes fixed from that minute's closes (ᵗ = live tick used because the candle was not fresh).
+          Live: strikes re-picked every second from live prices, so they can differ from the minute-end row. Entry and roll use the minute-end row.
+        </div>
         <Show when={pos()} fallback={<div style={{ ...muted, 'margin-top': '10px' }}>No overnight position.</div>}>
           <div style={{ ...row, 'margin-top': '12px' }}>
             <b>Position {pos().id}</b>
@@ -205,7 +211,7 @@ export default function OvernightTab() {
         <Show when={showRows()}>
           <table style={{ width: '100%', 'border-collapse': 'collapse', 'margin-top': '6px' }}>
             <thead><tr>
-              <th style={{ ...th, ...left }}>Minute end</th><th style={th}>Spot</th><th style={th}>Future</th><th style={th}>Synthetic</th><th style={th}>ATM</th><th style={th}>Straddle</th>
+              <th style={{ ...th, ...left }}>Minute end</th><th style={th}>Spot</th><th style={th}>Future</th><th style={th}>ATM</th><th style={th}>Straddle</th>
               <th style={th}>CE strike</th><th style={th}>CE delta</th><th style={th}>CE close</th>
               <th style={th}>PE strike</th><th style={th}>PE delta</th><th style={th}>PE close</th><th style={th}>Position PnL</th>
             </tr></thead>
@@ -214,7 +220,7 @@ export default function OvernightTab() {
                 const p = r.picks ? r.picks[s().delta_key] : null;
                 return (
                   <tr>
-                    <td style={{ ...td, ...left }}>{r.minute}</td><td style={td}>{n2(r.spot)}</td><td style={td}>{n2(r.fut)}</td><td style={td}>{n2(r.synth)}</td>
+                    <td style={{ ...td, ...left }}>{r.minute}</td><td style={td}>{n2(r.spot)}</td><td style={td}>{n2(r.fut)}</td>
                     <td style={td}>{r.atm}</td><td style={td}>{n2(r.straddle)}</td>
                     <td style={td}>{p?.ce?.strike || '—'}</td><td style={td}>{n4(p?.ce?.delta)}</td><td style={td}>{n2(p?.ce?.price)}</td>
                     <td style={td}>{p?.pe?.strike || '—'}</td><td style={td}>{n4(p?.pe?.delta)}</td><td style={td}>{n2(p?.pe?.price)}</td>

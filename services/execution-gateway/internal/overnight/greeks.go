@@ -7,8 +7,8 @@ package overnight
 //	call  = F N(d1) - K N(d1 - s sqrt(T))      delta_call = N(d1)
 //	put   = K N(-d2) - F N(-d1)                delta_put  = N(d1) - 1
 //
-// F is the synthetic future of the SAME expiry (ATM strike + CE - PE), s is
-// each strike's own implied volatility solved from its minute close, T is
+// F is the monthly future's own price, s is each strike's own implied
+// volatility solved from its minute close, T is
 // the calendar time to 15:30 of the expiry day in years.
 
 import "math"

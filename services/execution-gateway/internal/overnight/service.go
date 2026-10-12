@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -145,6 +146,11 @@ func (s *Service) Start(ctx context.Context) {
 	go func() {
 		s.loadChain(time.Now().In(ist()))
 		s.resubscribe(s.lastRow())
+		{ // lot size / max order quantity, so the screen shows them before any job
+			c2, cancel := context.WithTimeout(ctx, 10*time.Second)
+			_, _, _ = s.limits(c2, ModeLive)
+			cancel()
+		}
 		var done int64
 		chainDay := ""
 		t := time.NewTicker(time.Second)
@@ -202,7 +208,6 @@ type LiveView struct {
 	At         string    `json:"at"`
 	Spot       float64   `json:"spot"`
 	Fut        float64   `json:"fut"`
-	Synth      float64   `json:"synth"`
 	ATM        float64   `json:"atm"`
 	Straddle   float64   `json:"straddle"`
 	Legs       []LiveLeg `json:"legs"`
@@ -247,27 +252,58 @@ func (s *Service) liveNow(ctx context.Context) *LiveView {
 		return nil
 	}
 
-	type want struct {
-		label string
-		in    Instrument
-		leg   *Leg
+	_ = sc
+	q, spot, err := s.feed.quotes(ctx, s.bandTokens())
+	if err != nil {
+		s.setFeedErr(err.Error())
+		return nil
 	}
-	var wants []want
-	if sc != nil {
-		if in, ok := c.leg(sc.ATM, "CE"); ok {
-			wants = append(wants, want{label: "ATM", in: in})
+	nowMs := time.Now().UnixMilli()
+	fut := q[c.Fut.GToken].LTP
+	v := &LiveView{At: time.Now().In(ist()).Format("15:04:05"), Spot: spot, Fut: fut, Realized: round2(realized), Priced: true}
+	t := c.ExpiryAt.Sub(time.Now()).Hours() / (365 * 24)
+	mk := func(label string, in Instrument) LiveLeg {
+		t0 := q[in.GToken]
+		l := LiveLeg{Label: label, Token: in.Token, Strike: in.Strike, Opt: in.Opt, LTP: t0.LTP, Bid: t0.Bid, Ask: t0.Ask}
+		if t0.AtMs > 0 {
+			l.AgeMs = nowMs - t0.AtMs
 		}
-		if in, ok := c.leg(sc.ATM, "PE"); ok {
-			wants = append(wants, want{label: "ATM", in: in})
+		if px := tickPrice(t0); fut > 0 && px > 0 && t > 0 {
+			if iv, ok := impliedVol(px, fut, in.Strike, t, in.Opt == "CE"); ok {
+				l.Delta = round4(delta76(fut, in.Strike, t, iv, in.Opt == "CE"))
+			}
 		}
-		if pk := sc.picks(d); pk != nil {
-			for _, p := range []*Pick{pk.CE, pk.PE} {
-				if p == nil {
+		return l
+	}
+	if fut > 0 {
+		// Live ATM and live delta strikes: off the future's live price,
+		// re-picked every time -- the same rule as the minute end (closest
+		// |delta|, 4 decimals, a tie takes the lower strike).
+		atm := c.Strikes[c.idx(fut)]
+		v.ATM = atm
+		ce, pe := mk("ATM", c.CE[atm]), mk("ATM", c.PE[atm])
+		if ce.LTP > 0 && pe.LTP > 0 {
+			v.Straddle = round2(ce.LTP + pe.LTP)
+		}
+		v.Legs = append(v.Legs, ce, pe)
+		for _, opt := range []string{"CE", "PE"} {
+			var best *LiveLeg
+			bestGap := 9.0
+			for _, k := range c.Strikes { // ascending: the lower strike wins a tie
+				if (opt == "CE" && k < atm) || (opt == "PE" && k > atm) || math.Abs(k-fut) > 1500 {
 					continue
 				}
-				if in, ok := c.byToken(p.Token); ok {
-					wants = append(wants, want{label: "DELTA " + deltaKey(d), in: in})
+				in, _ := c.leg(k, opt)
+				l := mk("DELTA "+deltaKey(d), in)
+				if l.Delta == 0 {
+					continue
 				}
+				if gap := round4(math.Abs(math.Abs(l.Delta) - d)); gap < bestGap {
+					bestGap, best = gap, &l
+				}
+			}
+			if best != nil {
+				v.Legs = append(v.Legs, *best)
 			}
 		}
 	}
@@ -275,48 +311,14 @@ func (s *Service) liveNow(ctx context.Context) *LiveView {
 		if legs[i].Qty <= 0 {
 			continue
 		}
-		l := legs[i]
-		wants = append(wants, want{label: "HELD", in: Instrument{GToken: l.GToken, Token: l.Token, Strike: l.Strike, Opt: l.Opt}, leg: &legs[i]})
-	}
-	g := []int64{c.Fut.GToken}
-	for _, w := range wants {
-		g = append(g, w.in.GToken)
-	}
-	q, spot, err := s.feed.quotes(ctx, g)
-	if err != nil {
-		s.setFeedErr(err.Error())
-		return nil
-	}
-	nowMs := time.Now().UnixMilli()
-	v := &LiveView{At: time.Now().In(ist()).Format("15:04:05"), Spot: spot, Fut: q[c.Fut.GToken].LTP, Realized: round2(realized), Priced: true}
-	if sc != nil {
-		v.ATM = sc.ATM
-		ce, pe := q[c.CE[sc.ATM].GToken].LTP, q[c.PE[sc.ATM].GToken].LTP
-		if ce > 0 && pe > 0 {
-			v.Straddle, v.Synth = round2(ce+pe), round2(sc.ATM+ce-pe)
-		}
-	}
-	f := v.Synth
-	t := c.ExpiryAt.Sub(time.Now()).Hours() / (365 * 24)
-	for _, w := range wants {
-		t0 := q[w.in.GToken]
-		l := LiveLeg{Label: w.label, Token: w.in.Token, Strike: w.in.Strike, Opt: w.in.Opt, LTP: t0.LTP, Bid: t0.Bid, Ask: t0.Ask}
-		if t0.AtMs > 0 {
-			l.AgeMs = nowMs - t0.AtMs
-		}
-		if f > 0 && t0.LTP > 0 {
-			if iv, ok := impliedVol(t0.LTP, f, w.in.Strike, t, w.in.Opt == "CE"); ok {
-				l.Delta = round4(delta76(f, w.in.Strike, t, iv, w.in.Opt == "CE"))
-			}
-		}
-		if w.leg != nil {
-			l.Qty, l.Avg = w.leg.Qty, round2(w.leg.Avg)
-			if t0.LTP > 0 {
-				l.PnL = round2((t0.LTP - w.leg.Avg) * float64(w.leg.Qty))
-				v.Unrealized += l.PnL
-			} else {
-				v.Priced = false
-			}
+		lg := legs[i]
+		l := mk("HELD", Instrument{GToken: lg.GToken, Token: lg.Token, Strike: lg.Strike, Opt: lg.Opt})
+		l.Qty, l.Avg = lg.Qty, round2(lg.Avg)
+		if l.LTP > 0 {
+			l.PnL = round2((l.LTP - lg.Avg) * float64(lg.Qty))
+			v.Unrealized += l.PnL
+		} else {
+			v.Priced = false
 		}
 		v.Legs = append(v.Legs, l)
 	}
