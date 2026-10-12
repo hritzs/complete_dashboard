@@ -3,13 +3,15 @@ package overnight
 // One endpoint for the Overnight tab.
 //
 //	GET  /api/overnight                     everything the page shows
-//	POST /api/overnight {"action": ...}     config | entry | exit | partial | roll | stop | refresh
+//	POST /api/overnight {"action": ...}     config | entry | exit | partial | roll | stop | refresh | delete
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -141,6 +143,7 @@ func (s *Service) Handler(w http.ResponseWriter, r *http.Request) {
 		Qty     int64   `json:"qty"`
 		Minutes int     `json:"minutes"`
 		At      string  `json:"at"`
+		ID      string  `json:"id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
 		reply(http.StatusBadRequest, map[string]string{"error": "bad JSON body"})
@@ -174,6 +177,8 @@ func (s *Service) Handler(w http.ResponseWriter, r *http.Request) {
 		}
 	case "stop":
 		err = s.Stop()
+	case "delete":
+		err = s.deletePosition(b.ID)
 	default:
 		err = fmt.Errorf("unknown action %q", b.Action)
 	}
@@ -210,5 +215,54 @@ func (s *Service) configure(delta float64, mode, confirm string) error {
 		}
 		s.st.Mode = mode
 	}
+	return s.st.save(s.dir)
+}
+
+// deletePosition removes one position, with its orders, from the tab so it
+// is not shown again. Allowed for a closed position and for an open PAPER
+// one; an open LIVE position is real quantity at the broker and has to be
+// exited first. What is removed is appended to deleted.jsonl in the data
+// directory, never lost.
+func (s *Service) deletePosition(id string) error {
+	id = strings.TrimSpace(id)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id == "" {
+		return fmt.Errorf("position id is required")
+	}
+	if s.activeJob() != nil {
+		return fmt.Errorf("a job is running -- stop it or let it finish first")
+	}
+	var gone *Position
+	if p := s.st.Position; p != nil && p.ID == id {
+		if p.Mode == ModeLive && p.qty() > 0 {
+			return fmt.Errorf("position %s is LIVE and still holds %d -- exit it first", id, p.qty())
+		}
+		gone, s.st.Position = p, nil
+	} else {
+		for i, h := range s.st.History {
+			if h.ID == id {
+				gone = h
+				s.st.History = append(s.st.History[:i:i], s.st.History[i+1:]...)
+				break
+			}
+		}
+	}
+	if gone == nil {
+		return fmt.Errorf("position %s not found", id)
+	}
+	var orders, keep []*OrderRec
+	for _, o := range s.st.Orders {
+		if o.UserTag == gone.userTag() {
+			orders = append(orders, o)
+		} else {
+			keep = append(keep, o)
+		}
+	}
+	s.st.Orders = keep
+	appendJSONL(filepath.Join(s.dir, "deleted.jsonl"), map[string]interface{}{
+		"deleted_at": time.Now().In(ist()).Format("2006-01-02 15:04:05"), "position": gone, "orders": orders})
+	s.liveView = nil
+	log.Printf("[OVERNIGHT] position %s (%s) removed from the tab with %d orders; copy kept in deleted.jsonl", gone.ID, gone.Mode, len(orders))
 	return s.st.save(s.dir)
 }

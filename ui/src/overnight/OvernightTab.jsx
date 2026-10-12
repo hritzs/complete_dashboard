@@ -169,6 +169,8 @@ export default function OvernightTab() {
     } else post({ action: 'config', mode: 'PAPER' });
   };
 
+  const del = (p) => window.confirm(`Remove position ${p.id} (${p.mode}) and its orders from the Overnight tab?\n\nIt will not be shown again. Nothing is sent to the broker; a copy is kept in deleted.jsonl.`)
+    && post({ action: 'delete', id: p.id });
   const liveLeg = (token) => (live() && live().legs ? live().legs.find((l) => l.token === token && l.label === 'HELD') : null);
   const liveRow = (label, opt) => (live() && live().legs ? live().legs.find((l) => l.label.startsWith(label) && l.opt === opt) : null);
 
@@ -405,7 +407,12 @@ export default function OvernightTab() {
       <div style={box}>
         <div style={head}>PnL — all strikes, current and previous</div>
         <Show when={pos()} fallback={<div style={muted}>No open position.</div>}>
-          <div style={{ ...muted, 'margin-bottom': '4px' }}>Open position {pos().id} · {pos().mode} · delta {n4(pos().delta)} · opened {pos().opened_at} · rolls {pos().rolls}</div>
+          <div style={{ ...muted, 'margin-bottom': '4px', ...row }}>
+            <span>Open position {pos().id} · {pos().mode} · delta {n4(pos().delta)} · opened {pos().opened_at} · rolls {pos().rolls}</span>
+            <Show when={pos().mode === 'PAPER' && !s().job}>
+              <button style={{ ...btn, 'border-color': '#b23b3b', padding: '2px 8px' }} disabled={busy()} onClick={() => del(pos())}>Delete</button>
+            </Show>
+          </div>
           <PositionPnL pos={pos()} liveLeg={liveLeg} />
         </Show>
         <For each={s().history || []}>{(h) => (
@@ -413,7 +420,10 @@ export default function OvernightTab() {
             <summary style={{ cursor: 'pointer', 'font-size': '13px' }}>
               Closed {h.id} · {h.mode} · {h.expiry} · delta {n4(h.delta)} · {h.opened_at} → {h.closed_at} · rolls {h.rolls} · <b style={pnlColor(h.realized)}>{money(h.realized)}</b>
             </summary>
-            <div style={{ 'margin-top': '6px' }}><PositionPnL pos={h} /></div>
+            <div style={{ 'margin-top': '6px' }}>
+              <PositionPnL pos={h} />
+              <button style={{ ...btn, 'border-color': '#b23b3b', 'margin-top': '6px' }} disabled={busy() || !!s().job} onClick={() => del(h)}>Delete this position from the tab</button>
+            </div>
           </details>
         )}</For>
       </div>

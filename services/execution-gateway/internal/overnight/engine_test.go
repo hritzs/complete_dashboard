@@ -305,6 +305,13 @@ func TestPaperEntryRollExit(t *testing.T) {
 	if j.Status != "DONE" || s.st.Position != nil || len(s.st.History) != 1 {
 		t.Fatalf("after exit: job %s position %+v history %d", j.Status, s.st.Position, len(s.st.History))
 	}
+	id := s.st.History[0].ID
+	if err := s.deletePosition(id); err != nil || len(s.st.History) != 0 || len(s.st.Orders) != 0 {
+		t.Fatalf("delete: %v history %d orders %d", err, len(s.st.History), len(s.st.Orders))
+	}
+	if b, _ := os.ReadFile(filepath.Join(s.dir, "deleted.jsonl")); !strings.Contains(string(b), id) {
+		t.Fatalf("deleted position not archived")
+	}
 }
 
 func TestLiveChunkWaitsModifiesAndTags(t *testing.T) {
