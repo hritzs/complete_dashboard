@@ -57,11 +57,35 @@ export default function MockTab() {
   const cancel = (o) => post({ action: 'cancel', broker_order_id: o.broker_order_id });
 
   let timer;
-  onMount(() => { load(); timer = setInterval(() => { if (!document.hidden && !busy()) load(); }, 2000); });
+  // Off: nothing is polled; the backend does no work until switched on.
+  const off = () => !st() || st().enabled === false;
+  const setEnabled = async (on) => {
+    setBusy(true);
+    setMsg('');
+    try {
+      await fetch('/api/mock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'enable', on }) });
+    } catch (e) { setMsg(String(e)); }
+    setBusy(false);
+    load();
+  };
+  onMount(() => { load(); timer = setInterval(() => { if (!document.hidden && !busy() && !off()) load(); }, 2000); });
   onCleanup(() => clearInterval(timer));
 
   return (
     <div class="lut-tab" style={{ padding: '4px 2px' }}>
+      <div style={{ ...box, display: 'flex', 'align-items': 'center', gap: '16px', 'flex-wrap': 'wrap' }}>
+        <strong>Mock session</strong>
+        <label style={{ display: 'flex', 'align-items': 'center', gap: '5px', cursor: 'pointer' }}>
+          <input type="radio" name="mock-enabled" checked={off()} disabled={busy()} onChange={() => setEnabled(false)} /> Off
+        </label>
+        <label style={{ display: 'flex', 'align-items': 'center', gap: '5px', cursor: 'pointer' }}>
+          <input type="radio" name="mock-enabled" checked={!off()} disabled={busy()} onChange={() => setEnabled(true)} /> On
+        </label>
+        <span style={muted}>{off()
+          ? 'Off: no instrument scan, no order book reads, no orders. Nothing runs until it is switched on.'
+          : 'On: scanning tradable instruments and reading the broker order book every 2 s.'}</span>
+      </div>
+      <Show when={!off()}>
       <div style={{ ...box, border: '2px solid #c98500', background: 'rgba(201,133,0,0.07)' }}>
         <div style={{ display: 'flex', 'align-items': 'center', gap: '14px', 'flex-wrap': 'wrap' }}>
           <strong style={{ 'font-size': '16px' }}>MOCK SESSION — single instrument</strong>
@@ -173,6 +197,7 @@ export default function MockTab() {
           </table>
         </Show>
       </div>
+      </Show>
     </div>
   );
 }

@@ -527,26 +527,67 @@ func (s *Service) mockRoundTrip(symbol, expiry string, token int64, qty int64) {
 //	POST /api/mock {"action":"cancel","broker_order_id":".."}
 //	POST /api/mock {"action":"roundtrip","token":..,"expiry":..,"lots":1,"confirm":"MOCK ORDER"}
 //
-// mockEnabled: the Mock tab works only with MOCK_TAB_ENABLED=1 (off by
-// default). Off, the handler answers {"enabled":false} and does nothing --
-// no instrument scan, no order book read, no orders -- and the UI hides
-// the tab.
+// The Mock tab is always shown but does NOTHING until it is switched on
+// from the tab itself (Off / On): off, the handler answers
+// {"enabled":false} without scanning instruments, reading the order book or
+// taking orders. The choice is kept in a small file so it survives a
+// restart; MOCK_TAB_ENABLED=1 only sets the starting value when that file
+// does not exist yet. Off by default.
+var mockOn struct {
+	mu     sync.Mutex
+	loaded bool
+	on     bool
+}
+
+func mockFlagFile() string { return filepath.Join(lutDataDir(), "mock_enabled") }
+
 func mockEnabled() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("MOCK_TAB_ENABLED")))
-	return v == "1" || v == "true" || v == "yes" || v == "on"
+	mockOn.mu.Lock()
+	defer mockOn.mu.Unlock()
+	if !mockOn.loaded {
+		mockOn.loaded = true
+		if b, err := os.ReadFile(mockFlagFile()); err == nil {
+			mockOn.on = strings.TrimSpace(string(b)) == "1"
+		} else {
+			v := strings.ToLower(strings.TrimSpace(os.Getenv("MOCK_TAB_ENABLED")))
+			mockOn.on = v == "1" || v == "true" || v == "yes" || v == "on"
+		}
+	}
+	return mockOn.on
+}
+
+func mockSetEnabled(on bool) {
+	mockOn.mu.Lock()
+	defer mockOn.mu.Unlock()
+	mockOn.loaded, mockOn.on = true, on
+	v := "0"
+	if on {
+		v = "1"
+	}
+	if err := os.MkdirAll(lutDataDir(), 0o755); err == nil {
+		_ = os.WriteFile(mockFlagFile(), []byte(v), 0o644)
+	}
+	log.Printf("[MOCK] tab switched %s", map[bool]string{true: "ON", false: "OFF"}[on])
 }
 
 func (h *Handlers) MockHandler(w http.ResponseWriter, r *http.Request) {
 	if !mockEnabled() {
-		code := http.StatusOK
-		if r.Method != http.MethodGet {
-			code = http.StatusForbidden
+		// Off: the only thing accepted is switching it on.
+		if r.Method == http.MethodPost {
+			var b struct {
+				Action string `json:"action"`
+				On     bool   `json:"on"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&b)
+			if strings.EqualFold(strings.TrimSpace(b.Action), "enable") && b.On {
+				mockSetEnabled(true)
+				lutJSON(w, http.StatusOK, map[string]interface{}{"enabled": true, "success": true})
+				return
+			}
+			lutJSON(w, http.StatusForbidden, map[string]interface{}{"enabled": false, "success": false, "error": "Mock tab is switched off"})
+			return
 		}
-		lutJSON(w, code, map[string]interface{}{"enabled": false, "success": false, "error": "Mock tab is switched off (set MOCK_TAB_ENABLED=1 and restart)"})
-		return
-	}
-	if r.URL.Query().Get("probe") != "" { // the UI asking whether to show the tab
-		lutJSON(w, http.StatusOK, map[string]interface{}{"enabled": true})
+		lutJSON(w, http.StatusOK, map[string]interface{}{"enabled": false, "success": true})
 		return
 	}
 	s := h.Service
@@ -609,9 +650,19 @@ func (h *Handlers) MockHandler(w http.ResponseWriter, r *http.Request) {
 		Price         float64 `json:"price"`
 		BrokerOrderID string  `json:"broker_order_id"`
 		Confirm       string  `json:"confirm"`
+		On            *bool   `json:"on"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
 		reply(http.StatusBadRequest, "bad body: "+err.Error(), nil)
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(b.Action), "enable") {
+		if b.On != nil && !*b.On {
+			mockSetEnabled(false)
+			lutJSON(w, http.StatusOK, map[string]interface{}{"enabled": false, "success": true})
+			return
+		}
+		reply(http.StatusOK, "", nil)
 		return
 	}
 	if sym := strings.ToUpper(strings.TrimSpace(b.Symbol)); sym != "" {
