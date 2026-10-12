@@ -16,11 +16,24 @@ import (
 // wingFollower remembers what one exit already sold of each wing type.
 type wingFollower struct {
 	soldCE, soldPE int64
+	checked, none  bool // the trade holds no wings at all: nothing to follow
 }
 
 // follow sells wings until they match the exit's net short reduction so
 // far (shortChangeCE / PE: cumulative, negative = the short shrank).
 func (w *wingFollower) follow(s *Service, executor Executor, tr StoredTrade, shortChangeCE, shortChangePE int64, reason string) {
+	if !w.checked {
+		// Looked up once per exit: a trade without wings costs no further
+		// lookups and prints no "asked but 0 held" warnings (SL exit of
+		// 2026-10-12 09:24).
+		w.checked = true
+		if h, err := s.loadWingHoldings(tr.TradeUID); err == nil && len(h) == 0 {
+			w.none = true
+		}
+	}
+	if w.none {
+		return
+	}
 	for _, side := range []struct {
 		opt    string
 		change int64
