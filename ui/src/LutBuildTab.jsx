@@ -295,9 +295,14 @@ export default function LutBuildTab() {
           return [`needs ${l.need >= 0 ? '+' : ''}${fmt(l.need)} (${sgn((l.need / l.straddle) * 100)})`, ''];
         };
         return (
-          <div style={{ ...box, border: '1px solid rgba(77,208,225,0.45)' }}>
-            <div class="section-title">Opening sell levels — 09:16 to 09:20{live()?.manual ? ' · what-if' : ''}</div>
-            <div style={muted}>
+          <details style={{ ...box, border: '1px solid rgba(77,208,225,0.45)' }}>
+            <summary style={{ cursor: 'pointer' }}>
+              <strong>Opening sell levels — 09:16 to 09:20</strong>{live()?.manual ? ' · what-if' : ''}
+              <span style={muted}>
+                {' '}· {rows().map((l) => `${l.time} ${(l.ranges || []).length ? `₹${fmt(l.sell_from)}${l.above ? '+' : `–${fmt(l.sell_to)}`}` : '—'}${l.done ? (l.allowed ? ' ✓' : ' ✗') : (l.in_zone ? ' ●' : '')}`).join(' · ')} · click for details
+              </span>
+            </summary>
+            <div style={{ ...muted, 'margin-top': '8px' }}>
               Basis: <strong>{first().basis}</strong> · future {fmt(first().future)} · ATM {fmt(first().strike, 0)} · ATM straddle {first().done ? 'then' : 'now'} ₹{fmt(first().straddle)}.
               Each minute has its own table, so the level differs minute to minute. Before the open these come from yesterday's close and move with the opening gap;
               from 09:15 they follow the live future, and from 09:16 the gap is fixed.
@@ -320,7 +325,7 @@ export default function LutBuildTab() {
                 </For>
               </tbody>
             </table>
-          </div>
+          </details>
         );
       })()}
     </Show>
