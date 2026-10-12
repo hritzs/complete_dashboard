@@ -149,6 +149,7 @@ func handlersWithExecutor(exec Executor) *Handlers {
 // max must be split at that max (NIFTY 1755 = 27 lots), never sent as
 // one oversized order the exchange would reject.
 func TestManualOrder_CapsLotsPerOrderAtLiveFreezeMax(t *testing.T) {
+	t.Setenv("GS_MAX_ORDER_VALUE", "0") // this test is about the freeze-quantity split only
 	exec := &recordingExecutor{}
 	h := handlersWithExecutor(exec)
 	_, out := postJSON(t, h.ManualOrder, ManualOrderRequest{

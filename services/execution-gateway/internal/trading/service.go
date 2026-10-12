@@ -171,7 +171,8 @@ func (s *Service) resolveMaxOrderQty(symbol string, lotSize int64) int64 {
 	qty, ok := s.freezeQtyBySymbol[NormalizeSymbol(symbol)]
 	s.freezeQtyMu.RUnlock()
 	if ok && qty > 0 {
-		return qty
+		// Also within the broker's single-order VALUE limit (order_value_cap.go).
+		return s.capByOrderValue(NormalizeSymbol(symbol), qty, lotSize)
 	}
 	if lotSize <= 0 {
 		lotSize = 1

@@ -182,6 +182,7 @@ var (
 // floor(1800/65)=27 lots=1755, tranche 2 gets the real remainder
 // 3445-1755=1690.
 func TestManualHedgeLots_SplitsAcrossMultipleTranchesWhenAboveFreezeLimit(t *testing.T) {
+	t.Setenv("GS_MAX_ORDER_VALUE", "0") // this test is about the freeze-quantity split only
 	tr := newTestSquareOffTrade("TRD_HEDGE_MULTITRANCHE")
 	tr.CEQty, tr.PEQty, tr.Lots = 4000, 4000, 53
 	store := NewMemoryStore()
