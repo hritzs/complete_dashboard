@@ -55,6 +55,14 @@ type PaperSimConfig struct {
 	MTMSqfLevel float64 `json:"mtm_sqf_level,omitempty"`
 	MTMSqfUnit  string  `json:"mtm_sqf_unit,omitempty"`
 	MTMSqfPct   float64 `json:"mtm_sqf_pct,omitempty"`
+
+	// A sim of a REAL trade ends when the real trade ended, with its
+	// reason (SL / TP / TIME / ...): the paper hedges can differ from what
+	// the broker really filled (2026-10-12: the real 09:23 hedge was
+	// rejected, the paper one was not, and the sim never reached its SL
+	// although the real trade was stopped out at 09:24).
+	ActualExit   string `json:"actual_exit,omitempty"`   // HH:MM the real trade went flat
+	ActualReason string `json:"actual_reason,omitempty"` // SL / TP / TIME / MTM / STRADDLE / PORTFOLIO / SQF
 }
 
 type PaperSimLeg struct {
@@ -590,6 +598,7 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 	res := PaperSimResult{Config: c, Status: "NO DATA"}
 	entry := lutHHMM(c.Entry)
 	exitAt := lutHHMM(c.ExitTime)
+	actualAt := lutHHMM(c.ActualExit)
 	i0 := -1
 	for i, m := range mins {
 		if m.HHMM >= entry && m.Future > 0 {
@@ -724,6 +733,11 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 		} else if exitAt > 0 && m.HHMM >= exitAt {
 			exit = "TIME"
 		}
+		actualNote := ""
+		if actualAt > 0 && m.HHMM >= actualAt && c.ActualReason != "" && exit != c.ActualReason {
+			// The real trade was closed this minute: the sim follows it.
+			exit, actualNote = c.ActualReason, fmt.Sprintf(" (the real trade closed at %s: %s)", c.ActualExit, c.ActualReason)
+		}
 		if c.MTMSqfOn {
 			pt.ExecPnL, _ = book.execMTM(m)
 		}
@@ -802,7 +816,7 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 			book.fillFut(-book.futQty, m.Future)
 			fin := book.value(m, q)
 			posMarks(m, &fin)
-			fin.Event = strings.TrimSpace(pt.Event + " EXIT " + exit)
+			fin.Event = strings.TrimSpace(pt.Event + " EXIT " + exit + actualNote)
 			fin.HedgeCheck = "EXITED"
 			res.Series = append(res.Series, fin)
 			res.Status, res.ExitTime, res.ExitReason = "EXITED", m.Time, exit
@@ -927,6 +941,29 @@ type PaperActual struct {
 	Hedges      []OrderExecution `json:"hedges"`
 	Exits       []OrderExecution `json:"exits"`
 	SimID       string           `json:"sim_id"`
+	ExitTime    string           `json:"exit_time,omitempty"`   // HH:MM of the last exit fill (closed trades)
+	ExitReason  string           `json:"exit_reason,omitempty"` // from the closed status
+}
+
+// paperActualReason maps a closed trade status to the sim's exit reason.
+func paperActualReason(status string) string {
+	switch status {
+	case "CLOSED_SL":
+		return "SL"
+	case "CLOSED_TP":
+		return "TP"
+	case "CLOSED_TIME":
+		return "TIME"
+	case "CLOSED_MTM":
+		return "MTM"
+	case "CLOSED_STRADDLE":
+		return "STRADDLE"
+	case "CLOSED_PORTFOLIO":
+		return "PORTFOLIO"
+	case "CLOSEDSQF", "CLOSED_SQF", "CLOSED_MANUAL", "CLOSED":
+		return "SQF"
+	}
+	return ""
 }
 
 func (s *Service) paperActuals(ctx context.Context, day string) []PaperActual {
@@ -982,6 +1019,15 @@ func (s *Service) paperActuals(ctx context.Context, day string) []PaperActual {
 			a.PEEntry = peV / float64(peQ)
 		}
 		a.Qty = ceQ
+		if r := paperActualReason(t.Status); r != "" && len(a.Exits) > 0 {
+			last := a.Exits[0].Time
+			for _, e := range a.Exits {
+				if e.Time.After(last) {
+					last = e.Time
+				}
+			}
+			a.ExitTime, a.ExitReason = last.In(lutIST()).Format("15:04"), r
+		}
 		out = append(out, a)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].EntryTime < out[j].EntryTime })
@@ -1066,7 +1112,8 @@ func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 		if lotSize > 0 && actual[i].Qty > 0 {
 			l = int(actual[i].Qty / lotSize)
 		}
-		cfgs = append(cfgs, PaperSimConfig{ID: id, Source: "actual trade " + actual[i].TradeUID, Entry: actual[i].EntryTime, Lots: l, Hedge: hedge, HedgeMode: hedgeMode})
+		cfgs = append(cfgs, PaperSimConfig{ID: id, Source: "actual trade " + actual[i].TradeUID, Entry: actual[i].EntryTime, Lots: l, Hedge: hedge, HedgeMode: hedgeMode,
+			ActualExit: actual[i].ExitTime, ActualReason: actual[i].ExitReason})
 	}
 	var live *simMinute
 	if day == sbToday() && h.Service.Snapshot != nil {
