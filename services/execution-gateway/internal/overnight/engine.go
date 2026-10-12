@@ -11,8 +11,8 @@ package overnight
 //   - a rejection, or Stop, cancels what is still pending and ends the job
 //     with the position exactly as filled so far.
 //
-// Entry and exit can be spread over a number of minutes (1000 in 10 min =
-// 100 a minute, in six steps inside each minute); with no time given, and
+// Entry and exit can be spread over a number of minutes, ending on the
+// clock minute (see the paced block in runJob); with no time given, and
 // always for partial exit and roll, each chunk is the largest order the
 // broker takes.
 //
@@ -32,8 +32,11 @@ import (
 // sessionOpen gates LIVE orders (a variable so tests can run at any hour).
 var sessionOpen = inSession
 
-// stepGap: a paced entry / exit takes six steps a minute.
-var stepGap = time.Minute / 6
+// Pacing of a timed entry / exit (variables so tests need not wait).
+var (
+	paceMinute = time.Minute     // the clock unit the end time is aligned to
+	minStepGap = 5 * time.Second // closest two steps may be
+)
 
 type JobReq struct {
 	Kind    string  `json:"kind"`
@@ -451,40 +454,53 @@ func (s *Service) runJob(ctx context.Context, j *Job, at time.Time) error {
 		return err
 	}
 
-	// ---- entry / exit paced over the minutes asked for: six steps a
-	// minute; after step k every leg stands at round(its quantity x k / steps).
+	// ---- entry / exit paced over the minutes asked for.
+	//
+	// The job ends ON the clock: pressed at 13:05:20 with 5 minutes, the
+	// last slice goes out before 13:10:00, not 13:10:20. The time left is
+	// cut into equal steps (at least minStepGap apart, never more steps
+	// than lots); after step k every leg should stand at
+	// round(its lots x k / steps). A step sends "what should be done by now
+	// minus what IS done", so anything a step left unfilled is simply part
+	// of the next one. Only the last step waits (and re-prices) until full.
 	if (j.Kind == "ENTRY" || j.Kind == "EXIT") && j.Minutes > 0 {
-		const perMinute = 6
-		steps := int64(j.Minutes * perMinute)
 		start := time.Now()
+		end := start.Truncate(paceMinute).Add(time.Duration(j.Minutes) * paceMinute)
+		maxLots := int64(0)
+		for _, pl := range plan {
+			if n := pl.Target / lot; n > maxLots {
+				maxLots = n
+			}
+		}
+		steps := paceSteps(end.Sub(start), maxLots)
+		gap := end.Sub(start) / time.Duration(steps)
+		s.mu.Lock()
+		j.logf("paced until %s: %d steps, one every %s", end.In(ist()).Format("15:04:05"), steps, gap.Round(100*time.Millisecond))
+		s.mu.Unlock()
 		for k := int64(1); k <= steps; k++ {
-			want := map[*PlanLeg]int64{}
-			any := false
-			for _, pl := range plan {
-				goal := int64(math.Round(float64(pl.Target/lot)*float64(k)/float64(steps))) * lot
-				if goal > pl.Done {
-					want[pl], any = goal-pl.Done, true
-				}
-			}
-			if !any {
-				continue
-			}
-			if !sleepCtx(ctx, time.Until(start.Add(time.Duration(k-1)*stepGap))) {
+			if !sleepCtx(ctx, time.Until(start.Add(time.Duration(k-1)*gap))) {
 				return fmt.Errorf("stopped by user")
 			}
-			for any { // a step above the broker's order size goes in several chunks
+			until := start.Add(time.Duration(k) * gap) // this step's orders live until the next step
+			if k == steps {
+				until = time.Time{} // the last one is completed
+			}
+			for {
 				var parts []part
 				for _, pl := range plan {
-					if q := min64(want[pl], maxQ); q > 0 {
+					goal := int64(math.Round(float64(pl.Target/lot)*float64(k)/float64(steps))) * lot
+					if q := min64(goal-pl.Done, maxQ); q > 0 {
 						parts = append(parts, part{pl, ins[pl.Token], q})
-						want[pl] -= q
 					}
 				}
-				if any = len(parts) > 0; !any {
+				if len(parts) == 0 {
 					break
 				}
-				if err := s.runChunk(ctx, j, parts, lot); err != nil {
+				if err := s.runChunk(ctx, j, parts, lot, until); err != nil {
 					return err
+				}
+				if !until.IsZero() && !time.Now().Before(until) {
+					break // out of time for this step: the rest rides with the next
 				}
 			}
 		}
@@ -502,10 +518,23 @@ func (s *Service) runJob(ctx context.Context, j *Job, at time.Time) error {
 		if len(parts) == 0 {
 			return nil
 		}
-		if err := s.runChunk(ctx, j, parts, lot); err != nil {
+		if err := s.runChunk(ctx, j, parts, lot, time.Time{}); err != nil {
 			return err
 		}
 	}
+}
+
+// paceSteps: how many equal steps fit the time left -- at least
+// minStepGap apart, at most one per lot, at least one.
+func paceSteps(left time.Duration, lots int64) int64 {
+	n := int64(left / minStepGap)
+	if n > lots {
+		n = lots
+	}
+	if n < 1 {
+		n = 1
+	}
+	return n
 }
 
 func min64(a, b int64) int64 {
@@ -546,8 +575,11 @@ func (s *Service) price(ctx context.Context, in Instrument, side string) (float6
 
 func terminal(st string) bool { return st == "FILLED" || st == "REJECTED" || st == "CANCELLED" }
 
-// runChunk sends one order per part and returns when all are filled.
-func (s *Service) runChunk(ctx context.Context, j *Job, parts []part, lot int64) error {
+// runChunk sends one order per part and returns when all are filled. With
+// a non-zero until, orders still open at that time are cancelled and the
+// chunk returns without error: what they did not fill is left for the
+// caller's next step.
+func (s *Service) runChunk(ctx context.Context, j *Job, parts []part, lot int64, until time.Time) error {
 	br := Broker(s.paper)
 	if j.Mode == ModeLive {
 		br = s.live
@@ -603,7 +635,7 @@ func (s *Service) runChunk(ctx context.Context, j *Job, parts []part, lot int64)
 	_ = s.st.save(s.dir)
 	s.mu.Unlock()
 
-	cancelled := false
+	cancelled, carry := false, false
 	var cancelAt time.Time
 	lastReprice := time.Now()
 	for {
@@ -650,7 +682,7 @@ func (s *Service) runChunk(ctx context.Context, j *Job, parts []part, lot int64)
 					abort = fmt.Errorf("%s %d x %.0f %s rejected by the broker: %s", rec.Side, rec.Qty, rec.Strike, rec.Opt, o.Reason)
 				}
 			}
-			if o.Status == "CANCELLED" && rec.Filled < rec.Qty && abort == nil && ctx.Err() == nil {
+			if o.Status == "CANCELLED" && rec.Filled < rec.Qty && abort == nil && ctx.Err() == nil && !carry {
 				abort = fmt.Errorf("%s %.0f %s was cancelled outside the module with %d of %d filled", rec.Side, rec.Strike, rec.Opt, rec.Filled, rec.Qty)
 			}
 			if !terminal(o.Status) {
@@ -663,7 +695,10 @@ func (s *Service) runChunk(ctx context.Context, j *Job, parts []part, lot int64)
 			break
 		}
 
-		if (abort != nil || ctx.Err() != nil) && !cancelled {
+		if abort == nil && ctx.Err() == nil && !cancelled && !until.IsZero() && !time.Now().Before(until) {
+			carry = true // the step's time is up: the unfilled rest goes with the next step
+		}
+		if (abort != nil || ctx.Err() != nil || carry) && !cancelled {
 			cancelled, cancelAt = true, time.Now()
 			for _, rec := range recs {
 				if rec.OrderID != "" && !terminal(rec.Status) {
@@ -717,6 +752,12 @@ func (s *Service) runChunk(ctx context.Context, j *Job, parts []part, lot int64)
 	}
 	if ctx.Err() != nil {
 		return fmt.Errorf("stopped by user; chunk %d ended with:%s", j.Chunk, short)
+	}
+	if carry {
+		if short != "" {
+			j.logf("chunk %d: step time over, carried to the next step:%s", j.Chunk, short)
+		}
+		return nil
 	}
 	if short != "" {
 		return fmt.Errorf("chunk %d not complete:%s", j.Chunk, short)

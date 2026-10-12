@@ -30,6 +30,7 @@ type fakeMarket struct {
 	placed   []PlaceReq
 	reject   string // option type whose orders the broker rejects
 	held     map[int64]int64
+	slow     int // extra polls before a fill
 }
 
 func (m *fakeMarket) px(tok int64) float64 {
@@ -71,7 +72,7 @@ func (m *fakeMarket) Place(_ context.Context, r PlaceReq) (string, error) {
 		o.Status, o.Reason = "REJECTED", "RMS Rejected test"
 	}
 	m.orders[id] = o
-	m.needPoll[id] = 2
+	m.needPoll[id] = 2 + m.slow
 	m.placed = append(m.placed, r)
 	return id, nil
 }
@@ -354,8 +355,8 @@ func TestLiveChunkWaitsModifiesAndTags(t *testing.T) {
 	m.mu.Unlock()
 
 	// Exit spread over time: 1 minute = 6 steps, both legs each step.
-	stepGap = 5 * time.Millisecond
-	defer func() { stepGap = time.Minute / 6 }()
+	paceMinute, minStepGap = 3*time.Second, 400*time.Millisecond
+	defer func() { paceMinute, minStepGap = time.Minute, 5*time.Second }()
 	if _, err := s.Submit(JobReq{Kind: "partial", Qty: 65}); err != nil {
 		t.Fatal(err)
 	}
@@ -427,4 +428,57 @@ type staleBroker struct {
 func (b *staleBroker) MinuteCloses(context.Context, int64, string) (map[int64]float64, error) {
 	b.calls++
 	return map[int64]float64{time.Now().Add(-3 * time.Hour).Unix(): 340.95}, nil
+}
+
+// Pressed at :20 past with 5 minutes: 280 s are left, so 56 steps of 5 s;
+// never more steps than lots.
+func TestPaceSteps(t *testing.T) {
+	if n := paceSteps(280*time.Second, 1000); n != 56 {
+		t.Fatalf("steps = %d, want 56", n)
+	}
+	if n := paceSteps(280*time.Second, 10); n != 10 {
+		t.Fatalf("steps = %d, want 10 (one per lot)", n)
+	}
+	if n := paceSteps(2*time.Second, 10); n != 1 {
+		t.Fatalf("steps = %d, want 1", n)
+	}
+}
+
+// A slow market: a step's orders are cancelled when its time is up and the
+// unfilled quantity is sent again with the next step; the total still ends
+// exact.
+func TestPacedEntryCarriesUnfilled(t *testing.T) {
+	s, m := newTestService(t)
+	if err := s.configure(0, ModeLive, "LIVE"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.minuteEnd(time.Now().In(ist()).Truncate(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	paceMinute, minStepGap = 4*time.Second, time.Second
+	defer func() { paceMinute, minStepGap = time.Minute, 5*time.Second }()
+	m.mu.Lock()
+	m.slow = 2 // a fill takes ~2.4 s, a step lasts ~1 s
+	m.mu.Unlock()
+	time.Sleep(time.Until(time.Now().Truncate(paceMinute).Add(paceMinute))) // start on the "minute": all 4 steps
+	if _, err := s.Submit(JobReq{Kind: "entry", Delta: 0.25, Qty: 1300, Minutes: 1}); err != nil {
+		t.Fatal(err)
+	}
+	j := waitJob(t, s)
+	p := s.st.Position
+	if j.Status != "DONE" || p == nil || p.Legs[0].Qty != 1300 || p.Legs[1].Qty != 1300 {
+		t.Fatalf("job %s %s legs %+v log %v", j.Status, j.Note, p, j.Log)
+	}
+	carried := 0
+	for _, o := range s.st.Orders {
+		if o.Status == "CANCELLED" {
+			carried++
+		}
+	}
+	if carried == 0 {
+		t.Fatalf("no step was carried over: %v", j.Log)
+	}
+	if a := p.Acts; len(a) != 2 || a[0].Bought != 1300 || a[1].Bought != 1300 {
+		t.Fatalf("day activity: %+v", a)
+	}
 }

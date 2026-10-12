@@ -27,6 +27,92 @@ const srcMark = (s) => (s === 'ws' ? ' ᵗ' : s === 'old' ? ' ⚠' : '');
 const srcText = (s) => (s === 'ws' ? 'candle not fresh: GreekSoft websocket tick used' : s === 'old' ? 'stale candle, no live tick' : 'GreekSoft 1-minute candle close');
 const badge = (s) => ({ background: STATUS_BG[s] || '#546e7a', color: '#fff', padding: '1px 7px', 'border-radius': '10px', 'font-size': '11px' });
 
+const avg = (value, qty) => (qty > 0 ? value / qty : 0);
+
+// PnL of one position, end to end: every strike it ever held (current and
+// the ones rolled out of or exited), then what was executed day by day.
+function PositionPnL(props) {
+  const p = () => props.pos;
+  const unreal = (l) => (props.liveLeg && l.qty > 0 ? props.liveLeg(l.token)?.pnl ?? null : l.qty > 0 ? null : 0);
+  const totals = () => {
+    let realized = 0, u = 0, known = true;
+    for (const l of p().legs || []) {
+      realized += l.realized || 0;
+      const x = unreal(l);
+      if (x == null) known = false; else u += x;
+    }
+    return { realized, unrealized: known ? u : null, total: known ? realized + u : null };
+  };
+  return (
+    <div>
+      <table style={{ width: '100%', 'border-collapse': 'collapse' }}>
+        <thead><tr>
+          <th style={{ ...th, ...left }}>Strike</th><th style={{ ...th, ...left }}>State</th><th style={th}>Bought</th><th style={th}>Avg buy</th>
+          <th style={th}>Sold</th><th style={th}>Avg sell</th><th style={th}>Held</th><th style={th}>Realized</th><th style={th}>Unrealized</th><th style={th}>Total</th>
+        </tr></thead>
+        <tbody>
+          <For each={p().legs || []}>{(l) => (
+            <tr style={{ opacity: l.qty > 0 ? 1 : 0.75 }}>
+              <td style={{ ...td, ...left }}>{l.strike} {l.opt}</td>
+              <td style={{ ...td, ...left }}>{l.qty > 0 ? 'held' : 'previous (closed)'}</td>
+              <td style={td}>{l.bought}</td><td style={td}>{n2(avg(l.buy_value, l.bought))}</td>
+              <td style={td}>{l.sold}</td><td style={td}>{n2(avg(l.sell_value, l.sold))}</td>
+              <td style={td}>{l.qty}</td>
+              <td style={{ ...td, ...pnlColor(l.realized) }}>{money(l.realized)}</td>
+              <td style={{ ...td, ...pnlColor(unreal(l)) }}>{l.qty > 0 ? money(unreal(l)) : '—'}</td>
+              <td style={{ ...td, ...pnlColor(unreal(l) == null ? 0 : l.realized + unreal(l)) }}>{unreal(l) == null ? '—' : money(l.realized + unreal(l))}</td>
+            </tr>
+          )}</For>
+          <tr style={{ 'border-top': '1px solid rgba(255,255,255,0.2)', 'font-weight': 600 }}>
+            <td style={{ ...td, ...left }} colSpan={7}>Total — all strikes</td>
+            <td style={{ ...td, ...pnlColor(totals().realized) }}>{money(totals().realized)}</td>
+            <td style={{ ...td, ...pnlColor(totals().unrealized) }}>{money(totals().unrealized)}</td>
+            <td style={{ ...td, ...pnlColor(totals().total) }}>{money(totals().total)}</td>
+          </tr>
+        </tbody>
+      </table>
+      <Show when={(p().acts || []).length}>
+        <div style={{ ...muted, 'margin-top': '10px' }}>Executed each day (Sold = quantity actually squared off that day, by exit, partial exit or roll)</div>
+        <table style={{ 'border-collapse': 'collapse' }}>
+          <thead><tr>
+            <th style={{ ...th, ...left }}>Day</th><th style={{ ...th, ...left }}>Strike</th><th style={th}>Bought</th><th style={th}>Avg buy</th>
+            <th style={th}>Sold</th><th style={th}>Avg sell</th><th style={th}>Realized that day</th>
+          </tr></thead>
+          <tbody>
+            <For each={p().acts}>{(a) => (
+              <tr>
+                <td style={{ ...td, ...left }}>{a.day}</td><td style={{ ...td, ...left }}>{a.strike} {a.opt}</td>
+                <td style={td}>{a.bought || '—'}</td><td style={td}>{n2(avg(a.buy_value, a.bought))}</td>
+                <td style={td}>{a.sold || '—'}</td><td style={td}>{n2(avg(a.sell_value, a.sold))}</td>
+                <td style={{ ...td, ...pnlColor(a.realized) }}>{a.sold ? money(a.realized) : '—'}</td>
+              </tr>
+            )}</For>
+          </tbody>
+        </table>
+      </Show>
+      <Show when={(p().days || []).length}>
+        <div style={{ ...muted, 'margin-top': '10px' }}>Day-end marks (a day's PnL is measured from the previous trading day held, so holidays and weekends are skipped)</div>
+        <table style={{ 'border-collapse': 'collapse' }}>
+          <thead><tr>
+            <th style={{ ...th, ...left }}>Day</th><th style={th}>Marked at</th><th style={th}>Qty held</th><th style={th}>Future</th>
+            <th style={{ ...th, ...left }}>Closes</th><th style={th}>Day PnL</th><th style={th}>Total PnL</th>
+          </tr></thead>
+          <tbody>
+            <For each={[...p().days].reverse()}>{(d) => (
+              <tr>
+                <td style={{ ...td, ...left }}>{d.day}</td><td style={td}>{d.minute}</td><td style={td}>{d.qty}</td><td style={td}>{n2(d.fut)}</td>
+                <td style={{ ...td, ...left }}>{Object.entries(d.closes || {}).map(([k, v]) => `${k} ${Number(v).toFixed(2)}`).join(' · ')}</td>
+                <td style={{ ...td, ...pnlColor(d.day_pnl) }}>{money(d.day_pnl)}</td>
+                <td style={{ ...td, ...pnlColor(d.cum) }}>{money(d.cum)}</td>
+              </tr>
+            )}</For>
+          </tbody>
+        </table>
+      </Show>
+    </div>
+  );
+}
+
 export default function OvernightTab() {
   const [st, setSt] = createSignal(null);
   const [msg, setMsg] = createSignal('');
@@ -184,25 +270,6 @@ export default function OvernightTab() {
             <span>Unrealized <b style={pnlColor(live()?.unrealized)}>{money(live()?.unrealized)}</b></span>
             <Show when={live() && !live().priced}><span style={{ color: '#c98500' }}>a held strike has no live tick yet</span></Show>
           </div>
-          <Show when={pos().days && pos().days.length}>
-            <div style={{ ...muted, 'margin-top': '10px' }}>Day by day (minute-end closes; a day's PnL is measured from the previous trading day held, so holidays and weekends are skipped)</div>
-            <table style={{ 'border-collapse': 'collapse' }}>
-              <thead><tr>
-                <th style={{ ...th, ...left }}>Day</th><th style={th}>Marked at</th><th style={th}>Qty</th><th style={th}>Future</th>
-                <th style={{ ...th, ...left }}>Closes</th><th style={th}>Day PnL</th><th style={th}>Total PnL</th>
-              </tr></thead>
-              <tbody>
-                <For each={[...pos().days].reverse()}>{(d) => (
-                  <tr>
-                    <td style={{ ...td, ...left }}>{d.day}</td><td style={td}>{d.minute}</td><td style={td}>{d.qty}</td><td style={td}>{n2(d.fut)}</td>
-                    <td style={{ ...td, ...left }}>{Object.entries(d.closes || {}).map(([k, v]) => `${k} ${Number(v).toFixed(2)}`).join(' · ')}</td>
-                    <td style={{ ...td, ...pnlColor(d.day_pnl) }}>{money(d.day_pnl)}</td>
-                    <td style={{ ...td, ...pnlColor(d.cum) }}>{money(d.cum)}</td>
-                  </tr>
-                )}</For>
-              </tbody>
-            </table>
-          </Show>
         </Show>
 
         <div style={{ 'margin-top': '10px' }}>
@@ -271,7 +338,7 @@ export default function OvernightTab() {
           <Show when={whole(qty()) > 0}>
             Buys {whole(qty())} of each leg{parseInt(qty() || '0', 10) !== whole(qty()) ? ` (rounded down to whole lots of ${lot()})` : ''}
             {(parseInt(minutes() || '0', 10) || 0) > 0
-              ? ` — about ${Math.round(whole(qty()) / (parseInt(minutes(), 10) || 1))} a minute for ${minutes()} minutes, spread inside each minute.`
+              ? ` — in equal slices of whole lots, finishing on the clock minute (pressed at 13:05:20 with 5 minutes it is done by 13:10:00). Anything a slice leaves unfilled goes with the next slice.`
               : ' — as fast as it fills, the largest order size per chunk.'}{' '}
           </Show>
           <Show when={pos()} fallback={<>Strikes are fixed from the last finished minute's closes when the build starts: CE {picks()?.ce?.strike || '—'}, PE {picks()?.pe?.strike || '—'} as of {last()?.minute || '—'}.</>}>
@@ -295,7 +362,7 @@ export default function OvernightTab() {
         </div>
         <div style={{ ...muted, 'margin-top': '6px' }}>
           {(parseInt(exitMinutes() || '0', 10) || 0) > 0
-            ? `Sells both legs evenly over ${exitMinutes()} minutes (six steps a minute), each step only after the one before is filled.`
+            ? `Sells both legs in equal slices of whole lots, finishing on the clock minute ${exitMinutes()} minute(s) ahead. Anything a slice leaves unfilled goes with the next slice.`
             : 'Both legs together, the largest order size per chunk; the next chunk only after both are filled.'}
         </div>
       </div>
@@ -334,9 +401,30 @@ export default function OvernightTab() {
         </div>
       </div>
 
-      {/* ───────── orders ───────── */}
+      {/* ───────── PnL ───────── */}
       <div style={box}>
-        <div style={head}>Orders sent by this tab <span style={muted}>(tag is unique per order, userTag is one per position — both go to the broker)</span></div>
+        <div style={head}>PnL — all strikes, current and previous</div>
+        <Show when={pos()} fallback={<div style={muted}>No open position.</div>}>
+          <div style={{ ...muted, 'margin-bottom': '4px' }}>Open position {pos().id} · {pos().mode} · delta {n4(pos().delta)} · opened {pos().opened_at} · rolls {pos().rolls}</div>
+          <PositionPnL pos={pos()} liveLeg={liveLeg} />
+        </Show>
+        <For each={s().history || []}>{(h) => (
+          <details style={{ 'margin-top': '8px' }}>
+            <summary style={{ cursor: 'pointer', 'font-size': '13px' }}>
+              Closed {h.id} · {h.mode} · {h.expiry} · delta {n4(h.delta)} · {h.opened_at} → {h.closed_at} · rolls {h.rolls} · <b style={pnlColor(h.realized)}>{money(h.realized)}</b>
+            </summary>
+            <div style={{ 'margin-top': '6px' }}><PositionPnL pos={h} /></div>
+          </details>
+        )}</For>
+      </div>
+
+      {/* ───────── orders (dropdown) ───────── */}
+      <div style={box}>
+        <details>
+          <summary style={{ cursor: 'pointer', 'font-weight': 600 }}>
+            Orders sent by this tab ({(s().orders || []).length}) <span style={muted}>— click to open; the broker stores "tag" (in its userTag column)</span>
+          </summary>
+          <div style={{ 'margin-top': '8px' }}>
         <Show when={(s().orders || []).length} fallback={<div style={muted}>None yet.</div>}>
           <table style={{ width: '100%', 'border-collapse': 'collapse' }}>
             <thead><tr>
@@ -356,6 +444,8 @@ export default function OvernightTab() {
             </tbody>
           </table>
         </Show>
+          </div>
+        </details>
       </div>
 
       {/* ───────── jobs ───────── */}
@@ -371,14 +461,6 @@ export default function OvernightTab() {
         )}</For>
       </div>
 
-      <Show when={(s().history || []).length}>
-        <div style={box}>
-          <div style={head}>Closed positions</div>
-          <For each={s().history}>{(h) => (
-            <div style={{ 'font-size': '13px' }}>{h.id} · {h.mode} · {h.expiry} · delta {n4(h.delta)} · {h.opened_at} → {h.closed_at} · rolls {h.rolls} · days {h.days} · <b style={pnlColor(h.realized)}>{money(h.realized)}</b></div>
-          )}</For>
-        </div>
-      </Show>
       <div style={muted}>State and minute-end files: {s().data_dir}</div>
     </div>
   );

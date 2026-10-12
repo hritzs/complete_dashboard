@@ -54,25 +54,7 @@ func (s *Service) view(ctx context.Context) map[string]interface{} {
 		out["rows"] = rows
 	}
 	if p := s.st.Position; p != nil {
-		legs := make([]legView, 0, len(p.Legs))
-		for _, l := range p.Legs {
-			lv := legView{Leg: *l}
-			if p.Mode == ModeLive && s.brokerPos != nil {
-				q := s.brokerPos[l.Token]
-				lv.BrokerQty = &q
-			}
-			legs = append(legs, lv)
-		}
-		days := make([]dayRow, 0, len(p.Days))
-		prev := 0.0
-		for _, m := range p.Days {
-			days = append(days, dayRow{DayMark: *m, DayPnL: round2(m.Cum - prev)})
-			prev = m.Cum
-		}
-		out["position"] = map[string]interface{}{
-			"id": p.ID, "mode": p.Mode, "expiry": p.Expiry, "delta": p.Delta, "lot_size": p.LotSize, "opened_at": p.OpenedAt,
-			"rolls": p.Rolls, "user_tag": p.userTag(), "legs": legs, "days": days, "realized": round2(p.realized()), "qty": p.qty(),
-		}
+		out["position"] = s.positionView(p, true)
 	}
 	if a := s.activeJob(); a != nil {
 		out["job"] = a
@@ -91,12 +73,39 @@ func (s *Service) view(ctx context.Context) map[string]interface{} {
 	out["orders"] = orders
 	hist := make([]map[string]interface{}, 0, len(s.st.History))
 	for i := len(s.st.History) - 1; i >= 0 && len(hist) < 20; i-- {
-		h := s.st.History[i]
-		hist = append(hist, map[string]interface{}{"id": h.ID, "mode": h.Mode, "expiry": h.Expiry, "delta": h.Delta,
-			"opened_at": h.OpenedAt, "closed_at": h.ClosedAt, "rolls": h.Rolls, "realized": round2(h.realized()), "days": len(h.Days)})
+		hist = append(hist, s.positionView(s.st.History[i], false))
 	}
 	out["history"] = hist
 	return out
+}
+
+// positionView is one position for the page: every strike it ever held
+// (current and previous), the day marks and what was executed each day.
+// Caller holds s.mu.
+func (s *Service) positionView(p *Position, open bool) map[string]interface{} {
+	legs := make([]legView, 0, len(p.Legs))
+	for _, l := range p.Legs {
+		lv := legView{Leg: *l}
+		if open && p.Mode == ModeLive && s.brokerPos != nil {
+			q := s.brokerPos[l.Token]
+			lv.BrokerQty = &q
+		}
+		legs = append(legs, lv)
+	}
+	days := make([]dayRow, 0, len(p.Days))
+	prev := 0.0
+	for _, m := range p.Days {
+		days = append(days, dayRow{DayMark: *m, DayPnL: round2(m.Cum - prev)})
+		prev = m.Cum
+	}
+	acts := make([]*DayAct, 0, len(p.Acts))
+	for i := len(p.Acts) - 1; i >= 0; i-- {
+		acts = append(acts, p.Acts[i])
+	}
+	return map[string]interface{}{
+		"id": p.ID, "mode": p.Mode, "expiry": p.Expiry, "delta": p.Delta, "lot_size": p.LotSize, "opened_at": p.OpenedAt, "closed_at": p.ClosedAt,
+		"rolls": p.Rolls, "user_tag": p.userTag(), "legs": legs, "days": days, "acts": acts, "realized": round2(p.realized()), "qty": p.qty(),
+	}
 }
 
 func max64(a, b int64) int64 {

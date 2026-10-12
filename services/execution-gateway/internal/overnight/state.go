@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
@@ -26,6 +27,23 @@ type Leg struct {
 	Realized float64 `json:"realized"` // booked on what was sold
 	Bought   int64   `json:"bought"`
 	Sold     int64   `json:"sold"`
+	// Totals since the leg was first bought (average buy / sell = value / qty).
+	BuyValue  float64 `json:"buy_value"`
+	SellValue float64 `json:"sell_value"`
+}
+
+// DayAct is what was actually executed on one strike on one day: bought,
+// sold (squared off) and the PnL booked by those sales.
+type DayAct struct {
+	Day       string  `json:"day"`
+	Token     int64   `json:"token"`
+	Strike    float64 `json:"strike"`
+	Opt       string  `json:"opt"`
+	Bought    int64   `json:"bought"`
+	Sold      int64   `json:"sold"`
+	BuyValue  float64 `json:"buy_value"`
+	SellValue float64 `json:"sell_value"`
+	Realized  float64 `json:"realized"`
 }
 
 // DayMark is the position at the end of one trading day (rewritten every
@@ -55,6 +73,7 @@ type Position struct {
 	ClosedAt string     `json:"closed_at,omitempty"`
 	Rolls    int        `json:"rolls"`
 	Days     []*DayMark `json:"days"`
+	Acts     []*DayAct  `json:"acts"` // executed quantity per day and strike
 }
 
 func (p *Position) userTag() string { return "OVN-" + p.ID }
@@ -93,25 +112,45 @@ func (p *Position) realized() (r float64) {
 }
 
 // fill books one execution. BUY raises the average; SELL books
-// (price - average) on the quantity sold.
+// (price - average) on the quantity sold. The day's activity row of the
+// strike is updated with the same numbers.
 func (p *Position) fill(in Instrument, side string, qty int64, price float64) {
 	l := p.leg(in.Token)
 	if l == nil {
 		l = &Leg{Token: in.Token, GToken: in.GToken, Strike: in.Strike, Opt: in.Opt}
 		p.Legs = append(p.Legs, l)
 	}
+	day := time.Now().In(ist()).Format("2006-01-02")
+	var a *DayAct
+	for _, x := range p.Acts {
+		if x.Day == day && x.Token == in.Token {
+			a = x
+		}
+	}
+	if a == nil {
+		a = &DayAct{Day: day, Token: in.Token, Strike: in.Strike, Opt: in.Opt}
+		p.Acts = append(p.Acts, a)
+	}
 	if side == "BUY" {
 		l.Avg = (l.Avg*float64(l.Qty) + price*float64(qty)) / float64(l.Qty+qty)
 		l.Qty += qty
 		l.Bought += qty
+		l.BuyValue += price * float64(qty)
+		a.Bought += qty
+		a.BuyValue += price * float64(qty)
 		return
 	}
 	if qty > l.Qty {
 		qty = l.Qty
 	}
-	l.Realized += (price - l.Avg) * float64(qty)
+	r := (price - l.Avg) * float64(qty)
+	l.Realized += r
 	l.Qty -= qty
 	l.Sold += qty
+	l.SellValue += price * float64(qty)
+	a.Sold += qty
+	a.SellValue += price * float64(qty)
+	a.Realized += r
 }
 
 // OrderRec is one order the module sent, kept for the order book section.
