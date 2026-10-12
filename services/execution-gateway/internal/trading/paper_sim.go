@@ -242,8 +242,17 @@ func lutLoadSimSet(day, set string) []simMinute {
 			m.Answer = "NO"
 		}
 	}
+	var held []string
+	pendingOv := gsOverlay(nil)
+	if set == "" || set == "current" {
+		pendingOv = gsOverlayLoad(day)
+	}
 	for t, c := range lutLoadChainSet(day, set) {
 		if c.Future <= 0 {
+			continue
+		}
+		if (set == "" || set == "current") && gsOverlayPending(day, t, pendingOv) {
+			held = append(held, t) // not final yet: shown once its position-strike closes are in
 			continue
 		}
 		m := get(t)
@@ -277,6 +286,9 @@ func lutLoadSimSet(day, set string) []simMinute {
 			m.Future = c.Future
 			m.ATM = math.Round(c.Future/lutStrikeStep) * lutStrikeStep
 		}
+	}
+	for _, t := range held {
+		delete(byT, t) // the whole minute waits (its LUT row too), never half of it
 	}
 	out := make([]simMinute, 0, len(byT))
 	for _, m := range byT {

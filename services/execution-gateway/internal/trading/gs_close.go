@@ -154,6 +154,12 @@ func (s *Service) gsWarmLoop() {
 		if now.Second() == 50 {
 			s.gsWarmNow()
 		}
+		if now.Second() == 3 {
+			// Right after the minute-end work (hedge / SL / LUT record): the
+			// position strikes' GreekSoft closes, so the minute is complete
+			// before any screen shows it.
+			go s.gsOverlayNow()
+		}
 		if now.Second() == 30 { // missing minutes (restart gap) from GreekSoft candles
 			go func() {
 				s.gsBackfillNow()

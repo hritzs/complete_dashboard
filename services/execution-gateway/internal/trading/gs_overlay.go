@@ -76,6 +76,30 @@ func gsOverlayApply(day string, mins map[string]lutChainMinute) {
 	}
 }
 
+// gsOverlayHold: how long a just-ended minute is held back from the screens
+// while its position-strike closes are still on their way.
+const gsOverlayHold = 45 * time.Second
+
+// gsOverlayPending: minute t ("HH:MM") of day ended less than gsOverlayHold
+// ago and its GreekSoft closes are not in the overlay yet. Screens show a
+// minute only once its data is final (the UI comes after the backend work),
+// so they skip it until then.
+func gsOverlayPending(day, t string, ov gsOverlay) bool {
+	if !gsClosesOn() {
+		return false
+	}
+	b, err := time.ParseInLocation("2006-01-02 15:04", day+" "+t, lutIST())
+	if err != nil {
+		return false
+	}
+	age := time.Since(b)
+	if age < 0 || age > gsOverlayHold {
+		return false
+	}
+	_, ok := ov[t]
+	return !ok
+}
+
 // gsOverlayNow rebuilds today's overlay.
 func (s *Service) gsOverlayNow() {
 	p := s.gsCloseProvider()
