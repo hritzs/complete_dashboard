@@ -243,15 +243,12 @@ func lutLoadSimSet(day, set string) []simMinute {
 		}
 	}
 	var held []string
-	pendingOv := gsOverlay(nil)
-	if set == "" || set == "current" {
-		pendingOv = gsOverlayLoad(day)
-	}
+	pendingOv := gsOverlayLoad(day, set) // this view's own overlay
 	for t, c := range lutLoadChainSet(day, set) {
 		if c.Future <= 0 {
 			continue
 		}
-		if (set == "" || set == "current") && gsOverlayPending(day, t, pendingOv) {
+		if gsOverlayPending(day, t, pendingOv) {
 			held = append(held, t) // not final yet: shown once its position-strike closes are in
 			continue
 		}

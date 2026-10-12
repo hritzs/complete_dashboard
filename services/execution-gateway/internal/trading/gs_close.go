@@ -163,7 +163,9 @@ func (s *Service) gsWarmLoop() {
 		if now.Second() == 30 { // missing minutes (restart gap) from GreekSoft candles
 			go func() {
 				s.gsBackfillNow()
-				s.gsOverlayNow() // position strikes of the stored minutes at GreekSoft's closes
+				if gsOverlayRetry.Load() { // only when the :03 run missed something
+					s.gsOverlayNow()
+				}
 			}()
 		}
 	}
@@ -216,9 +218,11 @@ func gsAfterBoundary() {
 // between two strikes) and every leg the open positions hold.
 func (s *Service) gsTokens(band int) (toks map[int64]bool, atmCE, atmPE int64) {
 	toks = map[int64]bool{}
+	frontExpiry := ""
 	if s.Snapshot != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		if c, err := s.Snapshot.GetOptionChain(ctx, lutSymbol, ""); err == nil && c != nil {
+			frontExpiry = c.Expiry
 			S := lutUnderlying(c)
 			atm := c.ATM
 			if S > 0 {
@@ -240,14 +244,41 @@ func (s *Service) gsTokens(band int) (toks map[int64]bool, atmCE, atmPE int64) {
 		}
 		cancel()
 	}
+	// Held legs, and the expiries they sit in: a trade on another expiry
+	// (e.g. next week) is checked on ITS expiry's ATM pair / synthetic
+	// future, so that pair is fetched here too, each expiry separately.
+	type symExp struct{ sym, exp string }
+	others := map[symExp]bool{}
 	pm.mu.Lock()
 	for _, pos := range pm.view.Positions {
 		// Wings are margin-only (outside PnL / delta): no candle needed.
 		if pos.NetQty != 0 && pos.Token > 0 && !pos.Wing {
 			toks[pos.Token] = true
+			if e := strings.TrimSpace(pos.Expiry); e != "" && !strings.EqualFold(e, frontExpiry) {
+				others[symExp{pos.Symbol, e}] = true
+			}
 		}
 	}
 	pm.mu.Unlock()
+	if s.Snapshot != nil {
+		for se := range others {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			if c, err := s.Snapshot.GetOptionChain(ctx, se.sym, se.exp); err == nil && c != nil {
+				S := lutUnderlying(c)
+				atm := c.ATM
+				if S > 0 {
+					atm = math.Round(S/lutStrikeStep) * lutStrikeStep
+				}
+				for _, r := range c.Chain {
+					d := math.Abs(r.Strike - atm)
+					if d < 1e-6 || (S > 0 && d <= lutStrikeStep+1e-6 && math.Abs(r.Strike-S) <= lutStrikeStep/2+10) {
+						toks[r.CEToken], toks[r.PEToken] = r.CEToken > 0, r.PEToken > 0
+					}
+				}
+			}
+			cancel()
+		}
+	}
 	return toks, atmCE, atmPE
 }
 

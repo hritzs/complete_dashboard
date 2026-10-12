@@ -278,11 +278,9 @@ func lutLoadChainSet(day, set string) map[string]lutChainMinute {
 		}
 		out[t] = cur
 	}
-	if set == "" || set == "current" {
-		// GreekSoft's minute closes for the strikes that were the ATM today
-		// (position strikes of sims / trades) -- gs_overlay.go.
-		gsOverlayApply(day, out)
-	}
+	// GreekSoft's minute closes for the strikes that were the ATM today
+	// (position strikes of sims / trades), per set -- gs_overlay.go.
+	gsOverlayApply(day, set, out)
 	return out
 }
 

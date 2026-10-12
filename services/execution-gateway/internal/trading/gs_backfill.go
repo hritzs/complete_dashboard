@@ -48,8 +48,16 @@ func (s *Service) gsBackfillNow() {
 		return
 	}
 	defer gsBackfillBusy.Store(false)
+	// The current expiry and the next weekly expiry, each from its own
+	// records and tokens.
+	for _, set := range []string{"", "next"} {
+		s.gsBackfillSet(p, now, set)
+	}
+}
+
+func (s *Service) gsBackfillSet(p MinuteCloseProvider, now time.Time, set string) {
 	day := now.Format("2006-01-02")
-	have := lutLoadChainSet(day, "")
+	have := lutLoadChainSet(day, set)
 	if len(have) == 0 {
 		return
 	}
@@ -201,15 +209,15 @@ func (s *Service) gsBackfillNow() {
 		if m.Future <= 0 || len(m.Rows) == 0 {
 			continue
 		}
-		if err := lutAppendJSON(lutChainImportFile(day, ""), m); err != nil {
+		if err := lutAppendJSON(lutChainImportFile(day, set), m); err != nil {
 			log.Printf("[BACKFILL] ⚠ %s not saved: %v", t, err)
 			continue
 		}
 		filled++
 	}
 	if filled > 0 {
-		log.Printf("[BACKFILL] %d missing minute(s) %s..%s rebuilt from GreekSoft candles (%d strikes) -- Paper Sim / history now include them (marked imported)",
-			filled, missing[0], missing[len(missing)-1], len(ks))
+		log.Printf("[BACKFILL] %s expiry: %d missing minute(s) %s..%s rebuilt from GreekSoft candles (%d strikes) -- Paper Sim / history now include them (marked imported)",
+			map[bool]string{true: "current", false: set}[set == ""], filled, missing[0], missing[len(missing)-1], len(ks))
 	}
 }
 

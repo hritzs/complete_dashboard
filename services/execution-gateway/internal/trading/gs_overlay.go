@@ -34,13 +34,26 @@ type gsOverlay map[string]map[string][2]float64
 
 var gsOverlayBusy atomic.Bool
 
-func gsOverlayFile(day string) string { return filepath.Join(lutDataDir(), day+"_chain_gs.json") }
+// gsOverlayRetry: the last run missed something (a failed request, or it
+// has not run yet today): the :30 pass runs it again. A clean :03 run is
+// the only one that minute -- no repeated load on GreekSoft.
+var gsOverlayRetry atomic.Bool
+
+func init() { gsOverlayRetry.Store(true) }
+
+// gsOverlayFile: the overlay of a set ("" current expiry / "next").
+func gsOverlayFile(day, set string) string {
+	if set == "" || set == "current" {
+		return filepath.Join(lutDataDir(), day+"_chain_gs.json")
+	}
+	return filepath.Join(lutDataDir(), day+"_chain_"+set+"_gs.json")
+}
 
 func gsOverlayKey(k float64) string { return fmt.Sprintf("%.0f", k) }
 
 // gsOverlayLoad reads the day's overlay (nil when there is none).
-func gsOverlayLoad(day string) gsOverlay {
-	b, err := os.ReadFile(gsOverlayFile(day))
+func gsOverlayLoad(day, set string) gsOverlay {
+	b, err := os.ReadFile(gsOverlayFile(day, set))
 	if err != nil {
 		return nil
 	}
@@ -52,11 +65,17 @@ func gsOverlayLoad(day string) gsOverlay {
 }
 
 // gsOverlayApply lays GreekSoft's closes over the stored rows of a day.
-func gsOverlayApply(day string, mins map[string]lutChainMinute) {
-	ov := gsOverlayLoad(day)
+//
+// The current expiry's stored future / ATM already come from GreekSoft's ATM
+// closes (taken at the boundary). Another set ("next") is stored entirely on
+// feed closes, so there the synthetic future and the ATM are re-derived from
+// the overlaid ATM pair too -- each expiry on its own closes.
+func gsOverlayApply(day, set string, mins map[string]lutChainMinute) {
+	ov := gsOverlayLoad(day, set)
 	if len(ov) == 0 {
 		return
 	}
+	other := !(set == "" || set == "current")
 	for t, m := range mins {
 		by, ok := ov[t]
 		if !ok {
@@ -70,6 +89,24 @@ func gsOverlayApply(day string, mins map[string]lutChainMinute) {
 				if px[1] > 0 {
 					m.Rows[i].PE = px[1]
 				}
+			}
+		}
+		if other {
+			atm := m.ATM
+			for i := 0; i < 3; i++ {
+				px, ok := by[gsOverlayKey(atm)]
+				if !ok || px[0] <= 0 || px[1] <= 0 {
+					break
+				}
+				m.Future = atm + px[0] - px[1]
+				next := math.Round(m.Future/lutStrikeStep) * lutStrikeStep
+				if next == atm {
+					break
+				}
+				atm = next
+			}
+			if _, ok := by[gsOverlayKey(atm)]; ok {
+				m.ATM = atm
 			}
 		}
 		mins[t] = m
@@ -100,7 +137,8 @@ func gsOverlayPending(day, t string, ov gsOverlay) bool {
 	return !ok
 }
 
-// gsOverlayNow rebuilds today's overlay.
+// gsOverlayNow rebuilds today's overlays: the current expiry and the next
+// weekly expiry, each from its own stored chain and its own tokens.
 func (s *Service) gsOverlayNow() {
 	p := s.gsCloseProvider()
 	now := time.Now().In(lutIST())
@@ -108,10 +146,20 @@ func (s *Service) gsOverlayNow() {
 		return
 	}
 	defer gsOverlayBusy.Store(false)
+	failed := 0
+	for _, set := range []string{"", "next"} {
+		failed += s.gsOverlayBuild(p, now, set)
+	}
+	gsOverlayRetry.Store(failed > 0)
+}
+
+// gsOverlayBuild rebuilds one set's overlay; returns how many candle
+// requests failed.
+func (s *Service) gsOverlayBuild(p MinuteCloseProvider, now time.Time, set string) int {
 	day := now.Format("2006-01-02")
-	mins := lutLoadChainFile(lutChainFile(day, "")) // the stored rows as they are
+	mins := lutLoadChainFile(lutChainFile(day, set)) // the stored rows as they are
 	if len(mins) == 0 {
-		return
+		return 0
 	}
 	// Every strike that was the ATM today, with its tokens.
 	type tk struct{ ce, pe int64 }
@@ -126,8 +174,22 @@ func (s *Service) gsOverlayNow() {
 			}
 		}
 	}
+	if set != "" {
+		// Stored on feed closes, this set's ATM can sit one strike off the
+		// GreekSoft one: the neighbours are fetched too so the re-derived
+		// ATM always has its pair.
+		for _, m := range mins {
+			for _, r := range m.Rows {
+				if d := math.Abs(r.K - m.ATM); d > 1e-6 && d <= lutStrikeStep+1e-6 && r.CEToken > 0 && r.PEToken > 0 {
+					if _, ok := strikes[r.K]; !ok {
+						strikes[r.K] = tk{r.CEToken, r.PEToken}
+					}
+				}
+			}
+		}
+	}
 	if len(strikes) == 0 {
-		return
+		return 0
 	}
 	ymd := now.Format("20060102")
 	closes := map[int64]map[int64]float64{}
@@ -171,7 +233,7 @@ func (s *Service) gsOverlayNow() {
 			cancel()
 			if err != nil {
 				failed++
-				log.Printf("[GS-OVERLAY] ⚠ %.0f %s (token %d): candles not fetched (%v) -- earlier values kept", k, leg.name, leg.tok, err)
+				log.Printf("[GS-OVERLAY] ⚠ %s%.0f %s (token %d): candles not fetched (%v) -- earlier values kept", map[bool]string{true: "", false: set + " "}[set == ""], k, leg.name, leg.tok, err)
 				continue
 			}
 			closes[leg.tok] = bars
@@ -181,7 +243,7 @@ func (s *Service) gsOverlayNow() {
 	// Start from what is already known: a candle request that failed this
 	// run (cold connections right after a restart) must not blank a side
 	// that an earlier run had.
-	ov := gsOverlayLoad(day)
+	ov := gsOverlayLoad(day, set)
 	if ov == nil {
 		ov = gsOverlay{}
 	}
@@ -215,12 +277,13 @@ func (s *Service) gsOverlayNow() {
 		}
 	}
 	if len(ov) == 0 {
-		return
+		return failed
 	}
 	bts, _ := json.Marshal(ov)
 	if err := os.MkdirAll(lutDataDir(), 0o755); err == nil {
-		if err = sbWriteAtomic(gsOverlayFile(day), bts); err != nil {
-			log.Printf("[GS-OVERLAY] ⚠ not saved: %v", err)
+		if err = sbWriteAtomic(gsOverlayFile(day, set), bts); err != nil {
+			log.Printf("[GS-OVERLAY] ⚠ %s not saved: %v", lutChainFile(day, set), err)
 		}
 	}
+	return failed
 }
