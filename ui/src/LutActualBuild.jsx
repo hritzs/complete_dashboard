@@ -94,7 +94,7 @@ export default function LutActualBuild() {
   const arm = async () => {
     const c = armedConfirm();
     if (c == null) return;
-    if (await post({ arm: true, confirm: c })) setMsg('ARMED -- the next first LUT YES places real orders');
+    if (await post({ arm: true, confirm: c })) setMsg('ARMED -- the next first LUT YES places real orders, then the LUT disarms itself');
   };
   const disarm = async () => { if (await post({ arm: false })) setMsg('disarmed -- the LUT stays paper only'); };
   // Test: one REAL build now through exactly the LUT's path (as if the LUT
@@ -125,7 +125,7 @@ export default function LutActualBuild() {
         <span style={{ 'font-size': '12px', opacity: 0.9 }}>the LUT check above is paper; this panel is the one that sells</span>
       </div>
       <div style={{ 'padding-top': '10px', display: 'flex', 'align-items': 'center', gap: '10px', 'flex-wrap': 'wrap' }}>
-        <span style={muted}>FIRST minute-end YES while ARMED → delta-neutral full-size build at the LUT's strike/expiry · that YES only, once per day</span>
+        <span style={muted}>FIRST minute-end YES while ARMED → delta-neutral full-size build at the LUT's strike/expiry · that YES only · then it DISARMS ITSELF and only monitors (arm again, or use another build, for a new entry)</span>
       </div>
 
       <Show when={today()}>

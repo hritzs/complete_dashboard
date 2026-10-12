@@ -21,7 +21,10 @@ package trading
 //     overridden on the tab.
 //   - Arming needs the typed confirmation "SELL LIVE", is refused while the
 //     configuration is invalid (account, exit time), and stays armed
-//     (saved) until disarmed.
+//     (saved) until it fires or is disarmed.
+//   - One shot: the moment its build is sent the LUT DISARMS ITSELF. It
+//     never sells a second time on its own (not later today, not on a
+//     later day); a new entry needs arming again or another build.
 
 import (
 	"context"
@@ -198,7 +201,18 @@ func (s *Service) lutFireBuildLocked(day string, rec LUTEvaluation, entry *LUTEn
 	}
 	log.Printf("[LUT-BUILD] 🚀 LUT YES at %s -> REAL BUILD %s %s %.0f straddle %d lot(s), delta-neutral, SL %.2f bps TP %.2f bps exit %s, %s, account %s",
 		rec.Time, lutSymbol, entry.Expiry, entry.Strike, c.Lots, risk.SlBps, risk.TpBps, c.ExitTime, lutWingsText(c.WingPct), run.Account)
-	s.lutSendBuild(run, lutBuildRequest(c, entry.Expiry, entry.Strike, risk))
+	// One shot: the LUT disarms itself the moment its build is sent, so it
+	// can never sell again on its own -- from here it only monitors (the
+	// trade is watched by the standard monitor). Another entry is the
+	// user's to place with another build, or by arming again.
+	req := lutBuildRequest(c, entry.Expiry, entry.Strike, risk)
+	c.Armed, c.ArmedAt = false, ""
+	if err := saveLUTBuildConfig(c); err != nil {
+		log.Printf("[LUT-BUILD] ⚠ could not save the disarm after firing: %v (the once-per-day record still blocks another build today)", err)
+	} else {
+		log.Printf("[LUT-BUILD] 🔒 DISARMED automatically after firing -- the LUT only monitors now; arm again or use another build for a new entry")
+	}
+	s.lutSendBuild(run, req)
 }
 
 // lutBuildRequest is THE request a LUT build sends -- the real YES and the
