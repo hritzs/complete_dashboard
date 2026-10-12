@@ -286,8 +286,10 @@ func main() {
 	defer cancel()
 
 	healthPort := envOrDefault("BRIDGE_HEALTH_PORT", "8022")
+	quotes := newQuoteCache()
 	go func() {
 		mux := http.NewServeMux()
+		quotes.register(mux)
 		mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"status":"ok","service":"greeksoft-feed-bridge"}`))
@@ -361,8 +363,21 @@ func main() {
 	}
 
 	resubscribe := func(apollo *greeksoft.ApolloMarketDataClient) error {
+		apolloWriteMu.Lock()
+		defer apolloWriteMu.Unlock()
 		if recTokens := recorder.attach(apollo); len(recTokens) > 0 {
 			if err := apollo.Subscribe(recTokens); err != nil {
+				return err
+			}
+		}
+		// Tokens asked for over /api/subscribe (quotes.go), 50 per frame.
+		qt := quotes.attach(apollo)
+		for i := 0; i < len(qt); i += 50 {
+			j := i + 50
+			if j > len(qt) {
+				j = len(qt)
+			}
+			if err := apollo.Subscribe(qt[i:j]); err != nil {
 				return err
 			}
 		}
@@ -380,6 +395,7 @@ func main() {
 
 	handler := func(frame greeksoft.ApolloFrame) {
 		recorder.record(time.Now(), frame) // first: receive time before any decoding
+		quotes.observe(frame)
 		apolloFrameCount.Add(1)
 
 		// Measured unconditionally, every frame, regardless of whether the

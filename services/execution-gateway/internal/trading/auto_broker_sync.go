@@ -230,6 +230,14 @@ func (s *Service) checkBrokerPositions() {
 		broker[tok] += p.NetQty // a contract can appear once per product type
 		names[tok] = p.Symbol
 	}
+	// Holdings of other modules on the same account (the Overnight tab's
+	// carried position) are not this platform's trades: take them out of
+	// the broker side before comparing.
+	if ExternalHoldings != nil {
+		for tok, q := range ExternalHoldings() {
+			broker[tok] -= q
+		}
+	}
 	seen := map[int64]bool{}
 	for tok := range broker {
 		seen[tok] = true
@@ -249,6 +257,10 @@ func (s *Service) checkBrokerPositions() {
 	}
 	sort.Slice(res.Diffs, func(i, j int) bool { return res.Diffs[i].Token < res.Diffs[j].Token })
 }
+
+// ExternalHoldings, when set, reports net quantity per exchange token held
+// at the broker by something other than this platform's trades.
+var ExternalHoldings func() map[int64]int64
 
 func appendUnique(xs []string, x string) []string {
 	for _, y := range xs {

@@ -3,6 +3,7 @@ package greeksoft
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"execution-gateway/internal/trading"
 )
@@ -18,42 +19,32 @@ func (e *Executor) OrderBookOrders(ctx context.Context) ([]trading.BrokerFill, e
 	if e == nil || e.Client == nil {
 		return nil, fmt.Errorf("greeksoft executor client is nil")
 	}
-	book, err := e.Client.GetOrderBook(ctx)
+	// The typed book: trdQty is the filled quantity (the generic walk used
+	// before looked for traded_qty / filledQty and always read 0).
+	book, err := e.Client.GetOrderBookTyped(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("get Greeksoft order book: %w", err)
 	}
-	var out []trading.BrokerFill
-	seen := map[string]struct{}{}
-	var walk func(v interface{})
-	walk = func(v interface{}) {
-		switch node := v.(type) {
-		case map[string]interface{}:
-			id := firstGreeksoftOrderID(node, "gorderid", "gOrderID", "gOrderId", "ordID", "orderId", "orderID", "OrderID")
-			if id != "" && id != "0" {
-				if _, dup := seen[id]; !dup {
-					seen[id] = struct{}{}
-					out = append(out, trading.BrokerFill{
-						BrokerOrderID: id,
-						Status: normalizeGreeksoftOrderStatus(firstStringValue(node,
-							"OrderStatus", "orderStatus", "order_status", "status", "Status", "ordStatus")),
-						FilledQty: firstInt64Value(node,
-							"traded_qty", "tradedQty", "TradedQty", "filled_qty", "filledQty", "FilledQty", "fill_quantity"),
-						AveragePrice: firstFloat64Value(node,
-							"AvgTrdPrice", "avgTrdPrice", "avg_traded_price", "average_price", "avgPrice"),
-						Side: normalizeGreeksoftSide(firstStringValue(node, "side", "Side", "transactionType")),
-					})
-				}
-				return
-			}
-			for _, child := range node {
-				walk(child)
-			}
-		case []interface{}:
-			for _, child := range node {
-				walk(child)
-			}
+	out := make([]trading.BrokerFill, 0, len(book.Data))
+	for _, o := range book.Data {
+		if o.OrdID <= 0 {
+			continue
 		}
+		status := normalizeGreeksoftOrderStatus(o.Status)
+		if o.Qty > 0 && o.TrdQty >= o.Qty {
+			status = "FILLED"
+		}
+		// The book has no average traded price; a filled LIMIT order's own
+		// price is the closest it carries (worst case for the fill).
+		avg := 0.0
+		if o.TrdQty > 0 {
+			avg = o.Price
+		}
+		out = append(out, trading.BrokerFill{
+			BrokerOrderID: strconv.FormatInt(o.OrdID, 10), BrokerToken: o.Token,
+			FilledQty: o.TrdQty, AveragePrice: avg, Status: status,
+			OptionType: o.OptionType, Strike: o.StrikePrice, Symbol: o.TradeSymbol,
+		})
 	}
-	walk(book)
 	return out, nil
 }

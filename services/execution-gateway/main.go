@@ -436,6 +436,9 @@ func main() {
 		}
 	}()
 
+	// Overnight (positional) module: its own package, state and tab.
+	startOvernight(ctx, factory)
+
 	handlers := trading.NewHandlers(service, store)
 
 	go startHTTPServer(appConfig, handlers)
@@ -481,6 +484,7 @@ func startHTTPServer(cfg *Config, handlers *trading.Handlers) {
 	mux.HandleFunc("/api/trade/broker-sync", handlers.TradeBrokerSync)
 	mux.HandleFunc("/api/lut/build", handlers.LUTBuildHandler)
 	mux.HandleFunc("/api/mock", handlers.MockHandler)
+	mux.HandleFunc("/api/overnight", overnightHandler)
 	mux.HandleFunc("/api/lut/build/test", handlers.LUTBuildTestHandler)
 	mux.HandleFunc("/api/trade/open-legs", handlers.TradeOpenLegs)
 	mux.HandleFunc("/api/trade/manual-leg", handlers.ManualLegHandler)

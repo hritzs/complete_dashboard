@@ -3,6 +3,7 @@
   import StraddleBuildTab from './StraddleBuildTab.jsx';
   import PaperSimTab from './PaperSimTab.jsx';
   import MockTab from './MockTab.jsx';
+  import OvernightTab from './overnight/OvernightTab.jsx';
   import SBPortfolioRows, { sbStore } from './SBPortfolioRows.jsx';
   import ManualLegPanel, { closeManualLeg } from './ManualLegPanel.jsx';
   import PortfolioMTMPanel from './PortfolioMTMPanel.jsx';
@@ -2089,6 +2090,12 @@ function App() {
             onClick={() => setActiveTab('mock')}
           >
             Mock
+          </button>
+          <button
+            class={`tab-btn ${activeTab() === 'overnight' ? 'active' : ''}`}
+            onClick={() => setActiveTab('overnight')}
+          >
+            Overnight
           </button>
           <button
             class={`tab-btn ${activeTab() === 'logs' ? 'active' : ''}`}
@@ -4272,6 +4279,10 @@ function App() {
 
         <Show when={activeTab() === 'mock'}>
           <MockTab />
+        </Show>
+
+        <Show when={activeTab() === 'overnight'}>
+          <OvernightTab />
         </Show>
 
         <Show when={activeTab() === 'logs'}>

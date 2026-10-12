@@ -165,7 +165,10 @@ func (r *apolloRecorder) resolveTokens(snapshotURL, symbol string, strikes int, 
 			c := r.current
 			r.mu.Unlock()
 			if c != nil {
-				if err := c.Subscribe(toks); err != nil {
+				apolloWriteMu.Lock() // one writer at a time on the socket (quotes.go)
+				err := c.Subscribe(toks)
+				apolloWriteMu.Unlock()
+				if err != nil {
 					log.Printf("[FEEDREC] subscribe failed (will retry on reconnect): %v", err)
 				}
 			}
