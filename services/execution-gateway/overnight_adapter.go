@@ -26,8 +26,15 @@ var overnightSvc *overnight.Service
 func overnightHandler(w http.ResponseWriter, r *http.Request) {
 	if overnightSvc == nil {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write([]byte(`{"error":"overnight module not started"}`))
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusForbidden)
+		}
+		_, _ = w.Write([]byte(`{"enabled":false,"error":"Overnight is switched off (set OVERNIGHT_ENABLED=1 and restart)"}`))
+		return
+	}
+	if r.URL.Query().Get("probe") != "" { // the UI asking whether to show the tab
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"enabled":true}`))
 		return
 	}
 	overnightSvc.Handler(w, r)
@@ -234,7 +241,18 @@ func (b *overnightBroker) Limits(ctx context.Context, token int64) (int64, int64
 	return f.LotSize, f.MaxOrderQty, nil
 }
 
+// overnightEnabled: OVERNIGHT_ENABLED=0 switches the whole module off (no
+// minute-end computation, no subscriptions, tab hidden). On by default.
+func overnightEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("OVERNIGHT_ENABLED")))
+	return !(v == "0" || v == "false" || v == "no" || v == "off")
+}
+
 func startOvernight(ctx context.Context, factory trading.BrokerFactory) {
+	if !overnightEnabled() {
+		log.Printf("[OVERNIGHT] switched off (OVERNIGHT_ENABLED=0)")
+		return
+	}
 	symbol := strings.ToUpper(strings.TrimSpace(os.Getenv("OVERNIGHT_SYMBOL")))
 	if symbol == "" {
 		symbol = "NIFTY"

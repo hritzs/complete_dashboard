@@ -34,6 +34,7 @@ export default function OvernightTab() {
   const [minutes, setMinutes] = createSignal('10');
   const [entryAt, setEntryAt] = createSignal('');
   const [exitAt, setExitAt] = createSignal('');
+  const [exitMinutes, setExitMinutes] = createSignal('');
   const [partQty, setPartQty] = createSignal('');
   const [partAt, setPartAt] = createSignal('');
   const [rollAt, setRollAt] = createSignal('');
@@ -277,13 +278,19 @@ export default function OvernightTab() {
       <div style={box}>
         <div style={head}>3 · Exit (sell everything)</div>
         <div style={row}>
+          <span>Exit over (minutes)</span>
+          <input style={inp} placeholder="0 = at once" value={exitMinutes()} onInput={(e) => setExitMinutes(e.target.value)} />
           <span>Start at</span>
           <input style={inp} type="time" value={exitAt()} onInput={(e) => setExitAt(e.target.value)} />
           <button style={btn} disabled={busy() || !!s().job || !pos()}
-            onClick={() => confirmLive(`SELL the whole position ${when(exitAt())}`) && post({ action: 'exit', at: exitAt() })}>
+            onClick={() => confirmLive(`SELL the whole position ${when(exitAt())}`) && post({ action: 'exit', at: exitAt(), minutes: parseInt(exitMinutes() || '0', 10) || 0 })}>
             {exitAt() ? `Exit at ${exitAt()}` : 'Exit now'}
           </button>
-          <span style={muted}>Both legs together, the largest order size per chunk; the next chunk only after both are filled.</span>
+        </div>
+        <div style={{ ...muted, 'margin-top': '6px' }}>
+          {(parseInt(exitMinutes() || '0', 10) || 0) > 0
+            ? `Sells both legs evenly over ${exitMinutes()} minutes (six steps a minute), each step only after the one before is filled.`
+            : 'Both legs together, the largest order size per chunk; the next chunk only after both are filled.'}
         </div>
       </div>
 
@@ -299,7 +306,7 @@ export default function OvernightTab() {
             onClick={() => confirmLive(`SELL ${whole(partQty())} of each leg ${when(partAt())}`) && post({ action: 'partial', qty: whole(partQty()), at: partAt() })}>
             {partAt() ? `Partial exit at ${partAt()}` : 'Partial exit now'}
           </button>
-          <Show when={whole(partQty()) > 0}><span style={muted}>Sells {whole(partQty())} of each held leg.</span></Show>
+          <Show when={whole(partQty()) > 0}><span style={muted}>Sells {whole(partQty())} of each held strike (CE and PE together). In LIVE the broker's net position is read before and after, and nothing is sold if the broker holds less.</span></Show>
         </div>
       </div>
 

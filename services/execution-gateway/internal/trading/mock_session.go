@@ -526,7 +526,29 @@ func (s *Service) mockRoundTrip(symbol, expiry string, token int64, qty int64) {
 //	POST /api/mock {"action":"close","token":..,"confirm":"MOCK ORDER"}        (the net position, opposite side)
 //	POST /api/mock {"action":"cancel","broker_order_id":".."}
 //	POST /api/mock {"action":"roundtrip","token":..,"expiry":..,"lots":1,"confirm":"MOCK ORDER"}
+//
+// mockEnabled: the Mock tab works only with MOCK_TAB_ENABLED=1 (off by
+// default). Off, the handler answers {"enabled":false} and does nothing --
+// no instrument scan, no order book read, no orders -- and the UI hides
+// the tab.
+func mockEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("MOCK_TAB_ENABLED")))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
+}
+
 func (h *Handlers) MockHandler(w http.ResponseWriter, r *http.Request) {
+	if !mockEnabled() {
+		code := http.StatusOK
+		if r.Method != http.MethodGet {
+			code = http.StatusForbidden
+		}
+		lutJSON(w, code, map[string]interface{}{"enabled": false, "success": false, "error": "Mock tab is switched off (set MOCK_TAB_ENABLED=1 and restart)"})
+		return
+	}
+	if r.URL.Query().Get("probe") != "" { // the UI asking whether to show the tab
+		lutJSON(w, http.StatusOK, map[string]interface{}{"enabled": true})
+		return
+	}
 	s := h.Service
 	symbol := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("symbol")))
 	if symbol == "" {

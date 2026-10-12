@@ -29,6 +29,7 @@ type fakeMarket struct {
 	modifies int
 	placed   []PlaceReq
 	reject   string // option type whose orders the broker rejects
+	held     map[int64]int64
 }
 
 func (m *fakeMarket) px(tok int64) float64 {
@@ -49,8 +50,16 @@ func (m *fakeMarket) MinuteCloses(_ context.Context, tok int64, _ string) (map[i
 	return map[int64]float64{1000: m.px(tok)}, nil
 }
 func (m *fakeMarket) Limits(context.Context, int64) (int64, int64, error) { return 65, 3510, nil }
-func (m *fakeMarket) Positions(context.Context) (map[int64]int64, error)  { return nil, nil }
-func (m *fakeMarket) FillPrice(context.Context, string) (float64, bool)   { return 0, false }
+func (m *fakeMarket) Positions(context.Context) (map[int64]int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := map[int64]int64{}
+	for k, v := range m.held {
+		out[k] = v
+	}
+	return out, nil
+}
+func (m *fakeMarket) FillPrice(context.Context, string) (float64, bool) { return 0, false }
 func (m *fakeMarket) Place(_ context.Context, r PlaceReq) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -333,18 +342,40 @@ func TestLiveChunkWaitsModifiesAndTags(t *testing.T) {
 		t.Fatalf("HeldQty = %v", s.HeldQty())
 	}
 
-	// A broker rejection on one leg stops the job and cancels the other.
+	// The broker holding less than the module refuses any sell.
+	if _, err := s.Submit(JobReq{Kind: "partial", Qty: 650}); err != nil {
+		t.Fatal(err)
+	}
+	if j = waitJob(t, s); j.Status != "FAILED" || !strings.Contains(j.Note, "broker holds 0") || len(m.placed) != 4 {
+		t.Fatalf("partial against an empty broker: %s %s placed=%d", j.Status, j.Note, len(m.placed))
+	}
 	m.mu.Lock()
+	m.held = map[int64]int64{p.Legs[0].Token: 3965, p.Legs[1].Token: 3965}
+	m.mu.Unlock()
+
+	// Exit spread over time: 1 minute = 6 steps, both legs each step.
+	stepGap = 5 * time.Millisecond
+	defer func() { stepGap = time.Minute / 6 }()
+	if _, err := s.Submit(JobReq{Kind: "partial", Qty: 65}); err != nil {
+		t.Fatal(err)
+	}
+	if j = waitJob(t, s); j.Status != "DONE" || p.Legs[0].Qty != 3900 {
+		t.Fatalf("partial: %s %s qty %d", j.Status, j.Note, p.Legs[0].Qty)
+	}
+	m.mu.Lock()
+	m.held = map[int64]int64{p.Legs[0].Token: 3900, p.Legs[1].Token: 3900}
 	m.reject = "PE"
 	m.mu.Unlock()
-	if _, err := s.Submit(JobReq{Kind: "exit"}); err != nil {
+
+	// A broker rejection on one leg stops the job and cancels the other.
+	if _, err := s.Submit(JobReq{Kind: "exit", Minutes: 1}); err != nil {
 		t.Fatal(err)
 	}
 	j = waitJob(t, s)
 	if j.Status != "FAILED" || !strings.Contains(j.Note, "rejected") {
 		t.Fatalf("exit with a rejection: %s %s", j.Status, j.Note)
 	}
-	if pe := p.held("PE"); pe == nil || pe.Qty != 3965 {
+	if pe := p.held("PE"); pe == nil || pe.Qty != 3900 {
 		t.Fatalf("PE changed on a rejected order: %+v", pe)
 	}
 }

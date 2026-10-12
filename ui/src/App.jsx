@@ -90,6 +90,13 @@ function parseTiers(text) {
 
 function App() {
     const [activeTab, setActiveTab] = createSignal('terminal');
+    // Optional tabs: shown only when the backend says the feature is on
+    // (MOCK_TAB_ENABLED / OVERNIGHT_ENABLED). Asked once, not polled.
+    const [mockOn, setMockOn] = createSignal(false);
+    const [overnightOn, setOvernightOn] = createSignal(false);
+    const askFeature = (url, set) => fetch(url).then((r) => r.json()).then((j) => set(!!j && j.enabled === true)).catch(() => set(false));
+    askFeature('/api/mock?probe=1', setMockOn);
+    askFeature('/api/overnight?probe=1', setOvernightOn);
     const [wsStatus, setWsStatus] = createSignal('Connecting...');
     const [dataSource, setDataSource] = createSignal('Waiting...');
     const [selectedSymbol, setSelectedSymbol] = createSignal('NIFTY');
@@ -2085,18 +2092,22 @@ function App() {
           >
             Paper Sim
           </button>
-          <button
-            class={`tab-btn ${activeTab() === 'mock' ? 'active' : ''}`}
-            onClick={() => setActiveTab('mock')}
-          >
-            Mock
-          </button>
-          <button
-            class={`tab-btn ${activeTab() === 'overnight' ? 'active' : ''}`}
-            onClick={() => setActiveTab('overnight')}
-          >
-            Overnight
-          </button>
+          <Show when={mockOn()}>
+            <button
+              class={`tab-btn ${activeTab() === 'mock' ? 'active' : ''}`}
+              onClick={() => setActiveTab('mock')}
+            >
+              Mock
+            </button>
+          </Show>
+          <Show when={overnightOn()}>
+            <button
+              class={`tab-btn ${activeTab() === 'overnight' ? 'active' : ''}`}
+              onClick={() => setActiveTab('overnight')}
+            >
+              Overnight
+            </button>
+          </Show>
           <button
             class={`tab-btn ${activeTab() === 'logs' ? 'active' : ''}`}
             onClick={() => setActiveTab('logs')}

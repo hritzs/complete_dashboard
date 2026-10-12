@@ -11,9 +11,10 @@ package overnight
 //   - a rejection, or Stop, cancels what is still pending and ends the job
 //     with the position exactly as filled so far.
 //
-// Entry spreads its quantity over the minutes asked for (1000 in 10 min =
-// 100 a minute) and over the seconds of each minute; exit / partial / roll
-// send the largest order the broker takes per chunk.
+// Entry and exit can be spread over a number of minutes (1000 in 10 min =
+// 100 a minute, in six steps inside each minute); with no time given, and
+// always for partial exit and roll, each chunk is the largest order the
+// broker takes.
 //
 // Strikes and prices always come from the last finished minute's
 // GreekSoft closes, whether the job starts now or at a set time.
@@ -31,11 +32,14 @@ import (
 // sessionOpen gates LIVE orders (a variable so tests can run at any hour).
 var sessionOpen = inSession
 
+// stepGap: a paced entry / exit takes six steps a minute.
+var stepGap = time.Minute / 6
+
 type JobReq struct {
 	Kind    string  `json:"kind"`
 	Delta   float64 `json:"delta"`
 	Qty     int64   `json:"qty"`     // per leg (entry / partial)
-	Minutes int     `json:"minutes"` // entry: build over this many minutes
+	Minutes int     `json:"minutes"` // entry / exit: spread over this many minutes
 	At      string  `json:"at"`      // HH:MM today; empty = now
 }
 
@@ -92,6 +96,11 @@ func (s *Service) Submit(r JobReq) (*Job, error) {
 		if p == nil || p.qty() == 0 {
 			return nil, fmt.Errorf("no open overnight position")
 		}
+		if r.Kind == "ROLL" {
+			r.Minutes = 0
+		} else if r.Minutes < 0 || r.Minutes > 375 {
+			return nil, fmt.Errorf("exit time must be 0-375 minutes")
+		}
 	case "PARTIAL":
 		if p == nil || p.qty() == 0 {
 			return nil, fmt.Errorf("no open overnight position")
@@ -99,6 +108,7 @@ func (s *Service) Submit(r JobReq) (*Job, error) {
 		if r.Qty <= 0 {
 			return nil, fmt.Errorf("quantity to exit per leg is required")
 		}
+		r.Minutes = 0
 	default:
 		return nil, fmt.Errorf("unknown action %q", r.Kind)
 	}
@@ -176,6 +186,67 @@ func (s *Service) run(ctx context.Context, j *Job, at time.Time) {
 		}
 	}
 	s.jobCancel = nil
+	_ = s.st.save(s.dir)
+	if j.Mode == ModeLive && len(j.Plan) > 0 {
+		go s.recheck(j)
+	}
+}
+
+// brokerHolds compares every held leg with the account's net position at
+// the broker and refuses to sell when the broker holds less.
+func (s *Service) brokerHolds(ctx context.Context, j *Job) error {
+	c2, cancel := context.WithTimeout(ctx, 6*time.Second)
+	defer cancel()
+	bp, err := s.live.Positions(c2)
+	if err != nil {
+		return fmt.Errorf("broker positions not readable, nothing sold: %w", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.brokerPos, s.brokerAt, s.brokerErr = bp, time.Now(), ""
+	p := s.st.Position
+	if p == nil {
+		return nil
+	}
+	for _, l := range p.Legs {
+		if l.Qty <= 0 {
+			continue
+		}
+		j.logf("position check: %.0f %s module %d / broker %d", l.Strike, l.Opt, l.Qty, bp[l.Token])
+		if bp[l.Token] < l.Qty {
+			return fmt.Errorf("broker holds %d of %.0f %s but the module has %d -- nothing sold; reconcile first", bp[l.Token], l.Strike, l.Opt, l.Qty)
+		}
+	}
+	return nil
+}
+
+// recheck reads the broker's positions a moment after a LIVE job ended and
+// writes the comparison into the job log.
+func (s *Service) recheck(j *Job) {
+	time.Sleep(2 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	bp, err := s.live.Positions(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err != nil {
+		j.logf("position check after the job failed: %v", err)
+		return
+	}
+	s.brokerPos, s.brokerAt, s.brokerErr = bp, time.Now(), ""
+	for _, pl := range j.Plan {
+		have := int64(0)
+		if p := s.st.Position; p != nil {
+			if l := p.leg(pl.Token); l != nil {
+				have = l.Qty
+			}
+		}
+		mark := "in sync"
+		if bp[pl.Token] != have {
+			mark = "⚠ DIFFERENT"
+		}
+		j.logf("position check after the job: %.0f %s module %d / broker %d -- %s", pl.Strike, pl.Opt, have, bp[pl.Token], mark)
+	}
 	_ = s.st.save(s.dir)
 }
 
@@ -270,6 +341,14 @@ func (s *Service) runJob(ctx context.Context, j *Job, at time.Time) error {
 	sc, err := s.lastMinute(ctx, d, j.Mode)
 	if err != nil {
 		return err
+	}
+
+	// Before anything is sold for real, the broker must hold at least what
+	// the module believes it holds on each leg.
+	if j.Mode == ModeLive && j.Kind != "ENTRY" {
+		if err := s.brokerHolds(ctx, j); err != nil {
+			return err
+		}
 	}
 
 	// ---- the plan
@@ -372,41 +451,42 @@ func (s *Service) runJob(ctx context.Context, j *Job, at time.Time) error {
 		return err
 	}
 
-	// ---- entry: paced over the minutes asked for
-	if j.Kind == "ENTRY" && j.Minutes > 0 {
-		total := plan[0].Target / lot
+	// ---- entry / exit paced over the minutes asked for: six steps a
+	// minute; after step k every leg stands at round(its quantity x k / steps).
+	if (j.Kind == "ENTRY" || j.Kind == "EXIT") && j.Minutes > 0 {
+		const perMinute = 6
+		steps := int64(j.Minutes * perMinute)
 		start := time.Now()
-		done := int64(0)
-		for m := 0; m < j.Minutes; m++ {
-			slice := int64(math.Round(float64(total)*float64(m+1)/float64(j.Minutes))) - done
-			if slice <= 0 {
+		for k := int64(1); k <= steps; k++ {
+			want := map[*PlanLeg]int64{}
+			any := false
+			for _, pl := range plan {
+				goal := int64(math.Round(float64(pl.Target/lot)*float64(k)/float64(steps))) * lot
+				if goal > pl.Done {
+					want[pl], any = goal-pl.Done, true
+				}
+			}
+			if !any {
 				continue
 			}
-			clips := int64(6) // spread inside the minute
-			if slice < clips {
-				clips = slice
+			if !sleepCtx(ctx, time.Until(start.Add(time.Duration(k-1)*stepGap))) {
+				return fmt.Errorf("stopped by user")
 			}
-			inSlice := int64(0)
-			for i := int64(0); i < clips; i++ {
-				due := start.Add(time.Duration(m)*time.Minute + time.Duration(i)*time.Minute/time.Duration(clips))
-				if !sleepCtx(ctx, time.Until(due)) {
-					return fmt.Errorf("stopped by user")
-				}
-				n := int64(math.Round(float64(slice)*float64(i+1)/float64(clips))) - inSlice
-				inSlice += n
-				for n > 0 { // a clip above the broker's order size goes in several chunks
-					q := min64(n*lot, maxQ)
-					var parts []part
-					for _, pl := range plan {
+			for any { // a step above the broker's order size goes in several chunks
+				var parts []part
+				for _, pl := range plan {
+					if q := min64(want[pl], maxQ); q > 0 {
 						parts = append(parts, part{pl, ins[pl.Token], q})
+						want[pl] -= q
 					}
-					if err := s.runChunk(ctx, j, parts, lot); err != nil {
-						return err
-					}
-					n -= q / lot
+				}
+				if any = len(parts) > 0; !any {
+					break
+				}
+				if err := s.runChunk(ctx, j, parts, lot); err != nil {
+					return err
 				}
 			}
-			done += slice
 		}
 		return nil
 	}
