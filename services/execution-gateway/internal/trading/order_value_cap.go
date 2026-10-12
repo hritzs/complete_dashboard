@@ -11,8 +11,9 @@ package trading
 //	max lots = floor( limit / (underlying x 1.04) / lot )
 //
 // The 4% margin covers strikes above the money (strike + premium is what
-// the broker multiplies). GS_MAX_ORDER_VALUE sets the limit in rupees
-// (default 22500000); 0 switches the cap off.
+// the broker multiplies). The cap is OFF by default; GS_MAX_ORDER_VALUE
+// sets the limit in rupees (the broker's was 22500000 on 2026-10-12) and
+// switches it on.
 
 import (
 	"context"
@@ -26,7 +27,9 @@ import (
 )
 
 const (
-	orderValueDefault = 22500000.0
+	// Off unless GS_MAX_ORDER_VALUE is set (e.g. 22500000): the user wants
+	// no platform-side cap for now.
+	orderValueDefault = 0.0
 	orderValueMargin  = 1.04
 )
 
