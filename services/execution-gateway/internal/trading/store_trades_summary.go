@@ -50,6 +50,9 @@ type TradeSummary struct {
 	// broker's own reason; RejectCount: all rejected orders of the trade.
 	LastReject  *TradeReject `json:"last_reject,omitempty"`
 	RejectCount int          `json:"reject_count,omitempty"`
+	// Rejects: every rejected order, oldest first, each with a plain cause
+	// and the broker's complete message (reject_reasons.go).
+	Rejects []TradeReject `json:"rejects,omitempty"`
 }
 
 // TradeReject is one broker-rejected order, reason verbatim.
@@ -61,7 +64,10 @@ type TradeReject struct {
 	LimitPrice    float64   `json:"limit_price"`
 	Phase         string    `json:"phase"`
 	BrokerOrderID string    `json:"broker_order_id"`
-	Reason        string    `json:"reason"`
+	Reason        string    `json:"reason"`          // the broker's complete message
+	Qty           int64     `json:"qty,omitempty"`   // order quantity
+	Kind          string    `json:"kind,omitempty"`  // MTM_LIMIT / ORDER_VALUE / PRICE_BAND / MARGIN / OTHER
+	Cause         string    `json:"cause,omitempty"` // the same in plain words
 }
 
 // lastRejectsSQL: per trade created in [$1, $2), its latest REJECTED order
@@ -192,6 +198,10 @@ func (s *PostgresBackedStore) TradeSummaries(ctx context.Context, from, to time.
 	if err != nil {
 		return nil, err
 	}
+	allRej, err := s.allRejects(ctx, from, to)
+	if err != nil {
+		return nil, err
+	}
 
 	tradeRows, err := s.db.QueryContext(ctx, `
 		SELECT trade_uid, COALESCE(user_id,''), COALESCE(broker_name,''), COALESCE(account_id,''),
@@ -231,6 +241,10 @@ func (s *PostgresBackedStore) TradeSummaries(ctx context.Context, from, to time.
 			Executions: list,
 			Config:     stored.Config,
 			LastReject: rejects[uid], RejectCount: rejectCount[uid],
+			Rejects: allRej[uid],
+		}
+		if sum.LastReject != nil {
+			sum.LastReject.Kind, sum.LastReject.Cause = rejectCause(sum.LastReject.Reason)
 		}
 		sum.PnLPerStraddle = pnlPerStraddle(sum.RealizedPnL, stored.Lots, stored.LotSize)
 		sum.WingRealizedPnL = totalRealizedPnL(computeWingLegPnL(list))

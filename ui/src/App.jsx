@@ -29,6 +29,21 @@
   const rowBtn = { padding: "3px 7px", "font-size": "11px", "min-width": "0" };
 
   // HH:MM:SS (IST) of a broker rejection.
+  // Rejections of a trade grouped by cause (kind + what the limit was), in
+  // the order they first happened.
+  const rejectGroups = (item) => {
+    const list = item.rejects && item.rejects.length ? item.rejects : (item.lastReject ? [item.lastReject] : []);
+    const groups = [];
+    for (const r of list) {
+      // Same check, same allowed limit = one line (the MTM figure itself moves every order).
+      const key = (r.kind || 'OTHER') + '|' + (r.kind === 'MTM_LIMIT' ? (String(r.cause || '').match(/beyond the (\S+) allowed/) || [])[1] : (r.cause || r.reason));
+      let g = groups.find((x) => x.key === key);
+      if (!g) { g = { key, cause: r.cause || r.reason, count: 0, first: rejectTime(r), last: rejectTime(r) }; groups.push(g); }
+      g.count += 1; g.last = rejectTime(r); g.cause = r.cause || r.reason;
+    }
+    return groups;
+  };
+
   const rejectTime = (r) => {
     const t = new Date(r?.time || 0);
     return Number.isFinite(t.getTime()) && t.getTime() > 0
@@ -1107,6 +1122,7 @@ function App() {
             config: t.config || {},
             lastReject: t.last_reject || null,
             rejectCount: t.reject_count || 0,
+            rejects: t.rejects || [],
             points_allowed: 0,
             closeReason: t.close_reason || "",
             closedAt: t.closed_at || "",
@@ -1158,6 +1174,7 @@ function App() {
           executions: summaryByUid[tr.trade_uid]?.executions || [],
           lastReject: summaryByUid[tr.trade_uid]?.last_reject || null,
           rejectCount: summaryByUid[tr.trade_uid]?.reject_count || 0,
+          rejects: summaryByUid[tr.trade_uid]?.rejects || [],
           unrealizedPnl: tr.unrealized_pnl ?? 0,
           totalPnl: tr.total_pnl ?? tr.live_pnl ?? 0,
           config: tr.config || {},
@@ -2894,6 +2911,9 @@ function App() {
                                   <div style={{ "font-size": "11px", color: "#ff6b6b", "margin-top": "3px", "font-weight": 700 }} title={item.lastReject.reason}>
                                     ⚠ {item.rejectCount > 1 ? `${item.rejectCount} orders` : "order"} REJECTED · last {rejectTime(item.lastReject)} {item.lastReject.leg} {item.lastReject.side} @{fmt(item.lastReject.limit_price, 2)}
                                   </div>
+                                  <div style={{ "font-size": "11px", color: "#ff9a9a", "margin-top": "2px", "max-width": "360px", "white-space": "normal", "line-height": "1.3" }} title={item.lastReject.reason}>
+                                    {item.lastReject.cause || item.lastReject.reason}
+                                  </div>
                                 </Show>
                                 <Show when={isBuilding() && buildTotal() > 0}>
                                   <div style={{ "font-size": "11px", opacity: 0.75, "margin-top": "2px" }}>
@@ -2952,9 +2972,35 @@ function App() {
                                     <Show when={item.lastReject}>
                                       <div style={{ margin: "10px 0", padding: "10px 12px", "border-radius": "8px", border: "1px solid #b23b3b", background: "rgba(178,59,59,0.12)" }}>
                                         <div style={{ color: "#ff6b6b", "font-weight": 700 }}>
-                                          ⚠ Broker REJECTED {item.rejectCount > 1 ? `${item.rejectCount} orders of this trade — latest` : "an order of this trade"}: {rejectTime(item.lastReject)} · {item.lastReject.leg} {item.lastReject.strike ? fmt(item.lastReject.strike, 0) : ""} {item.lastReject.side} @ ₹{fmt(item.lastReject.limit_price, 2)} · {item.lastReject.phase || "—"} · broker order {item.lastReject.broker_order_id || "—"}
+                                          ⚠ Broker REJECTED {item.rejectCount > 1 ? `${item.rejectCount} orders of this trade` : "an order of this trade"}
                                         </div>
-                                        <div style={{ "margin-top": "6px", "font-family": "monospace", "font-size": "12px", "white-space": "pre-wrap", "word-break": "break-word" }}>{item.lastReject.reason}</div>
+                                        <For each={rejectGroups(item)}>{(g) => (
+                                          <div style={{ "margin-top": "8px", "font-size": "13px" }}>
+                                            <strong>{g.count}×</strong> {g.cause}
+                                            <span style={{ opacity: 0.7 }}> · {g.first}{g.last !== g.first ? `–${g.last}` : ""}</span>
+                                          </div>
+                                        )}</For>
+                                        <details style={{ "margin-top": "10px" }} open={item.rejectCount <= 6}>
+                                          <summary style={{ cursor: "pointer", "font-size": "12px", opacity: 0.85 }}>Every rejected order, with the broker's complete message</summary>
+                                          <div style={{ "overflow-x": "auto", "margin-top": "6px" }}>
+                                            <table style={{ width: "100%", "border-collapse": "collapse", "font-size": "12px" }}>
+                                              <thead><tr style={{ opacity: 0.7, "text-align": "left" }}>
+                                                <th style={{ padding: "4px 8px" }}>Time</th><th style={{ padding: "4px 8px" }}>For</th><th style={{ padding: "4px 8px" }}>Order</th><th style={{ padding: "4px 8px" }}>Broker order</th><th style={{ padding: "4px 8px" }}>Broker's message (complete)</th>
+                                              </tr></thead>
+                                              <tbody>
+                                                <For each={(item.rejects && item.rejects.length ? item.rejects : [item.lastReject])}>{(r) => (
+                                                  <tr style={{ "border-top": "1px solid rgba(255,255,255,0.08)", "vertical-align": "top" }}>
+                                                    <td style={{ padding: "4px 8px", "white-space": "nowrap" }}>{rejectTime(r)}</td>
+                                                    <td style={{ padding: "4px 8px", "white-space": "nowrap" }}>{r.phase || "—"}</td>
+                                                    <td style={{ padding: "4px 8px", "white-space": "nowrap" }}>{r.side} {r.qty || ""} {r.leg} {r.strike ? fmt(r.strike, 0) : ""} @ ₹{fmt(r.limit_price, 2)}</td>
+                                                    <td style={{ padding: "4px 8px", "white-space": "nowrap" }}>{r.broker_order_id || "—"}</td>
+                                                    <td style={{ padding: "4px 8px", "font-family": "monospace", "white-space": "pre-wrap", "word-break": "break-word" }}>{r.reason}</td>
+                                                  </tr>
+                                                )}</For>
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                        </details>
                                       </div>
                                     </Show>
 
