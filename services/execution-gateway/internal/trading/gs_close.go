@@ -155,7 +155,10 @@ func (s *Service) gsWarmLoop() {
 			s.gsWarmNow()
 		}
 		if now.Second() == 30 { // missing minutes (restart gap) from GreekSoft candles
-			go s.gsBackfillNow()
+			go func() {
+				s.gsBackfillNow()
+				s.gsOverlayNow() // position strikes of the stored minutes at GreekSoft's closes
+			}()
 		}
 	}
 }
