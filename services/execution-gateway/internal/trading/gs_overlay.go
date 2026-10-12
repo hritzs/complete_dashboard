@@ -131,7 +131,13 @@ func (s *Service) gsOverlayNow() {
 	}
 	wg.Wait()
 
-	ov := gsOverlay{}
+	// Start from what is already known: a candle request that failed this
+	// run (cold connections right after a restart) must not blank a side
+	// that an earlier run had.
+	ov := gsOverlayLoad(day)
+	if ov == nil {
+		ov = gsOverlay{}
+	}
 	times := make([]string, 0, len(mins))
 	for t := range mins {
 		times = append(times, t)
@@ -145,6 +151,13 @@ func (s *Service) gsOverlayNow() {
 		b := time.Date(now.Year(), now.Month(), now.Day(), hh, mm, 0, 0, lutIST()).Unix()
 		for k, v := range strikes {
 			ce, pe := closes[v.ce][b], closes[v.pe][b] // the candle ending at this minute, exactly
+			old := ov[t][gsOverlayKey(k)]
+			if ce <= 0 {
+				ce = old[0]
+			}
+			if pe <= 0 {
+				pe = old[1]
+			}
 			if ce <= 0 && pe <= 0 {
 				continue
 			}
