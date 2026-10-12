@@ -1,6 +1,7 @@
 package main
 
-// Live GreekSoft quotes for other local services (the Overnight tab).
+// Live GreekSoft quotes for other local programs (the separate
+// overnight-nifty-long project reads them).
 //
 // The bridge owns the ONE Apollo market-data websocket of the account, so
 // anything else that needs GreekSoft live prices asks the bridge instead of

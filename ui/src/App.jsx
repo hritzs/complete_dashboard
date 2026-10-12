@@ -3,7 +3,6 @@
   import StraddleBuildTab from './StraddleBuildTab.jsx';
   import PaperSimTab from './PaperSimTab.jsx';
   import MockTab from './MockTab.jsx';
-  import OvernightTab from './overnight/OvernightTab.jsx';
   import SBPortfolioRows, { sbStore } from './SBPortfolioRows.jsx';
   import ManualLegPanel, { closeManualLeg } from './ManualLegPanel.jsx';
   import PortfolioMTMPanel from './PortfolioMTMPanel.jsx';
@@ -90,12 +89,6 @@ function parseTiers(text) {
 
 function App() {
     const [activeTab, setActiveTab] = createSignal('terminal');
-    // Optional tabs: shown only when the backend says the feature is on
-    // (OVERNIGHT_ENABLED). Asked once, not polled. The Mock tab is always
-    // shown and has its own Off / On switch inside.
-    const [overnightOn, setOvernightOn] = createSignal(false);
-    const askFeature = (url, set) => fetch(url).then((r) => r.json()).then((j) => set(!!j && j.enabled === true)).catch(() => set(false));
-    askFeature('/api/overnight?probe=1', setOvernightOn);
     const [wsStatus, setWsStatus] = createSignal('Connecting...');
     const [dataSource, setDataSource] = createSignal('Waiting...');
     const [selectedSymbol, setSelectedSymbol] = createSignal('NIFTY');
@@ -2097,14 +2090,6 @@ function App() {
           >
             Mock
           </button>
-          <Show when={overnightOn()}>
-            <button
-              class={`tab-btn ${activeTab() === 'overnight' ? 'active' : ''}`}
-              onClick={() => setActiveTab('overnight')}
-            >
-              Overnight
-            </button>
-          </Show>
           <button
             class={`tab-btn ${activeTab() === 'logs' ? 'active' : ''}`}
             onClick={() => setActiveTab('logs')}
@@ -4287,10 +4272,6 @@ function App() {
 
         <Show when={activeTab() === 'mock'}>
           <MockTab />
-        </Show>
-
-        <Show when={activeTab() === 'overnight'}>
-          <OvernightTab />
         </Show>
 
         <Show when={activeTab() === 'logs'}>

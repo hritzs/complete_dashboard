@@ -1,5 +1,11 @@
 # Overnight module
 
+> **Disconnected backup.** Since 2026-10-12 the overnight system runs as its
+> own program in `~/Desktop/overnight-nifty-long`, and that copy is the one
+> being developed. This folder is not started by the gateway and has no tab;
+> it is kept as a fallback. Reconnection steps are at the top of
+> `services/execution-gateway/overnight_adapter.go`.
+
 Positional NIFTY monthly trading on GreekSoft: a CE and a PE picked by delta
 are bought over a set time, carried for days, then exited, partly exited or
 rolled. This folder is self-contained so it can be moved to another project

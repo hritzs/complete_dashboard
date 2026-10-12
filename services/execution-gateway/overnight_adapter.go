@@ -1,5 +1,18 @@
+//go:build overnight
+
 package main
 
+// DISCONNECTED BACKUP (2026-10-12). The overnight system now runs as its own
+// program in ~/Desktop/overnight-nifty-long; this gateway no longer starts
+// it, serves /api/overnight or shows its tab. The code is kept here in case
+// the separate program cannot be used. This file is compiled only with
+// `go build -tags overnight`; to connect it again:
+//
+//  1. build with -tags overnight;
+//  2. in main.go call startOvernight(ctx, factory) after the broker factory
+//     is set, and add mux.HandleFunc("/api/overnight", overnightHandler);
+//  3. in ui/src/App.jsx import ./overnight/OvernightTab.jsx and add its tab.
+//
 // The only link between the overnight module (internal/overnight) and this
 // gateway: an adapter that lets the module use the gateway's existing
 // GreekSoft session -- no second login, no second socket. When the module
@@ -191,7 +204,6 @@ func startOvernight(ctx context.Context, factory trading.BrokerFactory) {
 		symbol = "NIFTY"
 	}
 	overnightSvc = overnight.New(&overnightBroker{factory: factory, symbol: symbol})
-	trading.ExternalHoldings = overnightSvc.HeldQty // keeps the intraday position check quiet about carried legs
 	overnightSvc.Start(ctx)
 	log.Printf("[OVERNIGHT] module started (%s, account %s)", symbol, overnightAccount())
 }
