@@ -309,7 +309,7 @@ export default function LutBuildTab() {
           <div style={{ 'margin-top': '6px' }}>
             NIFTY {d().expiry} <strong>{fmt(d().strike, 0)}</strong> — SELL CE {d().qty} (bid {fmt(d().ce_bid)} / ask {fmt(d().ce_ask)}) + SELL PE {d().qty} (bid {fmt(d().pe_bid)} / ask {fmt(d().pe_ask)})
           </div>
-          <div>{d().lots} lot(s) × {d().lot_size} · future {fmt(d().underlying)} · build IV {fmt(d().evaluation?.build_iv, 4)} · adjusted build IV {fmt(d().evaluation?.adj_build_iv, 4)}</div>
+          <div>{d().lots * d().lot_size} qty ({d().lots} lot(s) × {d().lot_size}) · future {fmt(d().underlying)} · build IV {fmt(d().evaluation?.build_iv, 4)} · adjusted build IV {fmt(d().evaluation?.adj_build_iv, 4)}</div>
           <div>Exit: SL {fmt(d().sl_bps, 0)} bps = {fmt(d().sl_points)} pts (₹{fmt(d().sl_rupees, 0)}) · TP {fmt(d().tp_bps, 0)} bps = {fmt(d().tp_points)} pts (₹{fmt(d().tp_rupees, 0)})</div>
         </div>
       </Show>
@@ -324,7 +324,7 @@ export default function LutBuildTab() {
         <KV k="Date" v={live()?.day} />
         <KV k="Expiry" v={live()?.expiry || '—'} />
         <KV k="Lot size" v={live()?.lot_size || '—'} />
-        <KV k="Size" v={`${lots()} lot(s) = ${qty()} qty`} />
+        <KV k="Size" v={`${qty()} qty (${lots()} lot(s))`} />
         <KV k="Prev straddle" v={fmt(inp().PrevStraddle)} />
         <KV k="Prev future" v={fmt(inp().PrevFuture)} />
         <KV k="Yesterday Adj IV" v={fmt(inp().YesterdayIV, 4)} />
@@ -538,8 +538,17 @@ export default function LutBuildTab() {
 
       <div style={{ display: 'flex', gap: '12px', 'flex-wrap': 'wrap', 'align-items': 'flex-end' }}>
         <label class="control-block">
-          <span class="control-label">Size (lots)</span>
-          <input class="symbol-select" type="text" inputmode="decimal" min="1" value={lots()} onInput={(e) => setLots(e.currentTarget.value)} />
+          <span class="control-label">Size (qty)</span>
+          <input class="symbol-select" type="text" inputmode="numeric"
+            title={`Quantity per leg; whole lots of ${live()?.lot_size || 65}. The backend keeps lots.`}
+            value={(Number(lots()) || 0) * (live()?.lot_size || 65)}
+            onChange={(e) => {
+              const ls = live()?.lot_size || 65;
+              const q = Number(e.currentTarget.value) || 0;
+              const l = Math.max(1, Math.round(q / ls)); // nearest whole lot
+              setLots(String(l));
+              e.currentTarget.value = String(l * ls);
+            }} />
         </label>
         <label class="control-block">
           <span class="control-label">Expiry (blank = nearest)</span>

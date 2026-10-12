@@ -10,8 +10,8 @@ const box = { border: '1px solid rgba(255,255,255,0.10)', 'border-radius': '8px'
 const muted = { opacity: 0.65, 'font-size': '12px' };
 
 const FIELDS = [
-  ['lots', 'Size (lots)', 'number'],
-  ['order_lots_per_call', 'Lots per order (0 = auto)', 'number'],
+  ['lots', 'Size (qty)', 'number'],
+  ['order_lots_per_call', 'Qty per order (0 = auto)', 'number'],
   ['exit_time', 'Exit time', 'text'],
   ['sl_bps', 'SL bps (0 = LUT 14)', 'number'],
   ['tp_bps', 'TP bps (0 = LUT own)', 'number'],
@@ -27,6 +27,8 @@ const FIELDS = [
   ['product_type', 'Product', 'text'],
 ];
 const NUM = new Set(FIELDS.filter((f) => f[2] === 'number').map((f) => f[0]));
+// Shown and typed as QUANTITY on this tab; the backend keeps lots.
+const QTY = new Set(['lots', 'order_lots_per_call']);
 
 const STATUS_BG = { BUILT: '#2e7d32', FIRING: '#c98500', FAILED: '#b23b3b', REFUSED: '#b23b3b', UNKNOWN: '#b23b3b' };
 
@@ -40,29 +42,46 @@ export default function LutActualBuild() {
     try {
       const d = await (await fetch('/api/lut/build')).json();
       setSt(d);
-      if (!dirty() && d.config) setForm({ ...d.config });
+      if (!dirty() && d.config) setForm(toQty(d.config, d.lot_size));
     } catch (e) { setMsg(String(e)); }
   };
+  const lot = () => Number(st()?.lot_size) || 65;
+  // config (lots) -> form (quantity)
+  const toQty = (cfg, lotSize) => {
+    const l = Number(lotSize) || 65;
+    const f = { ...cfg };
+    for (const k of QTY) f[k] = (Number(cfg[k]) || 0) * l;
+    return f;
+  };
+  // form (quantity) -> request (lots); null + message when a quantity is not whole lots
   const body = () => {
     const f = { ...form() };
     for (const k of NUM) f[k] = Number(f[k]) || 0;
+    for (const k of QTY) {
+      const q = f[k];
+      if (q < 0 || q % lot() !== 0) { setMsg(`${k === 'lots' ? 'Size' : 'Qty per order'} ${q} is not a multiple of the lot size ${lot()} (e.g. ${Math.max(1, Math.round(q / lot())) * lot()})`); return null; }
+      f[k] = q / lot();
+    }
+    if (f.lots < 1) { setMsg(`Size must be at least ${lot()} (1 lot)`); return null; }
     return f;
   };
   const post = async (extra) => {
     setMsg('');
+    const b = body();
+    if (b == null) return false;
     try {
-      const d = await (await fetch('/api/lut/build', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body(), ...extra }) })).json();
+      const d = await (await fetch('/api/lut/build', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...b, ...extra }) })).json();
       if (!d.success) { setMsg(d.error || 'failed'); return false; }
       setDirty(false);
       setSt(d);
-      setForm({ ...d.config });
+      setForm(toQty(d.config, d.lot_size));
       return true;
     } catch (e) { setMsg(String(e)); return false; }
   };
   // One OK/Cancel question; OK sends the backend's confirmation text itself.
   const confirmText = () => st()?.confirm_text || 'SELL LIVE';
   const armedConfirm = () =>
-    window.confirm(`REAL ORDERS: the LUT's first YES will SELL ${form()?.lots} lot(s) on ${form()?.broker_name}/${form()?.account_id}.\n\nSell?`) ? confirmText() : null;
+    window.confirm(`REAL ORDERS: the LUT's first YES will SELL ${form()?.lots} qty per leg (${(Number(form()?.lots) || 0) / lot()} lot(s) of ${lot()}) on ${form()?.broker_name}/${form()?.account_id}.\n\nSell?`) ? confirmText() : null;
   const save = async () => {
     if (st()?.config?.armed) {
       const c = armedConfirm();
@@ -82,11 +101,11 @@ export default function LutActualBuild() {
   // said YES this minute). Never uses up the day's real entry.
   const testFire = async () => {
     if (dirty()) { setMsg('save the settings first'); return; }
-    if (!window.confirm(`TEST FIRE -- REAL ORDERS NOW: a delta-neutral ${form()?.lots}-lot NIFTY straddle at the LUT's current strike on ${form()?.broker_name}/${form()?.account_id}, exactly as a LUT YES would.\n\nSell now?`)) return;
+    if (!window.confirm(`TEST FIRE -- REAL ORDERS NOW: a delta-neutral NIFTY straddle of ${form()?.lots} qty per leg (${(Number(form()?.lots) || 0) / lot()} lot(s)) at the LUT's current strike on ${form()?.broker_name}/${form()?.account_id}, exactly as a LUT YES would.\n\nSell now?`)) return;
     setMsg('');
     try {
       const d = await (await fetch('/api/lut/build/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: confirmText() }) })).json();
-      setMsg(d.success ? `TEST fired at ${d.test?.fired_at}: ${d.test?.expiry} ${d.test?.strike} ${d.test?.lots} lot(s) -- watch the status below / Portfolio` : (d.error || 'failed'));
+      setMsg(d.success ? `TEST fired at ${d.test?.fired_at}: ${d.test?.expiry} ${d.test?.strike} ${(d.test?.lots || 0) * lot()} qty -- watch the status below / Portfolio` : (d.error || 'failed'));
       load();
     } catch (e) { setMsg(String(e)); }
   };
@@ -112,7 +131,7 @@ export default function LutActualBuild() {
       <Show when={today()}>
         <div style={{ margin: '8px 0', padding: '6px 10px', 'border-radius': '6px', background: 'rgba(255,255,255,0.05)' }}>
           <span style={{ padding: '1px 8px', 'border-radius': '8px', background: STATUS_BG[today().status] || '#455a64', 'margin-right': '8px' }}>{today().status}</span>
-          today: LUT YES {today().minute} → fired {today().fired_at}{today().finished_at ? `, done ${today().finished_at}` : ''} · {today().expiry} {today().strike} · {today().lots} lot(s) · SL {Number(today().sl_bps).toFixed(2)} / TP {Number(today().tp_bps).toFixed(2)} bps · exit {today().exit_time} · {today().account}
+          today: LUT YES {today().minute} → fired {today().fired_at}{today().finished_at ? `, done ${today().finished_at}` : ''} · {today().expiry} {today().strike} · {today().lots * lot()} qty ({today().lots} lot(s)) · SL {Number(today().sl_bps).toFixed(2)} / TP {Number(today().tp_bps).toFixed(2)} bps · exit {today().exit_time} · {today().account}
           {today().trade_uid ? ` · trade ${today().trade_uid}` : ''}
           <Show when={today().error}><div style={{ color: '#e66767', 'margin-top': '4px' }}>{today().error}</div></Show>
           <Show when={today().message}><div style={muted}>{today().message}</div></Show>
@@ -121,7 +140,7 @@ export default function LutActualBuild() {
       <For each={st()?.tests || []}>{(tr) => (
         <div style={{ margin: '6px 0', padding: '6px 10px', 'border-radius': '6px', background: 'rgba(201,133,0,0.08)', 'font-size': '13px' }}>
           <span style={{ padding: '1px 8px', 'border-radius': '8px', background: STATUS_BG[tr.status] || '#455a64', 'margin-right': '8px' }}>TEST {tr.status}</span>
-          fired {tr.fired_at}{tr.finished_at ? `, done ${tr.finished_at}` : ''} · {tr.expiry} {tr.strike} · {tr.lots} lot(s) · SL {Number(tr.sl_bps).toFixed(2)} / TP {Number(tr.tp_bps).toFixed(2)} bps · exit {tr.exit_time} · {tr.account}{tr.trade_uid ? ` · trade ${tr.trade_uid}` : ''}
+          fired {tr.fired_at}{tr.finished_at ? `, done ${tr.finished_at}` : ''} · {tr.expiry} {tr.strike} · {tr.lots * lot()} qty ({tr.lots} lot(s)) · SL {Number(tr.sl_bps).toFixed(2)} / TP {Number(tr.tp_bps).toFixed(2)} bps · exit {tr.exit_time} · {tr.account}{tr.trade_uid ? ` · trade ${tr.trade_uid}` : ''}
           <Show when={tr.error}><div style={{ color: '#e66767' }}>{tr.error}</div></Show>
         </div>
       )}</For>
@@ -136,6 +155,11 @@ export default function LutActualBuild() {
               <span class="control-label">{label}</span>
               <input class="symbol-select" style={{ width: type === 'number' ? '90px' : '110px' }} type={type === 'number' ? 'text' : type} inputmode={type === 'number' ? 'decimal' : undefined} step="any" value={form()[k] ?? ''}
                 onInput={(e) => { setForm({ ...form(), [k]: e.currentTarget.value }); setDirty(true); }} />
+              <Show when={QTY.has(k)}>
+                <span style={{ ...muted, 'font-size': '11px' }}>
+                  {k === 'order_lots_per_call' && !(Number(form()[k]) > 0) ? 'automatic' : `${(Number(form()[k]) || 0) / lot()} lot(s) × ${lot()}`}
+                </span>
+              </Show>
             </label>
           )}</For>
         </div>

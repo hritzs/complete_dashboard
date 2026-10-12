@@ -350,13 +350,17 @@ func (h *Handlers) LUTBuildHandler(w http.ResponseWriter, r *http.Request) {
 			run = &cp
 		}
 		taken := lutEng.entry != nil
+		lotSize := lutEng.lotSize // for the tab, which shows quantities
+		if lotSize <= 0 {
+			lotSize = 65
+		}
 		tests := make([]LUTBuildRun, 0, len(lutEng.tests))
 		for _, t := range lutEng.tests {
 			tests = append(tests, *t)
 		}
 		lutEng.mu.Unlock()
 		out := map[string]interface{}{"success": status == http.StatusOK, "config": c, "today": run, "lut_yes_taken_today": taken,
-			"not_ready": h.Service.lutBuildChecks(c, now), "warnings": h.Service.lutBuildWarnings(), "confirm_text": lutBuildConfirm, "tests": tests}
+			"not_ready": h.Service.lutBuildChecks(c, now), "warnings": h.Service.lutBuildWarnings(), "confirm_text": lutBuildConfirm, "tests": tests, "lot_size": lotSize}
 		for k, v := range extra {
 			out[k] = v
 		}
