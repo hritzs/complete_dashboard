@@ -34,7 +34,7 @@ type Pick struct {
 	Price  float64 `json:"price"`
 	IV     float64 `json:"iv"`
 	Delta  float64 `json:"delta"`
-	Src    string  `json:"src,omitempty"` // gs = candle close, ws = websocket tick, old = stale candle
+	Src    string  `json:"src,omitempty"` // gs = candle close, ws = websocket tick
 }
 
 type Picks struct {
@@ -144,7 +144,7 @@ type closeBook struct {
 	ticks map[int64]Quote // by exchange token
 	mu    sync.Mutex
 	got   map[int64]float64
-	src   map[int64]string // "gs" candle | "ws" tick | "old" stale candle
+	src   map[int64]string // "gs" candle | "ws" tick
 	miss  map[int64]bool
 	n     int
 }
@@ -187,11 +187,11 @@ func (cb *closeBook) at(token int64) (float64, bool) {
 		}
 	}
 	if src == "" {
-		if t := tickPrice(cb.ticks[token]); t > 0 {
-			px, src = t, "ws"
-		} else if px > 0 {
-			src = "old"
-		}
+		// Not fresh twice: only the live tick is trusted. A stale candle
+		// alone is NOT used -- it put a morning price into the 13:12 ATM
+		// straddle (642.90 instead of 524) on a start before ticks flowed.
+		px = tickPrice(cb.ticks[token])
+		src = "ws"
 	}
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
@@ -306,18 +306,32 @@ func (s *Service) compute(ctx context.Context, end time.Time) (*Scenario, error)
 
 	// Websocket ticks of the band, taken now: the stand-in for any strike
 	// whose candle is not fresh.
-	ticks := map[int64]Quote{}
-	if q, _, err := s.feed.quotes(ctx, s.bandTokens()); err == nil {
-		for g, v := range q {
-			ticks[g%1000000] = v // gtoken 102051352 -> exchange token 51352
-		}
-	}
-	cb := newCloseBook(ctx, s.live, end, ticks)
 	// The monthly future's own price is the underlying for everything
 	// (ATM and delta) -- no synthetic.
+	ticks := map[int64]Quote{}
+	cb := newCloseBook(ctx, s.live, end, ticks)
+	band := s.bandTokens()
+	load := func() {
+		if q, _, err := s.feed.quotes(ctx, band); err == nil {
+			for g, v := range q {
+				ticks[g%1000000] = v // gtoken 102051352 -> exchange token 51352
+			}
+		}
+	}
+	load() // at least the future's tick, should its candle not be fresh
 	fut, ok := cb.at(c.Fut.Token)
 	if !ok {
 		return nil, fmt.Errorf("no GreekSoft price for the %s future yet", c.Expiry)
+	}
+	// Websocket ticks of the strikes around the future: the stand-in for
+	// any strike whose candle is not fresh. On a fresh start (or after the
+	// tick source restarted) they are asked for now and given a moment.
+	band = s.bandTokensAt(fut)
+	_ = s.feed.subscribe(ctx, band, false)
+	load()
+	if len(ticks) < 10 && inMarket(time.Now()) {
+		sleepCtx(ctx, 2*time.Second)
+		load()
 	}
 	sc := &Scenario{Day: end.Format("2006-01-02"), Minute: end.Format("15:04"), Ts: end.Unix(), Fut: fut, Picks: map[string]*Picks{}}
 	atmIdx := c.idx(fut)
@@ -489,6 +503,15 @@ func (s *Service) markDay(p *Position, sc *Scenario) {
 // points of the last known future price (all strikes before any price is
 // known is too many; then just the future) plus the held legs.
 func (s *Service) bandTokens() []int64 {
+	ref := 0.0
+	if sc := s.lastRow(); sc != nil {
+		ref = sc.Fut
+	}
+	return s.bandTokensAt(ref)
+}
+
+// bandTokensAt is the band around a given future price (0 = future only).
+func (s *Service) bandTokensAt(ref float64) []int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c := s.chain
@@ -496,8 +519,7 @@ func (s *Service) bandTokens() []int64 {
 		return nil
 	}
 	out := []int64{c.Fut.GToken}
-	if n := len(s.rows); n > 0 && s.rows[n-1].Fut > 0 {
-		ref := s.rows[n-1].Fut
+	if ref > 0 {
 		for _, k := range c.Strikes {
 			if math.Abs(k-ref) <= 1500 {
 				out = append(out, c.CE[k].GToken, c.PE[k].GToken)

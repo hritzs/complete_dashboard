@@ -86,6 +86,20 @@ func (s *Service) HeldQty() map[int64]int64 {
 	return out
 }
 
+// GToken is the GreekSoft token of an exchange token of the loaded chain
+// (0 when unknown) -- for a Broker implementation that talks to GreekSoft
+// directly.
+func (s *Service) GToken(token int64) int64 {
+	s.mu.Lock()
+	c := s.chain
+	s.mu.Unlock()
+	if c == nil {
+		return 0
+	}
+	in, _ := c.byToken(token)
+	return in.GToken
+}
+
 // loadChain (re)reads the nearest monthly expiry. While a position is open
 // its own expiry stays loaded.
 func (s *Service) loadChain(now time.Time) {
