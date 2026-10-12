@@ -2,6 +2,7 @@ package trading
 
 import (
 	"math"
+	"strings"
 	"testing"
 	"time"
 )
@@ -81,5 +82,64 @@ func TestLUTStore_SaveReload(t *testing.T) {
 	}
 	if m, _ := lutLoadDay("2026-10-07"); len(m) != 0 {
 		t.Fatal("another day must be empty")
+	}
+}
+
+// The 09:16 .. 09:20 rows: each minute scanned on its own table; a minute
+// already recorded is shown as it was at that minute.
+func TestLUTSellLevels(t *testing.T) {
+	in := LUTDailyInputs{PrevStraddle: 274.75, PrevFuture: 22649.75, YesterdayIV: 0.1186, NormalizedAdjChg: -0.00271, WeightedIDV: 0.12692}
+	S, K, rawDTE := 22660.0, 22650.0, 4.9
+	T := rawDTE / 365
+	var set LUTSet
+	for i := range set {
+		set[i] = &LUTTable{cells: make([]bool, lutCellCount)}
+	}
+	// Allow, in the 09:17 table only, the cell a 12% IV straddle lands in.
+	m := LUTMinuteInput{HHMM: 917, Underlying: S, RawDTE: rawDTE, BusDays: 5,
+		CELTP: lutBSPrice(true, S, K, T, 0.12), PELTP: lutBSPrice(false, S, K, T, 0.12)}
+	ev := EvaluateLUTMinute(set, in, 0.03, false, m)
+	if ev.Skip != "" {
+		t.Fatalf("setup: %+v", ev)
+	}
+	set[1].cells[ev.Coord.index()] = true
+	set[1].Yes = 1
+
+	e := &lutEngine{set: set}
+	now, _ := time.ParseInLocation("2006-01-02 15:04", "2026-10-05 09:05", lutIST())
+	shown := lutCtx{In: in, S: S, K: K, NormOG: 0.03, EvalHHMM: 916, RawDTE: rawDTE, M: m, Ev: &ev}
+	lv := e.lutSellLevels(now, shown, "", true, "yesterday's close (estimate)", false)
+	if len(lv) != 5 || lv[0].Time != "09:16" || lv[4].Time != "09:20" || lv[4].Table != "09:20+" {
+		t.Fatalf("rows: %+v", lv)
+	}
+	for i, l := range lv {
+		if (i == 1) != (len(l.Ranges) > 0) {
+			t.Fatalf("%s: %d YES band(s), only 09:17 has a YES cell", l.Time, len(l.Ranges))
+		}
+	}
+	got := lv[1]
+	if got.SellFrom <= 0 || got.SellFrom > ev.Straddle || got.SellTo < ev.Straddle || !got.InZone || got.Need != 0 || got.Done {
+		t.Fatalf("09:17 row: from %.2f to %.2f straddle %.2f in=%v need=%.2f", got.SellFrom, got.SellTo, ev.Straddle, got.InZone, got.Need)
+	}
+
+	// 09:17 recorded with a straddle below the band: the row is the minute
+	// as it was (its own future and straddle), marked done with its answer.
+	rec := ev
+	rec.Time, rec.Straddle, rec.Allowed = "09:17", got.SellFrom-5, false
+	e.minutes = []LUTEvaluation{rec}
+	moved := shown
+	moved.M.Underlying, moved.S = S+400, S+400 // the live future has run away since
+	lv = e.lutSellLevels(now, moved, "", true, "live future", false)
+	d := lv[1]
+	if !d.Done || d.Allowed || d.Future != S || d.Straddle != rec.Straddle || d.InZone || d.Need < 4.9 || d.SellFrom != got.SellFrom {
+		t.Fatalf("recorded 09:17 row: %+v", d)
+	}
+	// After the window only recorded minutes carry a level.
+	late := e.lutSellLevels(now, moved, "", true, "", true)
+	if !late[1].Done || late[1].SellFrom != got.SellFrom || late[0].Skip != "minute not recorded" || len(late[0].Ranges) != 0 {
+		t.Fatalf("after the window: %+v / %+v", late[0], late[1])
+	}
+	if !strings.Contains(lutLevelsText(lv), "09:16 no YES level") {
+		t.Fatalf("text: %s", lutLevelsText(lv))
 	}
 }

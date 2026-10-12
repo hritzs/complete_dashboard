@@ -31,17 +31,27 @@ type lutPreopen struct {
 // today's 09:16 from the last trading day recorded before today. expiry is
 // today's expiry (blank = whatever was current then). Caller holds e.mu.
 func (e *lutEngine) lutPreopenLocked(now time.Time, expiry string) (*OptionChainSnapshot, string) {
-	key := now.Format("2006-01-02") + "|" + expiry
+	prevFut := 0.0
+	if e.inputsOK {
+		prevFut = e.inputs.PrevFuture
+	}
+	key := fmt.Sprintf("%s|%s|%.2f", now.Format("2006-01-02"), expiry, prevFut)
 	if e.preopen.key == key && time.Since(e.preopenAt) < 5*time.Minute {
 		return e.preopen.chain, e.preopen.note
 	}
 	e.preopenAt = time.Now()
-	e.preopen = lutBuildPreopen(now, expiry)
+	e.preopen = lutBuildPreopen(now, expiry, prevFut)
 	e.preopen.key = key
 	return e.preopen.chain, e.preopen.note
 }
 
-func lutBuildPreopen(now time.Time, expiry string) lutPreopen {
+// lutBuildPreopen takes the latest recorded day before today. When the
+// day's inputs are loaded (prevFuture > 0), a day whose closing future is
+// more than 0.5% away from them is passed over first -- a recorded
+// Saturday mock session is not "yesterday's close" -- and used only if no
+// earlier day fits either.
+func lutBuildPreopen(now time.Time, expiry string, prevFuture float64) lutPreopen {
+	var fallback *lutPreopen
 	for back := 1; back <= 10; back++ {
 		day := now.AddDate(0, 0, -back).Format("2006-01-02")
 		for _, set := range []string{"", "next"} { // yesterday's "next" = today's current after an expiry day
@@ -63,10 +73,21 @@ func lutBuildPreopen(now time.Time, expiry string) lutPreopen {
 			if expiry != "" && m.Expiry != "" && m.Expiry != expiry {
 				continue
 			}
-			if c, note, ok := lutRepriceForToday(m, day, now); ok {
-				return lutPreopen{chain: c, note: note}
+			c, note, ok := lutRepriceForToday(m, day, now)
+			if !ok {
+				continue
 			}
+			if prevFuture > 0 && math.Abs(m.Future-prevFuture)/prevFuture > 0.005 {
+				if fallback == nil {
+					fallback = &lutPreopen{chain: c, note: note + fmt.Sprintf(" -- NOTE: that close is %.2f%% away from the daily inputs' previous future %.2f", (m.Future-prevFuture)/prevFuture*100, prevFuture)}
+				}
+				continue
+			}
+			return lutPreopen{chain: c, note: note}
 		}
+	}
+	if fallback != nil {
+		return *fallback
 	}
 	return lutPreopen{note: "no recorded chain from a previous trading day -- enter manual values to check"}
 }

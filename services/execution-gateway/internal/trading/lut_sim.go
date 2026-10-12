@@ -128,6 +128,9 @@ type LUTLive struct {
 	ManualFields   []string       `json:"manual_fields"`        // which values are manual
 	SellRange      *LUTSellRange  `json:"sell_range,omitempty"`
 	SellRange0920  *LUTSellRange  `json:"sell_range_0920,omitempty"`
+	// SellLevels: for each opening minute 09:16 .. 09:20, the ATM straddle
+	// at / above which the LUT sells (lut_manual.go). Sent until 09:30.
+	SellLevels []LUTSellLevel `json:"sell_levels,omitempty"`
 }
 
 // LUTState is the full state (live payload + every recorded minute).
@@ -169,17 +172,20 @@ type lutEngine struct {
 	u0916         float64
 	ogSource      string
 
-	minutes     []LUTEvaluation
-	lastMinute  int
-	lastChain   int // minute whose whole chain was last saved
-	lastNext    int // same, next-expiry chain
-	lastIV      float64
-	lastLTP     map[int64]lutLTPSeen // token -> last non-zero LTP, refreshed every tick
-	build       *LUTBuildRun         // today's REAL build fired by the LUT (one per day)
-	tests       []*LUTBuildRun       // today's user test fires (never the day's entry)
-	carryLogged int                  // minute whose carried-LTP fill was last logged
-	entry       *LUTEntry
-	startNow    bool
+	minutes      []LUTEvaluation
+	lastMinute   int
+	lastChain    int // minute whose whole chain was last saved
+	lastNext     int // same, next-expiry chain
+	lastIV       float64
+	lastLTP      map[int64]lutLTPSeen // token -> last non-zero LTP, refreshed every tick
+	build        *LUTBuildRun         // today's REAL build fired by the LUT (one per day)
+	tests        []*LUTBuildRun       // today's user test fires (never the day's entry)
+	carryLogged  int                  // minute whose carried-LTP fill was last logged
+	levelsLogged string               // day|basis the sell levels were last logged for
+	levelsDay    string               // day levelsDone belongs to
+	levelsDone   []LUTSellLevel       // the five opening minutes as recorded (from 09:30)
+	entry        *LUTEntry
+	startNow     bool
 
 	live LUTLive
 }
@@ -573,6 +579,42 @@ func (s *Service) lutComputeLocked(now time.Time, day string, hhmm int, chain *O
 				sr2 := lutScanSellRange(e.set, shown, 920)
 				live.SellRange0920 = &sr2
 			}
+		}
+	}
+	// The opening tables side by side: at which ATM straddle each of
+	// 09:16 .. 09:20 would sell. Before the open from yesterday's close,
+	// then from live prices. From 09:30 all five are history: computed once
+	// from the recorded minutes and kept for the day (display only).
+	if withGrid && shown.Ev != nil && shown.M.Underlying > 0 {
+		expStr := cfg.Expiry
+		if dispChain != nil {
+			expStr = dispChain.Expiry
+		} else if expStr == "" {
+			expStr = e.expiry
+		}
+		switch {
+		case hhmm < 930 || whatIf:
+			basis := "live future, opening gap provisional until 09:16"
+			switch {
+			case whatIf:
+				basis = "manual what-if"
+			case live.Preopen != "":
+				basis = "yesterday's close (estimate)"
+			case e.u0916 > 0 || cfg.Underlying0916 > 0:
+				basis = "live future, opening gap fixed at 09:16"
+			}
+			live.SellLevels = e.lutSellLevels(now, shown, expStr, dispMan.DTE != nil, basis, false)
+			// Once before the open and once at the first live prices.
+			if key := day + "|" + basis; !whatIf && hhmm < 916 && e.levelsLogged != key {
+				e.levelsLogged = key
+				log.Printf("[LUT] sell levels (ATM straddle, %s; future %.2f, straddle now %.2f): %s",
+					basis, shown.M.Underlying, shown.Ev.Straddle, lutLevelsText(live.SellLevels))
+			}
+		default:
+			if e.levelsDay != day {
+				e.levelsDay, e.levelsDone = day, e.lutSellLevels(now, shown, expStr, dispMan.DTE != nil, "", true)
+			}
+			live.SellLevels = e.levelsDone
 		}
 	}
 

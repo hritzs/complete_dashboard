@@ -74,6 +74,7 @@ export default function LutBuildTab() {
   const [man, setMan] = createSignal({});
   const [lastSell, setLastSell] = createSignal(null);
   const [lastSell0920, setLastSell0920] = createSignal(null);
+  const [levels, setLevels] = createSignal(null); // 09:16 .. 09:20 sell levels (sent until 09:30, then kept as last seen)
   let seenMinutes = -1;
   const setManField = (k) => (e) => setMan((m) => ({ ...m, [k]: e.currentTarget.value }));
   const manualBody = (m) => {
@@ -113,6 +114,7 @@ export default function LutBuildTab() {
     if (d.sell_range) setLastSell(d.sell_range);
     if (d.sell_range_0920) setLastSell0920(d.sell_range_0920); else if (d.sell_range) setLastSell0920(null);
     if (!d.eval) { setLastSell(null); setLastSell0920(null); }
+    if (d.sell_levels) setLevels({ day: d.day, rows: d.sell_levels }); else if (levels() && levels().day !== d.day) setLevels(null);
     if (d.minutes_count !== seenMinutes) {
       seenMinutes = d.minutes_count;
       loadState();
@@ -229,7 +231,7 @@ export default function LutBuildTab() {
         const r = () => props.r;
         const rowGap = (g) => {
           const cur = r().straddle;
-          if (cur >= g.straddle_from - r().step / 2 && cur <= g.straddle_to + r().step / 2) return ['IN ZONE — would sell', true];
+          if (cur >= g.straddle_from - 0.03 && cur <= g.straddle_to + 0.03) return ['IN ZONE — would sell', true]; // band ends are exact to the 0.05 tick
           const target = cur < g.straddle_from ? g.straddle_from : g.straddle_to;
           return [`needs ${target - cur >= 0 ? '+' : ''}${fmt(target - cur)} (${sgn(((target - cur) / cur) * 100)})`, false];
         };
@@ -257,6 +259,67 @@ export default function LutBuildTab() {
                 </tbody>
               </table>
             </Show>
+          </div>
+        );
+      })()}
+    </Show>
+  );
+
+  // Opening sell levels: for each of the five opening tables, the ATM
+  // straddle at / above which the LUT sells. Before the open from
+  // yesterday's close, then from live prices; a minute already checked
+  // shows the level as it was at that minute and what the LUT answered.
+  const OpeningLevels = () => (
+    <Show when={levels()?.rows?.length}>
+      {(() => {
+        const rows = () => levels().rows;
+        const first = () => rows().find((l) => !l.done) || rows()[0];
+        const band = (l) => {
+          if (!(l.ranges || []).length) return <span class="negative">no YES level{l.skip ? ` (${l.skip})` : ''}</span>;
+          return (
+            <span>
+              <strong>{l.above ? `₹${fmt(l.sell_from)} and above` : `₹${fmt(l.sell_from)} – ₹${fmt(l.sell_to)}`}</strong>
+              <Show when={l.ranges.length > 1}>
+                <span style={muted}> · also {l.ranges.slice(1).map((g) => `₹${fmt(g.straddle_from)}–₹${fmt(g.straddle_to)}`).join(', ')}</span>
+              </Show>
+            </span>
+          );
+        };
+        const status = (l) => {
+          if (l.done) {
+            if (l.note) return [`checked: no check (${l.note})`, ''];
+            return [l.allowed ? 'checked: YES — sold here' : 'checked: NO', l.allowed ? 'positive' : 'negative'];
+          }
+          if (!(l.ranges || []).length) return ['—', ''];
+          if (l.in_zone) return ['IN ZONE — would sell', 'positive'];
+          return [`needs ${l.need >= 0 ? '+' : ''}${fmt(l.need)} (${sgn((l.need / l.straddle) * 100)})`, ''];
+        };
+        return (
+          <div style={{ ...box, border: '1px solid rgba(77,208,225,0.45)' }}>
+            <div class="section-title">Opening sell levels — 09:16 to 09:20{live()?.manual ? ' · what-if' : ''}</div>
+            <div style={muted}>
+              Basis: <strong>{first().basis}</strong> · future {fmt(first().future)} · ATM {fmt(first().strike, 0)} · ATM straddle {first().done ? 'then' : 'now'} ₹{fmt(first().straddle)}.
+              Each minute has its own table, so the level differs minute to minute. Before the open these come from yesterday's close and move with the opening gap;
+              from 09:15 they follow the live future, and from 09:16 the gap is fixed.
+            </div>
+            <table class="trade-position-table" style={{ 'margin-top': '6px' }}>
+              <thead><tr><th>Minute</th><th>Sell when ATM straddle is</th><th>Build IV at that level</th><th>TP bps there</th><th>Future · ATM</th><th>Straddle</th><th>Status</th></tr></thead>
+              <tbody>
+                <For each={rows()}>
+                  {(l) => (
+                    <tr style={{ background: (l.done ? l.allowed : l.in_zone) ? 'rgba(46,125,50,0.25)' : '', opacity: l.done ? 0.8 : 1 }}>
+                      <td><strong>{l.time}</strong></td>
+                      <td>{band(l)}</td>
+                      <td>{(l.ranges || []).length ? fmt(l.ranges[0].build_iv_from, 4) : '—'}</td>
+                      <td>{(l.ranges || []).length ? fmt(l.ranges[0].tp_bps_from, 2) : '—'}</td>
+                      <td>{fmt(l.future)} · {fmt(l.strike, 0)}</td>
+                      <td>₹{fmt(l.straddle)}{l.done ? ' (at that minute)' : ''}</td>
+                      <td class={status(l)[1]}>{status(l)[0]}</td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
           </div>
         );
       })()}
@@ -565,6 +628,7 @@ export default function LutBuildTab() {
 
       <Manual />
       <Verdict />
+      <OpeningLevels />
       <SellZone r={lastSell()} />
       <Show when={lastSell0920() && lastSell()?.table !== '09:20+'}><SellZone r={lastSell0920()} /></Show>
       <Entry />

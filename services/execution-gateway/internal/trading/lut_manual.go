@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"strings"
 	"time"
 )
 
@@ -340,10 +341,143 @@ func lutScanSellRange(set LUTSet, c lutCtx, stageHHMM int) LUTSellRange {
 	if len(r.Ranges) > 0 {
 		r.Skip = ""
 	}
+	// The scan steps are about a point wide: pin each band's ends to the
+	// 0.05 tick by bisection between the last YES and the first NO sample.
+	yes := func(x float64) (LUTEvaluation, bool) {
+		iv, ok := lutStraddleIV(x, m.Underlying, c.K, T)
+		if !ok {
+			return LUTEvaluation{}, false
+		}
+		mm := m
+		mm.CELTP, mm.PELTP = lutBSPrice(true, m.Underlying, c.K, T, iv), lutBSPrice(false, m.Underlying, c.K, T, iv)
+		ev := EvaluateLUTMinute(set, c.In, c.NormOG, false, mm)
+		return ev, ev.Skip == "" && ev.Allowed
+	}
+	edge := func(in, out float64) (float64, LUTEvaluation, bool) {
+		var at LUTEvaluation
+		found := false
+		for i := 0; i < 12 && math.Abs(in-out) > 0.05+1e-9; i++ {
+			mid := math.Round((in+out)/2/0.05) * 0.05
+			if mid == in || mid == out {
+				break
+			}
+			if ev, ok := yes(mid); ok {
+				in, at, found = mid, ev, true
+			} else {
+				out = mid
+			}
+		}
+		return in, at, found
+	}
+	for i := range r.Ranges {
+		g := &r.Ranges[i]
+		if x, ev, ok := edge(g.StraddleFrom, g.StraddleFrom-r.Step); ok {
+			g.StraddleFrom, g.IVFrom, g.AdjIVFrom, g.TPFrom = x, ev.BuildIV, ev.AdjBuildIV, ev.TPBps
+		}
+		if g.StraddleTo+r.Step <= r.To+1e-9 { // not the top of the scan
+			if x, ev, ok := edge(g.StraddleTo, g.StraddleTo+r.Step); ok {
+				g.StraddleTo, g.IVTo, g.AdjIVTo, g.TPTo = x, ev.BuildIV, ev.AdjBuildIV, ev.TPBps
+			}
+		}
+	}
 	for _, g := range r.Ranges {
-		if r.Straddle >= g.StraddleFrom-r.Step/2 && r.Straddle <= g.StraddleTo+r.Step/2 {
+		if r.Straddle >= g.StraddleFrom-lutBandTol && r.Straddle <= g.StraddleTo+lutBandTol {
 			r.InZone = true
 		}
 	}
 	return r
+}
+
+// lutBandTol: a straddle this close to a band's end counts as inside
+// (half a 0.05 tick, plus rounding).
+const lutBandTol = 0.03
+
+// LUTSellLevel is one opening minute (09:16 .. 09:20, each has its own
+// table) with the ATM straddle levels at which the LUT says YES there.
+//
+//   - Before the open the inputs are yesterday's close: yesterday's closing
+//     future (gap 0 unless a manual future is set) and the ATM straddle
+//     re-priced to today's 09:16 -- an estimate of where a trade starts.
+//   - From 09:15 they are the live future and, once 09:16 is captured, the
+//     real opening gap.
+//   - A minute already recorded shows the levels as they were AT that
+//     minute (its own recorded future, DTE and gap), its recorded straddle
+//     and the answer the LUT gave.
+type LUTSellLevel struct {
+	LUTSellRange
+	Basis    string  `json:"basis"`
+	SellFrom float64 `json:"sell_from"` // lowest ATM straddle with a YES (0 = none)
+	SellTo   float64 `json:"sell_to"`   // top of that first YES band
+	Above    bool    `json:"above"`     // that band runs to the top of the scan: "SellFrom and above"
+	Need     float64 `json:"need"`      // points the straddle is away from the nearest YES band (0 = inside)
+	Done     bool    `json:"done"`      // the minute is recorded
+	Allowed  bool    `json:"allowed"`   // recorded answer
+	Note     string  `json:"note,omitempty"`
+}
+
+// lutSellLevels builds the 09:16 .. 09:20 rows from the shown evaluation.
+// Caller holds e.mu.
+// recordedOnly (after the opening window): a minute that was not recorded
+// gets no level -- the live future no longer says anything about it.
+func (e *lutEngine) lutSellLevels(now time.Time, shown lutCtx, expStr string, fixedDTE bool, basis string, recordedOnly bool) []LUTSellLevel {
+	exp, expErr := lutParseExpiry(expStr)
+	recorded := map[string]*LUTEvaluation{}
+	for i := range e.minutes {
+		recorded[e.minutes[i].Time] = &e.minutes[i]
+	}
+	out := make([]LUTSellLevel, 0, 5)
+	for hh := 916; hh <= 920; hh++ {
+		c := shown
+		lv := LUTSellLevel{Basis: basis}
+		if rec := recorded[fmt.Sprintf("%02d:%02d", hh/100, hh%100)]; rec != nil && rec.Underlying > 0 && rec.RawDTE > 0 {
+			// As it was at that minute.
+			ev := *rec
+			c.Ev, c.K, c.NormOG = &ev, rec.Strike, rec.NormOG
+			c.M.Underlying, c.M.RawDTE = rec.Underlying, rec.RawDTE
+			lv.Basis, lv.Done, lv.Allowed, lv.Note = "recorded at that minute", true, rec.Allowed, rec.Skip
+		} else if recordedOnly {
+			lv.LUTSellRange = LUTSellRange{Table: lutStageNames[lutStage(hh)], Time: fmt.Sprintf("%02d:%02d", hh/100, hh%100), Skip: "minute not recorded"}
+			out = append(out, lv)
+			continue
+		} else if !fixedDTE && expErr == nil {
+			at := time.Date(now.Year(), now.Month(), now.Day(), hh/100, hh%100, 0, 0, now.Location())
+			c.M.RawDTE = lutRawDTE(at, exp) // each minute's own time to expiry
+		}
+		lv.LUTSellRange = lutScanSellRange(e.set, c, hh)
+		if n := len(lv.Ranges); n > 0 {
+			lv.SellFrom, lv.SellTo = lv.Ranges[0].StraddleFrom, lv.Ranges[0].StraddleTo
+			lv.Above = lv.SellTo >= lv.To-lv.Step
+			if !lv.InZone && lv.Straddle > 0 {
+				best := math.Inf(1)
+				for _, g := range lv.Ranges {
+					for _, edge := range []float64{g.StraddleFrom, g.StraddleTo} {
+						if d := edge - lv.Straddle; math.Abs(d) < math.Abs(best) {
+							best = d
+						}
+					}
+				}
+				lv.Need = math.Round(best*100) / 100
+			}
+		}
+		out = append(out, lv)
+	}
+	return out
+}
+
+// lutLevelsText is the one-line form of the rows, for the log.
+func lutLevelsText(levels []LUTSellLevel) string {
+	parts := make([]string, 0, len(levels))
+	for _, l := range levels {
+		switch {
+		case len(l.Ranges) == 0:
+			parts = append(parts, l.Time+" no YES level")
+		case l.Above:
+			parts = append(parts, fmt.Sprintf("%s >= %.2f", l.Time, l.SellFrom))
+		case len(l.Ranges) == 1:
+			parts = append(parts, fmt.Sprintf("%s %.2f-%.2f", l.Time, l.SellFrom, l.SellTo))
+		default:
+			parts = append(parts, fmt.Sprintf("%s %.2f-%.2f (+%d more band(s))", l.Time, l.SellFrom, l.SellTo, len(l.Ranges)-1))
+		}
+	}
+	return strings.Join(parts, " | ")
 }
