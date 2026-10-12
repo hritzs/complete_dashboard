@@ -130,6 +130,29 @@ func (s *Service) gsOverlayNow() {
 		}
 	}
 	wg.Wait()
+	// A request that failed is tried once more, one at a time; what still
+	// fails is logged (its earlier values stay, see below).
+	failed := 0
+	for k, v := range strikes {
+		for _, leg := range []struct {
+			name string
+			tok  int64
+		}{{"CE", v.ce}, {"PE", v.pe}} {
+			if _, ok := closes[leg.tok]; ok {
+				continue
+			}
+			gsAfterBoundary()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			bars, err := p.MinuteCloses(ctx, leg.tok, ymd)
+			cancel()
+			if err != nil {
+				failed++
+				log.Printf("[GS-OVERLAY] ⚠ %.0f %s (token %d): candles not fetched (%v) -- earlier values kept", k, leg.name, leg.tok, err)
+				continue
+			}
+			closes[leg.tok] = bars
+		}
+	}
 
 	// Start from what is already known: a candle request that failed this
 	// run (cold connections right after a restart) must not blank a side
