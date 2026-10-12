@@ -667,6 +667,12 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 		if !ok {
 			trade.Status = "RECONCILIATION_REQUIRED"
 			trade.Config.PartialFill = false
+			// Every order confirmed rejected / cancelled with nothing
+			// filled: no position exists, nothing to reconcile.
+			if s.buildLeftNothing(ctx, trade.TradeUID) {
+				trade.Status, trade.CEQty, trade.PEQty = "FAILED", 0, 0
+				log.Printf("[EMPTY-TRADE] %s: every build order ended rejected / cancelled with no fill -- FAILED (no position)", trade.TradeUID)
+			}
 		}
 
 	default:

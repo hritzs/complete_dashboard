@@ -125,6 +125,7 @@ func autoSyncWindow(now time.Time) bool {
 // StartBrokerAutoSync runs the automatic sync and the position check.
 func (s *Service) StartBrokerAutoSync() {
 	go func() {
+		s.sweepEmptyOldTrades() // earlier-day trades that never filled
 		syncT := time.NewTicker(autoSyncEvery)
 		posT := time.NewTicker(positionCheckEach)
 		defer syncT.Stop()
@@ -138,6 +139,7 @@ func (s *Service) StartBrokerAutoSync() {
 				}
 			case <-posT.C:
 				gsAfterBoundary()
+				s.sweepEmptyOldTrades()
 				if autoSyncWindow(time.Now().In(lutIST())) {
 					s.checkBrokerPositions()
 				}

@@ -146,7 +146,9 @@ export default function PortfolioMTMPanel() {
         <span>Book at ≥ <strong>{lvl(bookLvl())}</strong>
           <Show when={has(bookLvl()) && !done()}>
             <span style={{ 'margin-left': '6px' }} class={Number(view().day_mtm) >= Number(bookLvl()) ? 'positive' : ''}>
-              {Number(view().day_mtm) >= Number(bookLvl()) ? '— reached: cutting lot by lot' : `— needs +${money(Number(bookLvl()) - Number(view().day_mtm))} more`}
+              {Number(view().day_mtm) >= Number(bookLvl())
+                ? (exiting() ? '— reached: cutting lot by lot' : st().status === 'ARMED' ? '— reached' : '— already met (rule is not armed: it would fire the moment you arm it)')
+                : `— needs +${money(Number(bookLvl()) - Number(view().day_mtm))} more`}
             </span>
           </Show>
         </span>
