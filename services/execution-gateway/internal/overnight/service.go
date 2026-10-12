@@ -35,6 +35,7 @@ type Service struct {
 	brokerAt  time.Time
 	brokerErr string
 	liveAt    time.Time
+	resubAt   time.Time
 	liveView  *LiveView
 }
 
@@ -54,6 +55,12 @@ func (s *Service) delta() float64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.st.Delta
+}
+
+func (s *Service) feedDown() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.feedErr != ""
 }
 
 func (s *Service) setFeedErr(e string) {
@@ -162,6 +169,9 @@ func (s *Service) Start(ctx context.Context) {
 			case <-t.C:
 			}
 			now := time.Now().In(ist())
+			if now.Second()%10 == 0 && inMarket(now) && s.feedDown() {
+				go s.resubscribe(nil) // bridge was not reachable last time: try again
+			}
 			if d := now.Format("2006-01-02"); d != chainDay && now.Hour() >= 9 {
 				chainDay = d
 				s.loadChain(now)
@@ -260,6 +270,20 @@ func (s *Service) liveNow(ctx context.Context) *LiveView {
 	}
 	nowMs := time.Now().UnixMilli()
 	fut := q[c.Fut.GToken].LTP
+	if fut <= 0 {
+		// No tick for the future: the bridge is not sending our strikes
+		// (it restarted after us, or was not up yet). Ask again now instead
+		// of waiting for the next minute end -- at most every 3 s.
+		s.mu.Lock()
+		again := time.Since(s.resubAt) > 3*time.Second
+		if again {
+			s.resubAt = time.Now()
+		}
+		s.mu.Unlock()
+		if again {
+			go s.resubscribe(nil)
+		}
+	}
 	v := &LiveView{At: time.Now().In(ist()).Format("15:04:05"), Spot: spot, Fut: fut, Realized: round2(realized), Priced: true}
 	t := c.ExpiryAt.Sub(time.Now()).Hours() / (365 * 24)
 	mk := func(label string, in Instrument) LiveLeg {
