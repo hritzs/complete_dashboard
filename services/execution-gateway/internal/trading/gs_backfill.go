@@ -28,6 +28,7 @@ import (
 	"math"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -57,6 +58,7 @@ func (s *Service) gsBackfillNow() {
 
 func (s *Service) gsBackfillSet(p MinuteCloseProvider, now time.Time, set string) {
 	day := now.Format("2006-01-02")
+	gsBackfillPurge(day, set) // a wrong fill from before is dropped and filled again
 	have := lutLoadChainSet(day, set)
 	if len(have) == 0 {
 		return
@@ -79,6 +81,17 @@ func (s *Service) gsBackfillSet(p MinuteCloseProvider, now time.Time, set string
 	if n := len(missing); n > 0 && missing[n-1] == last.Format("15:04") {
 		missing = missing[:n-1]
 	}
+	// A minute GreekSoft could not price in 5 runs is given up for the day
+	// (each run asks for every strike's candles again).
+	gsBackfillTries.Lock()
+	tryable := missing[:0:0]
+	for _, t := range missing {
+		if gsBackfillTries.n[day+"|"+set+"|"+t] < 5 {
+			tryable = append(tryable, t)
+		}
+	}
+	gsBackfillTries.Unlock()
+	missing = tryable
 	if len(missing) == 0 {
 		return
 	}
@@ -127,6 +140,7 @@ func (s *Service) gsBackfillSet(p MinuteCloseProvider, now time.Time, set string
 	// Every token's candles of the day, two requests at a time.
 	ymd := now.Format("20060102")
 	closes := map[int64]map[int64]float64{}
+	retried := map[int64]bool{}
 	var mu sync.Mutex
 	sem := make(chan struct{}, 2)
 	var wg sync.WaitGroup
@@ -150,18 +164,34 @@ func (s *Service) gsBackfillSet(p MinuteCloseProvider, now time.Time, set string
 		}
 	}
 	wg.Wait()
+	// A reply whose newest bar is older than the minute being filled is cut
+	// off (GreekSoft does that now and then) or the strike is dead: asked
+	// once more, and if still short the strike is left out of that minute
+	// rather than priced from hours earlier.
 	closeAt := func(tok int64, b int64) float64 {
-		bars := closes[tok]
-		if v, ok := bars[b]; ok {
-			return v
+		px, fresh := gsBarCloseAt(closes[tok], b)
+		if fresh {
+			return px
 		}
-		bestTs, best := int64(0), 0.0 // last close before b
-		for ts, v := range bars {
-			if ts%60 == 0 && ts < b && ts > bestTs {
-				bestTs, best = ts, v
+		mu.Lock()
+		again := !retried[tok]
+		retried[tok] = true
+		mu.Unlock()
+		if again {
+			gsAfterBoundary()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			bars, err := p.MinuteCloses(ctx, tok, ymd)
+			cancel()
+			if err == nil {
+				mu.Lock()
+				closes[tok] = bars
+				mu.Unlock()
+				if px, fresh = gsBarCloseAt(bars, b); fresh {
+					return px
+				}
 			}
 		}
-		return best
+		return 0
 	}
 
 	ks := make([]float64, 0, len(strikes))
@@ -170,6 +200,7 @@ func (s *Service) gsBackfillSet(p MinuteCloseProvider, now time.Time, set string
 	}
 	sort.Float64s(ks)
 	filled := 0
+	done := map[string]bool{}
 	for _, t := range missing {
 		var hh, mm int
 		if _, err := fmt.Sscanf(t, "%d:%d", &hh, &mm); err != nil {
@@ -209,12 +240,25 @@ func (s *Service) gsBackfillSet(p MinuteCloseProvider, now time.Time, set string
 		if m.Future <= 0 || len(m.Rows) == 0 {
 			continue
 		}
+		if ref := gsBackfillRef(day, set, t); ref > 0 && math.Abs(m.Future-ref)/ref > gsBackfillMaxJump {
+			log.Printf("[BACKFILL] %s %s NOT written: future %.2f from the %.0f pair is %.2f%% away from the recorded minutes around it (%.2f) -- left missing, tried again next minute",
+				gsBackfillName(set), t, m.Future, atm, (m.Future-ref)/ref*100, ref)
+			continue
+		}
 		if err := lutAppendJSON(lutChainImportFile(day, set), m); err != nil {
 			log.Printf("[BACKFILL] ⚠ %s not saved: %v", t, err)
 			continue
 		}
 		filled++
+		done[t] = true
 	}
+	gsBackfillTries.Lock()
+	for _, t := range missing {
+		if !done[t] {
+			gsBackfillTries.n[day+"|"+set+"|"+t]++
+		}
+	}
+	gsBackfillTries.Unlock()
 	if filled > 0 {
 		log.Printf("[BACKFILL] %s expiry: %d missing minute(s) %s..%s rebuilt from GreekSoft candles (%d strikes) -- Paper Sim / history now include them (marked imported)",
 			map[bool]string{true: "current", false: set}[set == ""], filled, missing[0], missing[len(missing)-1], len(ks))
@@ -245,4 +289,108 @@ func lutHHMMMinutes(t string) int {
 	var h, m int
 	fmt.Sscanf(t, "%d:%d", &h, &m)
 	return h*60 + m
+}
+
+// gsBackfillTries counts the runs a missing minute could not be filled in.
+var gsBackfillTries = struct {
+	sync.Mutex
+	n map[string]int
+}{n: map[string]int{}}
+
+// gsBackfillMaxJump: a filled minute's future may not sit further than this
+// from the RECORDED minute nearest to it (a gap is a minute or two wide;
+// 0.6% is ~135 NIFTY points).
+const gsBackfillMaxJump = 0.006
+
+func gsBackfillName(set string) string {
+	if set == "" {
+		return "current expiry"
+	}
+	return set + " expiry"
+}
+
+// gsBarCloseAt is "the last trade before boundary b" out of one get_ohlc
+// reply. A finished bar is stamped when it was closed -- exactly b on a
+// busy strike, some seconds (or minutes) after b on a quiet one -- and the
+// newest bar is still forming. So: the first finished bar stamped at / after
+// b, else the newest bar. fresh is false when the newest bar is more than
+// 3 minutes older than b: the reply is cut off or the strike did not trade,
+// and the price would come from long before.
+func gsBarCloseAt(bars map[int64]float64, b int64) (px float64, fresh bool) {
+	keys := make([]int64, 0, len(bars))
+	for ts, c := range bars {
+		if c > 0 {
+			keys = append(keys, ts)
+		}
+	}
+	if len(keys) == 0 {
+		return 0, false
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	newest := keys[len(keys)-1]
+	if v, ok := bars[b]; ok && v > 0 { // the candle ending exactly there
+		return v, true
+	}
+	px = bars[newest]
+	for _, ts := range keys[:len(keys)-1] {
+		if ts >= b {
+			px = bars[ts]
+			break
+		}
+	}
+	return px, newest >= b-180
+}
+
+// gsBackfillRef is the future of the minute RECORDED live nearest to t
+// (0 when none within 5 minutes).
+func gsBackfillRef(day, set, t string) float64 {
+	rec := lutLoadChainFile(lutChainFile(day, set))
+	ref, bd := 0.0, 6
+	for rt, m := range rec {
+		if d := absInt(lutHHMMMinutes(rt) - lutHHMMMinutes(t)); d < bd && m.Future > 0 {
+			ref, bd = m.Future, d
+		}
+	}
+	return ref
+}
+
+// gsBackfillPurge removes backfilled minutes whose future is off the
+// recorded minutes around them (seen 2026-10-13: next-week 09:37 filled
+// with 09:15 prices on two strikes, future 22375 between recorded 22549 and
+// 22575, which then drove a false hedge and stop in Paper Sim). The dropped
+// lines are kept in <import file>.rejected; the minute is filled again.
+func gsBackfillPurge(day, set string) {
+	path := lutChainImportFile(day, set)
+	raw, err := os.ReadFile(path)
+	if err != nil || len(raw) == 0 {
+		return
+	}
+	var keep, bad []string
+	for _, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
+		var m lutChainMinute
+		if json.Unmarshal([]byte(line), &m) == nil && m.Src == gsBackfillSrc && m.Future > 0 {
+			if ref := gsBackfillRef(day, set, m.Time); ref > 0 && math.Abs(m.Future-ref)/ref > gsBackfillMaxJump {
+				bad = append(bad, line)
+				log.Printf("[BACKFILL] %s %s dropped: stored future %.2f is %.2f%% away from the recorded minutes around it (%.2f) -- will be filled again",
+					gsBackfillName(set), m.Time, m.Future, (m.Future-ref)/ref*100, ref)
+				continue
+			}
+		}
+		keep = append(keep, line)
+	}
+	if len(bad) == 0 {
+		return
+	}
+	if f, err := os.OpenFile(path+".rejected", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+		_, _ = f.WriteString(strings.Join(bad, "\n") + "\n")
+		f.Close()
+	}
+	out := ""
+	if len(keep) > 0 {
+		out = strings.Join(keep, "\n") + "\n"
+	}
+	tmp := path + ".tmp"
+	if os.WriteFile(tmp, []byte(out), 0o644) == nil {
+		_ = os.Rename(tmp, path)
+	}
 }
