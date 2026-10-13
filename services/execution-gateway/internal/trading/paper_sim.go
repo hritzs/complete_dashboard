@@ -1194,6 +1194,7 @@ func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			return int64(size) * lotSize
 		}(), "minutes": len(mins), "first": first, "last": last,
+		"straddle_range": []PaperStraddleRange{paperStraddleRange(day, ""), paperStraddleRange(day, "next")},
 		"minute_sources": src, "sims": sims, "actual": actual, "hidden": hiddenN, "live_at": func() string {
 			if live != nil {
 				return live.Time
@@ -1201,6 +1202,82 @@ func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 			return ""
 		}(),
 	})
+}
+
+// PaperStraddleRange is the day's ATM straddle range of one expiry, for the
+// Paper Sim overview. Each stored minute contributes the straddle at ITS OWN
+// ATM strike (the strike moves with the market through the day), priced at
+// the minute's open (last trade before HH:MM:00). The current expiry also
+// carries the tick-by-tick low / high seen inside the minutes.
+type PaperStraddleRange struct {
+	Set        string  `json:"set"` // "current" | "next"
+	Expiry     string  `json:"expiry"`
+	Minutes    int     `json:"minutes"`
+	Min        float64 `json:"min"`
+	MinAt      string  `json:"min_at"`
+	MinATM     float64 `json:"min_atm"`
+	Max        float64 `json:"max"`
+	MaxAt      string  `json:"max_at"`
+	MaxATM     float64 `json:"max_atm"`
+	First      float64 `json:"first"`
+	FirstAt    string  `json:"first_at"`
+	Last       float64 `json:"last"`
+	LastAt     string  `json:"last_at"`
+	LastATM    float64 `json:"last_atm"`
+	TickLow    float64 `json:"tick_low,omitempty"`
+	TickLowAt  string  `json:"tick_low_at,omitempty"` // the minute it fell in ended at this time
+	TickHigh   float64 `json:"tick_high,omitempty"`
+	TickHighAt string  `json:"tick_high_at,omitempty"`
+}
+
+func paperStraddleRange(day, set string) PaperStraddleRange {
+	r := PaperStraddleRange{Set: "current"}
+	if set == "next" {
+		r.Set = "next"
+	} else {
+		set = ""
+	}
+	mins := lutLoadChainSet(day, set)
+	times := make([]string, 0, len(mins))
+	for t := range mins {
+		times = append(times, t)
+	}
+	sort.Strings(times)
+	for _, t := range times {
+		c := mins[t]
+		if c.Future <= 0 || c.ATM <= 0 {
+			continue
+		}
+		x := 0.0
+		for _, row := range c.Rows {
+			if row.K == c.ATM && row.CE > 0 && row.PE > 0 {
+				x = math.Round((row.CE+row.PE)*100) / 100
+				break
+			}
+		}
+		if x <= 0 {
+			continue
+		}
+		if r.Minutes == 0 {
+			r.First, r.FirstAt, r.Min, r.Max = x, t, x, x
+			r.MinAt, r.MaxAt, r.MinATM, r.MaxATM = t, t, c.ATM, c.ATM
+		}
+		r.Minutes++
+		r.Expiry, r.Last, r.LastAt, r.LastATM = c.Expiry, x, t, c.ATM
+		if x < r.Min {
+			r.Min, r.MinAt, r.MinATM = x, t, c.ATM
+		}
+		if x > r.Max {
+			r.Max, r.MaxAt, r.MaxATM = x, t, c.ATM
+		}
+		if c.StrLow > 0 && (r.TickLow == 0 || c.StrLow < r.TickLow) {
+			r.TickLow, r.TickLowAt = c.StrLow, t
+		}
+		if c.StrHigh > r.TickHigh {
+			r.TickHigh, r.TickHighAt = c.StrHigh, t
+		}
+	}
+	return r
 }
 
 // PaperStartHandler: POST /api/paper/start {"entry": "HH:MM" (blank = latest
