@@ -347,11 +347,11 @@ export default function LutBuildTab() {
       <Show when={live()?.chain_error}><div class="negative" style={{ 'font-size': '13px' }}>Chain: {live().chain_error}</div></Show>
       <Show when={live()?.last_close}>{(mc) => (
         <div style={{ 'font-size': '13px', margin: '6px 0', padding: '6px 10px', 'border-radius': '6px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.10)', display: 'flex', gap: '16px', 'flex-wrap': 'wrap' }}
-          title="Every minute-end decision (LUT, hedge / SL / TP, Paper Sim) uses these candle closes: each leg's last trade before HH:MM:00 by exchange trade time">
-          <strong>Minute close {mc().time}</strong>
+          title="Every minute decision (LUT, hedge / SL / TP, Paper Sim) uses these prices: what minute HH:MM opens at, i.e. each leg's last trade before HH:MM:00 by exchange trade time (the close of the candle that just ended)">
+          <strong>Minute open {mc().time}</strong>
           <span>ATM <strong>{fmt(mc().atm, 0)}</strong></span>
-          <span>CE close <strong>{fmt(mc().ce)}</strong> <span style={muted}>trade {mc().ce_trade || '—'}</span></span>
-          <span>PE close <strong>{fmt(mc().pe)}</strong> <span style={muted}>trade {mc().pe_trade || '—'}</span></span>
+          <span>CE open <strong>{fmt(mc().ce)}</strong> <span style={muted}>trade {mc().ce_trade || '—'}</span></span>
+          <span>PE open <strong>{fmt(mc().pe)}</strong> <span style={muted}>trade {mc().pe_trade || '—'}</span></span>
           <span>Straddle <strong>{fmt(mc().straddle)}</strong></span>
           <span>Syn fut <strong>{fmt(mc().syn_fut)}</strong> <span style={muted}>(ATM + CE − PE)</span></span>
           <span style={muted}>live LTP CE {fmt(mc().live_ce)} · PE {fmt(mc().live_pe)} · fut {fmt(mc().live_fut)}</span>
@@ -513,14 +513,14 @@ export default function LutBuildTab() {
 
   const Timeline = () => (
     <div style={box}>
-      <div class="section-title">Recorded minutes today (first tick of each minute, 09:16–13:30)</div>
+      <div class="section-title">Recorded minutes today (09:16–13:30) — row HH:MM = the prices that minute opens at (last trade before HH:MM:00)</div>
       <Show when={minutes().length} fallback={<div style={muted}>Nothing recorded yet.</div>}>
         <div class="position-table-wrap">
           <table class="trade-position-table">
             <thead>
               <tr>
-                <th>Time</th><th>Table</th><th>Answer</th><th title="synthetic future from the minute's candle closes">Future (close)</th><th>ATM</th><th title="last trade before the minute boundary">CE / PE close</th><th>Build IV</th><th>Adj build IV</th>
-                <th>IV ratio</th><th>Straddle (close)</th><th>Str ratio</th><th>DTE / OG / Adj</th><th>Coord</th><th>TP bps</th>
+                <th>Time</th><th>Table</th><th>Answer</th><th title="synthetic future at the minute's open: the price minute HH:MM opens at: the last trade before HH:MM:00 (GreekSoft close of the candle that ended there)">Future (open)</th><th>ATM</th><th title="the price minute HH:MM opens at: the last trade before HH:MM:00 (GreekSoft close of the candle that ended there)">CE / PE open</th><th>Build IV</th><th>Adj build IV</th>
+                <th>IV ratio</th><th title="the price minute HH:MM opens at: the last trade before HH:MM:00 (GreekSoft close of the candle that ended there)">Straddle (open)</th><th>Str ratio</th><th>DTE / OG / Adj</th><th>Coord</th><th>TP bps</th>
               </tr>
             </thead>
             <tbody>
