@@ -460,7 +460,8 @@ export default function PaperSimTab() {
                   <th style={S.th} title="highest ATM straddle at a minute open">Max</th>
                   <th style={S.th}>Range</th>
                   <th style={S.th} title="first stored minute of the day">First</th>
-                  <th style={S.th} title="latest stored minute">Latest</th>
+                  <th style={S.th} title="ATM straddle right now, from the live chain (today only); also extends Min / Max between minute ends">Live now</th>
+                  <th style={S.th} title="latest stored minute">Last minute</th>
                   <th style={S.th} title="lowest / highest ATM straddle on any tick inside a minute (current expiry only)">Tick low / high</th>
                 </tr></thead>
                 <tbody><For each={(data().straddle_range || []).filter((r) => r.minutes > 0)}>{(r) => (
@@ -470,13 +471,14 @@ export default function PaperSimTab() {
                     <td style={S.th}><strong>{fmt(r.max)}</strong> <span style={S.muted}>{r.max_at} · {fmt(r.max_atm, 0)}</span></td>
                     <td style={S.th}>{fmt(r.max - r.min)}</td>
                     <td style={S.th}>{fmt(r.first)} <span style={S.muted}>{r.first_at}</span></td>
+                    <td style={S.th}>{r.live ? <><strong>{fmt(r.live)}</strong> <span style={S.muted}>{r.live_at} · {fmt(r.live_atm, 0)}</span></> : '—'}</td>
                     <td style={S.th}>{fmt(r.last)} <span style={S.muted}>{r.last_at} · {fmt(r.last_atm, 0)}</span></td>
                     <td style={S.th}>{r.tick_low ? <>{fmt(r.tick_low)} <span style={S.muted}>before {r.tick_low_at}</span> / {fmt(r.tick_high)} <span style={S.muted}>before {r.tick_high_at}</span></> : '—'}</td>
                   </tr>
                 )}</For></tbody>
               </table>
               <div style={{ ...S.muted, 'margin-top': '4px' }}>
-                Each minute's straddle is taken at that minute's own ATM strike (shown beside the time), at the minute open. Both expiries are shown whichever one is selected above.
+                Each minute's straddle is taken at that minute's own ATM strike (shown beside the time), at the minute open. Today the live straddle is included, so Min / Max move between minute ends. Both expiries are shown whichever one is selected above.
               </div>
             </div>
           </Show>

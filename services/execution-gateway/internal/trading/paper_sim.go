@@ -1124,20 +1124,23 @@ func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 		cfgs = append(cfgs, PaperSimConfig{ID: id, Source: "actual trade " + actual[i].TradeUID, Entry: actual[i].EntryTime, Lots: l, Hedge: hedge, HedgeMode: hedgeMode,
 			ActualExit: actual[i].ExitTime, ActualReason: actual[i].ExitReason})
 	}
-	var live *simMinute
+	// Live chains of both expiries (today only): the selected one values the
+	// sims right now, and both feed the overview's ATM straddle range.
+	var live, liveCur, liveNext *simMinute
 	if day == sbToday() && h.Service.Snapshot != nil {
 		lctx, lcancel := context.WithTimeout(r.Context(), 2*time.Second)
 		if chain, err := h.Service.Snapshot.GetOptionChain(lctx, lutSymbol, ""); err == nil {
-			if view == "next" {
-				nx := lutNextExpiry(chain)
-				chain = nil
-				if nx != "" {
-					if nc, nerr := h.Service.Snapshot.GetOptionChain(lctx, lutSymbol, nx); nerr == nil {
-						chain = nc
-					}
+			now := time.Now().In(lutIST())
+			liveCur = simMinuteFromChain(chain, now)
+			if nx := lutNextExpiry(chain); nx != "" {
+				if nc, nerr := h.Service.Snapshot.GetOptionChain(lctx, lutSymbol, nx); nerr == nil {
+					liveNext = simMinuteFromChain(nc, now)
 				}
 			}
-			live = simMinuteFromChain(chain, time.Now().In(lutIST()))
+			live = liveCur
+			if view == "next" {
+				live = liveNext
+			}
 		}
 		lcancel()
 	}
@@ -1194,7 +1197,7 @@ func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			return int64(size) * lotSize
 		}(), "minutes": len(mins), "first": first, "last": last,
-		"straddle_range": []PaperStraddleRange{paperStraddleRange(day, ""), paperStraddleRange(day, "next")},
+		"straddle_range": []PaperStraddleRange{paperStraddleRange(day, "", liveCur), paperStraddleRange(day, "next", liveNext)},
 		"minute_sources": src, "sims": sims, "actual": actual, "hidden": hiddenN, "live_at": func() string {
 			if live != nil {
 				return live.Time
@@ -1224,13 +1227,19 @@ type PaperStraddleRange struct {
 	Last       float64 `json:"last"`
 	LastAt     string  `json:"last_at"`
 	LastATM    float64 `json:"last_atm"`
+	Live       float64 `json:"live,omitempty"` // ATM straddle right now (today only)
+	LiveAt     string  `json:"live_at,omitempty"`
+	LiveATM    float64 `json:"live_atm,omitempty"`
 	TickLow    float64 `json:"tick_low,omitempty"`
 	TickLowAt  string  `json:"tick_low_at,omitempty"` // the minute it fell in ended at this time
 	TickHigh   float64 `json:"tick_high,omitempty"`
 	TickHighAt string  `json:"tick_high_at,omitempty"`
 }
 
-func paperStraddleRange(day, set string) PaperStraddleRange {
+// live (today only, may be nil) is the chain right now: its ATM straddle is
+// reported as Live and also extends the day's min / max, so the range is
+// current between minute ends.
+func paperStraddleRange(day, set string, live *simMinute) PaperStraddleRange {
 	r := PaperStraddleRange{Set: "current"}
 	if set == "next" {
 		r.Set = "next"
@@ -1275,6 +1284,18 @@ func paperStraddleRange(day, set string) PaperStraddleRange {
 		}
 		if c.StrHigh > r.TickHigh {
 			r.TickHigh, r.TickHighAt = c.StrHigh, t
+		}
+	}
+	if live != nil && live.ATM > 0 {
+		if row, ok := live.chain[live.ATM]; ok && row.CE > 0 && row.PE > 0 {
+			x := math.Round((row.CE+row.PE)*100) / 100
+			r.Live, r.LiveAt, r.LiveATM = x, live.Time, live.ATM
+			if r.Minutes == 0 || x < r.Min {
+				r.Min, r.MinAt, r.MinATM = x, live.Time+" live", live.ATM
+			}
+			if r.Minutes == 0 || x > r.Max {
+				r.Max, r.MaxAt, r.MaxATM = x, live.Time+" live", live.ATM
+			}
 		}
 	}
 	return r
