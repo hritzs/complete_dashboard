@@ -234,7 +234,7 @@ function SimDetail(props) {
         <div style={{ display: 'flex', 'align-items': 'center', gap: '12px', 'margin-bottom': '10px', 'flex-wrap': 'wrap' }}>
           <Seg value={tab()} onChange={setTab} options={[['minutes', 'Minutes'], ['hedges', `Hedges (${(s().hedges || []).length})`], ['position', 'Position']]} />
           <span style={S.muted}>
-            {tab() === 'minutes' ? 'Each stored minute\'s first tick; SL / TP / exit and hedges are decided on these rows only. The top row is a live preview.' : ''}
+            {tab() === 'minutes' ? 'Row HH:MM = the prices minute HH:MM opens at, i.e. the last trade before HH:MM:00 (the close of the candle that just ended, from GreekSoft). SL / TP / exit and hedges are decided on these rows only. The top row is a live preview.' : ''}
             {tab() === 'hedges' ? 'Delta-neutral at entry, then re-neutralised at each minute end where points out > allowed.' : ''}
           </span>
         </div>
@@ -243,8 +243,8 @@ function SimDetail(props) {
           <div class="position-table-wrap" style={{ 'max-height': '460px', overflow: 'auto' }}>
             <table class="trade-position-table" style={{ 'font-size': '12px' }}>
               <thead><tr>
-                <th>Time</th><th>Recorded at</th><th style={S.th} title="synthetic future from the minute's candle closes">Future (close)</th><th style={S.th}>ATM</th><th style={S.th} title="last trade before the minute boundary">ATM CE close</th><th style={S.th} title="last trade before the minute boundary">ATM PE close</th>
-                <th style={S.th}>Pos K</th><th style={S.th}>CE close</th><th style={S.th}>PE close</th><th style={S.th}>Straddle (close)</th>
+                <th>Time</th><th>Recorded at</th><th style={S.th} title="synthetic future at the minute's open: the price minute HH:MM opens at: the last trade before HH:MM:00 (GreekSoft close of the candle that ended there)">Future (open)</th><th style={S.th}>ATM</th><th style={S.th} title="the price minute HH:MM opens at: the last trade before HH:MM:00 (GreekSoft close of the candle that ended there)">ATM CE open</th><th style={S.th} title="the price minute HH:MM opens at: the last trade before HH:MM:00 (GreekSoft close of the candle that ended there)">ATM PE open</th>
+                <th style={S.th}>Pos K</th><th style={S.th} title="the price minute HH:MM opens at: the last trade before HH:MM:00 (GreekSoft close of the candle that ended there)">CE open</th><th style={S.th} title="the price minute HH:MM opens at: the last trade before HH:MM:00 (GreekSoft close of the candle that ended there)">PE open</th><th style={S.th} title="the price minute HH:MM opens at: the last trade before HH:MM:00 (GreekSoft close of the candle that ended there)">Straddle (open)</th>
                 <th style={S.th}>Option</th><th style={S.th}>Hedge</th><th style={S.th}>Total</th><Show when={s().config.mtm_sqf_on}><th style={S.th} title="MTM if closed now at bid/ask">Exec MTM</th></Show><th style={S.th}>Δ</th><th style={S.th}>Γ</th><th style={S.th}>Θ</th><th style={S.th}>V</th>
                 <th style={S.th}>Hedge / qty</th><th style={S.th}>Out / allowed</th><th>Check</th><th>Event</th>
               </tr></thead>
