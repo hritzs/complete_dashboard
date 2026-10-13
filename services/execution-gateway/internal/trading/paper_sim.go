@@ -1285,6 +1285,14 @@ func paperStraddleRange(day, set string, live *simMinute) PaperStraddleRange {
 		if c.StrHigh > r.TickHigh {
 			r.TickHigh, r.TickHighAt = c.StrHigh, t
 		}
+		// Min / Max are the day's true extremes: the tick low / high seen
+		// inside the minute that ended at t count too (current expiry).
+		if c.StrLow > 0 && c.StrLow < r.Min {
+			r.Min, r.MinAt, r.MinATM = c.StrLow, "before "+t, c.ATM
+		}
+		if c.StrHigh > r.Max {
+			r.Max, r.MaxAt, r.MaxATM = c.StrHigh, "before "+t, c.ATM
+		}
 	}
 	if live != nil && live.ATM > 0 {
 		if row, ok := live.chain[live.ATM]; ok && row.CE > 0 && row.PE > 0 {

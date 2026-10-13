@@ -450,36 +450,23 @@ export default function PaperSimTab() {
         </Show>
 
         <Show when={sel() === 'overview'}>
-          <Show when={(data().straddle_range || []).some((r) => r.minutes > 0)}>
+          <Show when={(data().straddle_range || []).some((r) => r.minutes > 0 || r.live)}>
             <div style={{ ...S.panel, 'margin-top': '12px' }}>
-              <div style={S.label}>ATM straddle today — min and max</div>
+              <div style={S.label}>ATM straddle today — live min and max</div>
               <table class="trade-position-table" style={{ 'font-size': '12px', 'margin-top': '8px' }}>
                 <thead><tr>
                   <th>Expiry</th>
-                  <th style={S.th} title="lowest ATM straddle at a minute open (last trade before HH:MM:00), at that minute's own ATM strike">Min</th>
-                  <th style={S.th} title="highest ATM straddle at a minute open">Max</th>
-                  <th style={S.th}>Range</th>
-                  <th style={S.th} title="first stored minute of the day">First</th>
-                  <th style={S.th} title="ATM straddle right now, from the live chain (today only); also extends Min / Max between minute ends">Live now</th>
-                  <th style={S.th} title="latest stored minute">Last minute</th>
-                  <th style={S.th} title="lowest / highest ATM straddle on any tick inside a minute (current expiry only)">Tick low / high</th>
+                  <th style={S.th} title="lowest ATM straddle today, live: every tick inside the minutes (current expiry), each minute open and the live price right now">Min</th>
+                  <th style={S.th} title="highest ATM straddle today, live">Max</th>
                 </tr></thead>
-                <tbody><For each={(data().straddle_range || []).filter((r) => r.minutes > 0)}>{(r) => (
+                <tbody><For each={(data().straddle_range || []).filter((r) => r.minutes > 0 || r.live)}>{(r) => (
                   <tr>
                     <td><strong>{r.set === 'next' ? 'Next week' : 'Current'}</strong> <span style={S.muted}>{r.expiry}</span></td>
                     <td style={S.th}><strong>{fmt(r.min)}</strong> <span style={S.muted}>{r.min_at} · {fmt(r.min_atm, 0)}</span></td>
                     <td style={S.th}><strong>{fmt(r.max)}</strong> <span style={S.muted}>{r.max_at} · {fmt(r.max_atm, 0)}</span></td>
-                    <td style={S.th}>{fmt(r.max - r.min)}</td>
-                    <td style={S.th}>{fmt(r.first)} <span style={S.muted}>{r.first_at}</span></td>
-                    <td style={S.th}>{r.live ? <><strong>{fmt(r.live)}</strong> <span style={S.muted}>{r.live_at} · {fmt(r.live_atm, 0)}</span></> : '—'}</td>
-                    <td style={S.th}>{fmt(r.last)} <span style={S.muted}>{r.last_at} · {fmt(r.last_atm, 0)}</span></td>
-                    <td style={S.th}>{r.tick_low ? <>{fmt(r.tick_low)} <span style={S.muted}>before {r.tick_low_at}</span> / {fmt(r.tick_high)} <span style={S.muted}>before {r.tick_high_at}</span></> : '—'}</td>
                   </tr>
                 )}</For></tbody>
               </table>
-              <div style={{ ...S.muted, 'margin-top': '4px' }}>
-                Each minute's straddle is taken at that minute's own ATM strike (shown beside the time), at the minute open. Today the live straddle is included, so Min / Max move between minute ends. Both expiries are shown whichever one is selected above.
-              </div>
             </div>
           </Show>
           <div style={{ display: 'grid', 'grid-template-columns': 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px', margin: '12px 0' }}>
