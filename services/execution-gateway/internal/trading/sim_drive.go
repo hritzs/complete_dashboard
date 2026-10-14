@@ -243,7 +243,7 @@ func (s *Service) simDriveTick() {
 			mins[i].secs = tk
 		}
 	}
-	cfg := simDriveConfigOf(run, tr.Strike)
+	cfg := simDriveConfigOf(run, tr.Strike, lutDrivingRule().Key)
 	cfg.ExitTime = exitTime
 	res := RunPaperSim(mins, cfg, lot, nil)
 	// Finished minutes: keep only what decides the same next time.
@@ -300,12 +300,12 @@ func (s *Service) simDriveHedge(d *simDriver, tr StoredTrade, run LUTBuildRun, h
 	frac, how := hedgeIntraFrac, "complete live delta"
 	if snap, ok := s.Store.LoadSnapshot(tr.TradeUID); ok {
 		a.Delta = snap.NetDelta
-		if h.Kind != "INTRA_MINUTE" { // minute end: live points out -> 25 % of live allowed
+		if rule := lutDrivingRule(); h.Kind != "INTRA_MINUTE" && rule.LeaveBand > 0 { // new: live points out -> 25 % of live allowed
 			eff := math.Max(snap.PointsAllowed, snap.Underlying*resolveHedgeMinThresholdBps(tr.Config.HedgeMinThresholdBps)/10000)
 			if run.SimPointsAllowed > 0 {
 				eff = run.SimPointsAllowed // test band, as in its simulation
 			}
-			frac = hedgeMinuteFracFor(snap.PointsOut, eff)
+			frac = rule.minuteFrac(snap.PointsOut, eff)
 			how = fmt.Sprintf("live points out %.1f -> %.1f (25%% of allowed %.1f)", snap.PointsOut, hedgeLeaveBand*eff, eff)
 		}
 	}
@@ -366,13 +366,14 @@ func (d *simDriver) record(a SimDriveAction) {
 // Sim as it runs, on the trade's own strike, with the SL / TP / exit time
 // the trade was armed with and, for a test fire, its fixed hedge band. The
 // Paper Sim tab shows the same simulation for that trade.
-func simDriveConfigOf(run LUTBuildRun, strike float64) PaperSimConfig {
+func simDriveConfigOf(run LUTBuildRun, strike float64, tables string) PaperSimConfig {
 	exit := run.ExitTime
 	if exit == "" {
 		exit = "15:37"
 	}
 	return PaperSimConfig{ID: "LIVE-" + run.TradeUID, Source: "drives " + run.TradeUID, Entry: strings.TrimSuffix(run.Minute, " (test)"),
-		Lots: 1, HedgeMode: "synthetic", ExitTime: exit, SLBps: run.SLBps, TPBps: run.TPBps, PointsAllowed: run.SimPointsAllowed, Strike: strike}
+		Lots: 1, HedgeMode: "synthetic", ExitTime: exit, SLBps: run.SLBps, TPBps: run.TPBps, PointsAllowed: run.SimPointsAllowed, Strike: strike,
+		HedgeRule: tables}
 }
 
 // simDrivenRun finds the LUT run (real build or sim-driven test) that made

@@ -314,6 +314,7 @@ func (e *lutEngine) newDay(day string) {
 	if e.sc == nil {
 		e.sc = lutSchemaOld
 	}
+	lutDrivingTables.Store(e.sc.Key) // live hedges follow this set's hedge rule
 	// Restart mid-day: reload what was already recorded today.
 	if len(mins) > 0 || st.U0916 > 0 || st.Entry != nil {
 		for i := range mins {

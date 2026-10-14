@@ -1,6 +1,9 @@
 package trading
 
-import "math"
+import (
+	"math"
+	"sync/atomic"
+)
 
 // defaultHedgeMinThresholdBps is the reference system's default for
 // hedge_min_threshold_bps.
@@ -78,6 +81,48 @@ const (
 	hedgeIntraMult = 1.2
 	hedgeIntraFrac = 1.0
 )
+
+// hedgeRule is how a LUT table set hedges (owner, 2026-10-14): the old
+// tables keep the old hedge, the new tables use the new one.
+//   - old: a minute-end breach hedges the complete net delta; no
+//     intra-minute hedge;
+//   - new: a minute-end breach hedges until points out is 25 % of allowed;
+//     intra-minute, points out > 1.2 x allowed hedges the complete delta.
+//
+// Live trades follow the set driving the day (lutDrivingRule); the Paper
+// Sim follows the set chosen on the tab.
+type hedgeRule struct {
+	Key       string
+	LeaveBand float64 // 0 = the complete delta at minute end
+	Intra     bool
+}
+
+var (
+	hedgeRuleOld = hedgeRule{Key: "old"}
+	hedgeRuleNew = hedgeRule{Key: "new", LeaveBand: hedgeLeaveBand, Intra: true}
+	// lutDrivingTables: the table set driving today (set by the LUT engine).
+	lutDrivingTables atomic.Value
+)
+
+func hedgeRuleFor(tables string) hedgeRule {
+	if tables == "new" {
+		return hedgeRuleNew
+	}
+	return hedgeRuleOld
+}
+
+func lutDrivingRule() hedgeRule {
+	k, _ := lutDrivingTables.Load().(string)
+	return hedgeRuleFor(k)
+}
+
+// minuteFrac: the share of the net delta a minute-end hedge takes.
+func (r hedgeRule) minuteFrac(pointsOut, effAllowed float64) float64 {
+	if r.LeaveBand <= 0 {
+		return 1
+	}
+	return hedgeMinuteFracFor(pointsOut, effAllowed)
+}
 
 // hedgeMinuteFracFor is the share of the net delta a minute-end hedge takes
 // so that points out falls to hedgeLeaveBand x effective allowed (0 when

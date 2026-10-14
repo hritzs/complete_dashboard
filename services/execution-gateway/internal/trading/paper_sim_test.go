@@ -119,7 +119,7 @@ func TestPaperSim_LiveAndGreeks(t *testing.T) {
 // rounding), even at 1 lot.
 func TestPaperSim_SyntheticHedgeOneLot(t *testing.T) {
 	mins := mkMinutes(60, func(i int) float64 { return 22600 + float64(i)*2 })
-	r := RunPaperSim(mins, PaperSimConfig{Entry: "09:16", Lots: 1, HedgeMode: "synthetic", SLBps: 500}, 65, nil)
+	r := RunPaperSim(mins, PaperSimConfig{Entry: "09:16", Lots: 1, HedgeMode: "synthetic", SLBps: 500, HedgeRule: "new"}, 65, nil)
 	if len(r.Hedges) == 0 {
 		t.Fatal("expected synthetic hedges at 1 lot")
 	}
@@ -202,7 +202,7 @@ func TestPaperSim_IntraMinuteHedge(t *testing.T) {
 			}
 			mins[1].secs = append(mins[1].secs, simSec{T: fmt.Sprintf("09:17:%02d", s), F: f})
 		}
-		r := RunPaperSim(mins, PaperSimConfig{Entry: "09:16", Lots: 10, HedgeMode: mode, SLBps: 500}, 65, nil)
+		r := RunPaperSim(mins, PaperSimConfig{Entry: "09:16", Lots: 10, HedgeMode: mode, SLBps: 500, HedgeRule: "new"}, 65, nil)
 		var intra []PaperSimHedge
 		for _, h := range r.Hedges {
 			if h.Kind == "INTRA_MINUTE" {
@@ -245,5 +245,30 @@ func TestPaperSim_StrikeOverride(t *testing.T) {
 	}
 	if r := RunPaperSim(mins, PaperSimConfig{Entry: "09:16", Lots: 1, HedgeMode: "off"}, 65, nil); r.Strike != 22700 {
 		t.Fatalf("default strike %v", r.Strike)
+	}
+}
+
+// Old tables keep the old hedge: a minute-end breach hedges the complete
+// delta and there is no intra-minute hedge.
+func TestPaperSim_OldHedgeRule(t *testing.T) {
+	mins := mkMinutes(60, func(i int) float64 { return 22600 + float64(i)*2 })
+	for s := 1; s < 60; s++ {
+		mins[1].secs = append(mins[1].secs, simSec{T: fmt.Sprintf("09:17:%02d", s), F: 22750})
+	}
+	r := RunPaperSim(mins, PaperSimConfig{Entry: "09:16", Lots: 1, HedgeMode: "synthetic", SLBps: 500, HedgeRule: "old"}, 65, nil)
+	n := 0
+	for _, h := range r.Hedges {
+		if h.Kind == "INTRA_MINUTE" {
+			t.Fatalf("old rule has no intra-minute hedge: %+v", h)
+		}
+		if h.Kind == "RISK_BREACH" {
+			n++
+			if math.Abs(h.DeltaAfter) > 1e-6 {
+				t.Fatalf("old rule hedges the complete delta: %+v", h)
+			}
+		}
+	}
+	if n == 0 {
+		t.Fatal("expected minute-end hedges")
 	}
 }

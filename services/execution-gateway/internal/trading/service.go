@@ -1660,7 +1660,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 	if simDriven && !simFresh && now.Second() == 0 {
 		log.Printf("[SIM-DRIVE][%s] ⚠ simulation not updating -- no hedge / SL / TP is being taken for this trade (hard exit time still applies)", tradeUID)
 	}
-	if rt, ok := s.Store.LoadRuntime(tradeUID); ok && !exiting && trade.Status == "ACTIVE" && !simDriven &&
+	if rt, ok := s.Store.LoadRuntime(tradeUID); ok && !exiting && trade.Status == "ACTIVE" && !simDriven && lutDrivingRule().Intra &&
 		rt.LastMinuteCheck.Equal(currentMinute) && !rt.LastIntraHedge.Equal(currentMinute) &&
 		!trade.Config.ForceOneLotHedgeTest && !trade.Config.ForceHedgeRegardlessOfPoints {
 		lotSize := int64(trade.LotSize)
@@ -1707,7 +1707,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 				ForceOneLotTest: forceOneLotTest,
 				TestPointsFloor: trade.Config.HedgePointsFloor,
 				ForceRegardless: trade.Config.ForceHedgeRegardlessOfPoints,
-				LeaveBand:       hedgeLeaveBand,
+				LeaveBand:       lutDrivingRule().LeaveBand, // 0 (old tables) = the complete delta
 			})
 			if simDriven && decision.Hedge {
 				decision.Hedge, decision.Action = false, "SIM_DRIVEN"

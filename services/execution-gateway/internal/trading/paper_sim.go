@@ -47,8 +47,11 @@ type PaperSimConfig struct {
 	PointsAllowed float64 `json:"points_allowed,omitempty"`
 	// Strike > 0: the position's strike (a real trade's own strike, which
 	// can differ from the ATM at the minute's open); 0 = ATM at entry.
-	Strike    float64 `json:"strike,omitempty"`
-	CreatedAt string  `json:"created_at,omitempty"`
+	Strike float64 `json:"strike,omitempty"`
+	// HedgeRule: "old" / "new" -- the hedge of that LUT table set
+	// (hedge_decision.go); "" = old.
+	HedgeRule string `json:"hedge_rule,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"`
 
 	// MTM square-off (its own exit type, separate from SL/TP/time): once
 	// the trade can be closed at executable prices (shorts at the ask,
@@ -630,6 +633,7 @@ func (b *simBook) value(m simMinute, q int64) PaperSimPoint {
 // is the market right now: an open position is also valued on it.
 func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMinute) PaperSimResult {
 	c = paperDefaults(c)
+	rule := hedgeRuleFor(c.HedgeRule)
 	res := PaperSimResult{Config: c, Status: "NO DATA"}
 	entry := lutHHMM(c.Entry)
 	exitAt := lutHHMM(c.ExitTime)
@@ -704,7 +708,7 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 			out = math.Abs(pt.NetDelta / pt.NetGamma)
 		}
 		d := decideHedge(hedgeDecisionInput{PointsOut: out, PointsAllowed: allowed, Spot: m.Future, NetDelta: pt.NetDelta,
-			LotSize: lotSize, TradeLots: int64(c.Lots), MinThresholdBps: simMinBps(c), LeaveBand: hedgeLeaveBand})
+			LotSize: lotSize, TradeLots: int64(c.Lots), MinThresholdBps: simMinBps(c), LeaveBand: rule.LeaveBand})
 		pt.PointsOut, pt.PointsAllowed, pt.HedgeFloor, pt.HedgeCheck, pt.HedgeLotsNeeded = out, d.EffectiveAllowed, d.Floor, d.Action, d.Lots
 		if !d.Hedge {
 			pt.HedgeLotsNeeded = 0
@@ -718,7 +722,7 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 			if out > d.EffectiveAllowed && math.Abs(pt.NetDelta) > 1e-9 {
 				pt.HedgeCheck = "RISK_BREACH"
 			}
-			pt.HedgeTarget = (pt.HedgeFut - hedgeMinuteFracFor(out, d.EffectiveAllowed)*pt.NetDelta) / float64(q)
+			pt.HedgeTarget = (pt.HedgeFut - rule.minuteFrac(out, d.EffectiveAllowed)*pt.NetDelta) / float64(q)
 		}
 		return d
 	}
@@ -742,7 +746,7 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 	// with points out > 1.2 x allowed hedges the complete delta -- once per
 	// minute, as live. The hedge is marked on the minute's row.
 	intraMinute := func(m simMinute) {
-		if c.HedgeMode == "off" || len(m.secs) == 0 || len(res.Series) == 0 {
+		if !rule.Intra || c.HedgeMode == "off" || len(m.secs) == 0 || len(res.Series) == 0 {
 			return
 		}
 		ref := book.value(m, q)
@@ -886,7 +890,7 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 		d := hedgeCheck(m, &pt)
 		if exit == "" && c.HedgeMode == "synthetic" && pt.HedgeCheck == "RISK_BREACH" {
 			old := book.futQty
-			dq := -hedgeMinuteFracFor(pt.PointsOut, pt.PointsAllowed) * pt.NetDelta // points out -> 25 % of allowed (hedge_decision.go)
+			dq := -rule.minuteFrac(pt.PointsOut, pt.PointsAllowed) * pt.NetDelta // old: all of it; new: points out -> 25 % of allowed
 			book.fillFut(dq, m.Future)
 			after := book.value(m, q)
 			res.Hedges = append(res.Hedges, PaperSimHedge{Time: m.Time, Mode: "synthetic", Kind: "RISK_BREACH", Strike: 0, Qty: int64(math.Round(dq)), FutQty: dq,
@@ -1213,6 +1217,7 @@ func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 	// its answers on every minute and its first YES as a sim; the other
 	// set's answer is shown beside.
 	sets := lutLoadDaySets(day)
+	driving := sets.Tables // the set that drove the day (live trades hedged by its rule)
 	if want := r.URL.Query().Get("tables"); want != "" && want == sets.AltTables {
 		sets.Tables, sets.AltTables = sets.AltTables, sets.Tables
 		sets.FirstYes, sets.AltFirstYes = sets.AltFirstYes, sets.FirstYes
@@ -1252,7 +1257,7 @@ func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 		if run, ok := simDrivenRun(day, actual[i].TradeUID); ok {
 			// A sim-driven LUT trade shows the very simulation that drove
 			// it (sim_drive.go): same band, strike, SL / TP, exit time.
-			d := simDriveConfigOf(run, actual[i].Strike)
+			d := simDriveConfigOf(run, actual[i].Strike, driving)
 			d.ID, d.Source, d.Lots, d.ActualExit, d.ActualReason = id, "simulation that drove "+actual[i].TradeUID, l, c.ActualExit, c.ActualReason
 			c = d
 		}
@@ -1297,6 +1302,9 @@ func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if size > 0 {
 			c.Lots = size
+		}
+		if c.HedgeRule == "" { // the chosen set's hedge (a sim-driven trade keeps the driving set's)
+			c.HedgeRule = sets.Tables
 		}
 		sims = append(sims, RunPaperSim(mins, withMTM(c), runLot, live))
 	}

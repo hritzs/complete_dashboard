@@ -945,7 +945,7 @@ func (s *Service) sbRiskLocked(r *sbRunner, chain *OptionChainSnapshot, now time
 			d := decideHedge(hedgeDecisionInput{
 				PointsOut: out, PointsAllowed: allowed, Spot: spot, NetDelta: view.NetDelta,
 				LotSize: lot, TradeLots: int64(view.FilledStraddles) / lot, MinThresholdBps: cfg.HedgeMinBps,
-				LeaveBand: hedgeLeaveBand,
+				LeaveBand: lutDrivingRule().LeaveBand,
 			})
 			risk["HEDGE"] = fmt.Sprintf("%s: out %.2f / allowed %.2f (floor %.2f), net delta %+.2f", d.Action, out, d.EffectiveAllowed, d.Floor, view.NetDelta)
 			log.Printf("[MONITOR][%s] minute=%s action=%s points_out=%.4f points_allowed=%.4f min_points=%.4f net_delta=%.4f abs_delta=%.4f lot_size=%d syn_fut=%.2f syn_spot=%.2f",
