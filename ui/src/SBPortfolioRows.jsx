@@ -79,9 +79,13 @@ function SBRow(props) {
   // Per-strike split when a leg type is held at more than one strike
   // (ATM moved during the build, or a hedge): "22550: 4875 · 22600: 65".
   const splitOf = (t) => (legsOf(t).length > 1
-    ? legsOf(t).map((l) => `${fmt(l.strike, 0)}: ${Number(l.qty) > 0 ? '+' : ''}${Math.abs(Number(l.qty)) * (Number(l.qty) > 0 ? 1 : 1)}${Number(l.qty) > 0 ? ' long' : ''}`).join(' · ')
+    ? legsOf(t).map((l) => `${fmt(l.strike, 0)}: ${Math.abs(Number(l.qty))}${Number(l.qty) > 0 ? ' long' : ''}`).join(' · ')
     : '');
   const ltpOf = (t) => (legsOf(t).length === 1 ? legsOf(t)[0].mark : null);
+  // Held at several strikes: each strike's LTP ("22550: 156.20 · 22600: 131.60").
+  const ltpText = (t) => (legsOf(t).length > 1
+    ? legsOf(t).map((l) => `${fmt(l.strike, 0)}: ₹${fmt(l.mark)}`).join(' · ')
+    : (ltpOf(t) == null ? '—' : `₹${fmt(ltpOf(t))}`));
   const realized = () => legs().reduce((a, l) => a + (Number(l.realized) || 0), 0);
   const total = () => Number(p().pnl) || 0;
   const unreal = () => total() - realized();
@@ -125,9 +129,9 @@ function SBRow(props) {
           </Show>
         </td>
         <td style={td}>{Math.abs(qtyOf('CE'))}<Show when={splitOf('CE')}><div style={{ 'font-size': '11px', opacity: 0.7 }}>{splitOf('CE')}</div></Show></td>
-        <td style={td}>{ltpOf('CE') == null ? '—' : `₹${fmt(ltpOf('CE'))}`}</td>
+        <td style={{ ...td, 'white-space': 'nowrap' }}>{ltpText('CE')}</td>
         <td style={td}>{Math.abs(qtyOf('PE'))}<Show when={splitOf('PE')}><div style={{ 'font-size': '11px', opacity: 0.7 }}>{splitOf('PE')}</div></Show></td>
-        <td style={td}>{ltpOf('PE') == null ? '—' : `₹${fmt(ltpOf('PE'))}`}</td>
+        <td style={{ ...td, 'white-space': 'nowrap' }}>{ltpText('PE')}</td>
         <td style={td}>{fmt(p().net_delta, 4)}</td>
         <td style={td}>{fmt(pointsOut(), 2)}</td>
         <td style={td} title="from the minute-end hedge check">{hedgeNum('allowed') == null ? '—' : fmt(hedgeNum('allowed'), 2)}</td>

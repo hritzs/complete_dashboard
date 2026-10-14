@@ -425,7 +425,8 @@ function App() {
         } catch (_) { /* gateway restarting */ }
       };
       pullCheck();
-      const t = setInterval(pullCheck, 30000);
+      fetchBrokerPositions(); // the Broker Positions panel is filled from the start, not only on "Refresh"
+      const t = setInterval(() => { pullCheck(); fetchBrokerPositions(); }, 30000);
       onCleanup(() => clearInterval(t));
     }
     const [manualHedgeError, setManualHedgeError] = createSignal('');
@@ -2678,8 +2679,8 @@ function App() {
                 <span>{portfolioTotals().trades} trades</span>
                 <span>{portfolioTotals().open} open</span>
                 <span>{portfolioTotals().closed} closed</span>
-                <span>
-                  Realized{" "}
+                <span title="closed trades only -- realized legs of trades still open are in the Portfolio totals below">
+                  Realized on closed trades{" "}
                   <strong class={Number(portfolioTotals().realized_pnl) >= 0 ? "positive" : "negative"}>
                     ₹{fmt(portfolioTotals().realized_pnl, 2)}
                   </strong>{" "}
