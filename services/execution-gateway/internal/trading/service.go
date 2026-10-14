@@ -1624,9 +1624,14 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 	s.Store.SaveSnapshot(snapshot)
 
 	if s.Snapshot != nil {
-		if pushErr := s.Snapshot.PushSnapshot(ctx, snapshot); pushErr != nil {
+		// Its own time limit: at a minute end the cycle's 2 s can be used up
+		// waiting for GreekSoft's candle closes (+2 s on slow minutes), which
+		// made this push fail "context deadline exceeded" at once.
+		pctx, pcancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+		if pushErr := s.Snapshot.PushSnapshot(pctx, snapshot); pushErr != nil {
 			log.Printf("[SNAPSHOT] push failed trade=%s err=%v", snapshot.TradeUID, pushErr)
 		}
+		pcancel()
 	}
 
 	// Per-tick snapshot: unlike the once-a-minute HEDGE/SL/TP/TIME status

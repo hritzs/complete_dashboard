@@ -279,6 +279,10 @@ type pmAgg struct {
 	pos   map[string]*pmPos
 	acc   map[string]*pmFlows
 	order []string
+	// closedCash: realized cash of trades already closed today. Kept out of
+	// the instrument rows, so a strike traded again later shows only the
+	// open trades' fills (their average, their trade ids).
+	closedCash float64
 }
 
 type pmFlows struct {
@@ -291,11 +295,23 @@ func newPMAgg() *pmAgg { return &pmAgg{pos: map[string]*pmPos{}, acc: map[string
 
 func (a *pmAgg) add(t TradeSummary, chain *OptionChainSnapshot) {
 	rowOf := mtmRowLookup(chain)
+	closed := strings.HasPrefix(strings.ToUpper(t.Status), "CLOSED")
 	for _, e := range t.Executions {
 		if e.FilledQty <= 0 || e.AvgPrice <= 0 || e.Leg == "" {
 			continue
 		}
 		wing := isWingExecution(e)
+		if closed {
+			if !wing { // a closed trade: its cash is realized, not part of an open row
+				v := float64(e.FilledQty) * e.AvgPrice
+				if strings.EqualFold(e.Side, "SELL") {
+					a.closedCash += v
+				} else {
+					a.closedCash -= v
+				}
+			}
+			continue
+		}
 		leg := strings.ToUpper(e.Leg)
 		key := fmt.Sprintf("%s|%s|%d|%v", t.Symbol, leg, e.token, wing)
 		p, ok := a.pos[key]
@@ -318,7 +334,7 @@ func (a *pmAgg) add(t TradeSummary, chain *OptionChainSnapshot) {
 }
 
 func (a *pmAgg) view() *PortfolioMTMView {
-	v := &PortfolioMTMView{}
+	v := &PortfolioMTMView{Realized: a.closedCash, DayMTMLTP: a.closedCash}
 	for _, key := range a.order {
 		p, f := a.pos[key], a.acc[key]
 		cash := f.soldVal - f.boughtVal
