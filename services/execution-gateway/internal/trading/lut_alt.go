@@ -20,6 +20,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -68,7 +70,75 @@ func lutLogicChoice() string {
 	if k := strings.TrimSpace(os.Getenv("LUT_LOGIC")); lutSchemaByKey(k) != nil {
 		return k
 	}
-	return "old"
+	return "new" // the new tables drive unless chosen otherwise (owner, 2026-10-14)
+}
+
+// lutShowOld: "Show old algorithm" -- the old set runs beside the new one
+// only while this is on (off by default). File lut_show_old in the data
+// dir; read once, then kept in memory.
+var (
+	lutShowOldOnce sync.Once
+	lutShowOldOn   atomic.Bool
+)
+
+func lutShowOldFile() string { return filepath.Join(lutDataDir(), "lut_show_old") }
+
+func lutShowOld() bool {
+	lutShowOldOnce.Do(func() {
+		b, _ := os.ReadFile(lutShowOldFile())
+		lutShowOldOn.Store(strings.TrimSpace(string(b)) == "1")
+	})
+	return lutShowOldOn.Load()
+}
+
+func lutSetShowOld(on bool) error {
+	lutShowOld()
+	lutShowOldOn.Store(on)
+	v := "0"
+	if on {
+		v = "1"
+	}
+	if err := os.MkdirAll(lutDataDir(), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(lutShowOldFile(), []byte(v+"\n"), 0o644)
+}
+
+// lutAltWanted: the set beside the driving one runs at all. The new set
+// always does (it is the one being adopted); the old set only when shown.
+func lutAltWanted(alt *lutSchema) bool {
+	return alt == lutSchemaNew || lutShowOld()
+}
+
+// lutSwapDriving makes `to` the set driving a day already recorded under
+// `from`: its files become the day's main files and `from`'s move to its
+// own names. Files are renamed, never deleted; the day's builds, tests and
+// 09:16 capture stay in the main day state.
+func lutSwapDriving(day string, from, to *lutSchema) {
+	dir := lutDataDir()
+	fromAlt, toAlt := lutAltStem(day, from.Key), lutAltStem(day, to.Key)
+	mv := func(src, dst string) {
+		if _, err := os.Stat(src); err != nil {
+			return
+		}
+		if _, err := os.Stat(dst); err == nil { // never overwrite: keep the older copy aside
+			_ = os.Rename(dst, dst+".bak-"+time.Now().Format("150405"))
+		}
+		if err := os.Rename(src, dst); err != nil {
+			log.Printf("[LUT] ⚠ switching %s to %s: %v", day, to.Name, err)
+		}
+	}
+	_, prim := lutLoadDay(day)
+	_, toSt := lutLoadDayFrom(toAlt, day)
+	for _, ext := range []string{".jsonl", ".csv"} {
+		mv(filepath.Join(dir, day+ext), filepath.Join(dir, fromAlt+ext))
+		mv(filepath.Join(dir, toAlt+ext), filepath.Join(dir, day+ext))
+	}
+	lutSaveDayTo(fromAlt, lutDayState{Day: day, Entry: prim.Entry, Tables: from.Key})
+	prim.Day, prim.Entry, prim.Tables = day, toSt.Entry, to.Key
+	lutSaveDay(prim)
+	_ = os.Rename(filepath.Join(dir, toAlt+"_day.json"), filepath.Join(dir, toAlt+"_day.json.bak-"+time.Now().Format("150405")))
+	log.Printf("[LUT] %s: %s now drive the day (their minutes are the main record; %s kept as %s.*)", day, to.Name, from.Name, fromAlt)
 }
 
 // lutOther is the set that is not sc.
@@ -93,6 +163,10 @@ func lutTablesDir(sc *lutSchema) string {
 
 // loadAltLocked (re)starts the second set for the day. Caller holds e.mu.
 func (e *lutEngine) loadAltLocked(day string) {
+	if !lutAltWanted(lutOther(e.sc)) {
+		e.alt = nil // the old set is not shown: nothing loaded, evaluated or recorded
+		return
+	}
 	a := &lutAlt{sc: lutOther(e.sc), tried: time.Now()}
 	e.alt = a
 	mins, st := lutLoadDayFrom(lutAltStem(day, a.sc.Key), day)
@@ -242,9 +316,25 @@ func (e *lutEngine) altLiveLocked(now time.Time, hhmm int, shown lutCtx, withGri
 func (h *Handlers) LUTLogicHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		var req struct {
-			Tables string `json:"tables"`
+			Tables  string `json:"tables"`
+			ShowOld *bool  `json:"show_old"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || lutSchemaByKey(req.Tables) == nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			lutJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if req.ShowOld != nil {
+			if err := lutSetShowOld(*req.ShowOld); err != nil {
+				lutJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			log.Printf("[LUT] show old algorithm: %v", *req.ShowOld)
+		}
+		if req.Tables == "" {
+			lutLogicReply(w)
+			return
+		}
+		if lutSchemaByKey(req.Tables) == nil {
 			lutJSON(w, http.StatusBadRequest, map[string]string{"error": `tables must be "old" or "new"`})
 			return
 		}
@@ -256,16 +346,25 @@ func (h *Handlers) LUTLogicHandler(w http.ResponseWriter, r *http.Request) {
 			lutJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		log.Printf("[LUT] table set chosen to drive the LUT from the next day: %s", req.Tables)
+		log.Printf("[LUT] table set chosen to drive the LUT: %s (applies now, today included)", req.Tables)
+		lutEng.mu.Lock()
+		if lutEng.day != "" && (lutEng.sc == nil || lutEng.sc.Key != req.Tables) {
+			lutEng.newDay(lutEng.day) // swaps today's files and reloads (lutSwapDriving)
+		}
+		lutEng.mu.Unlock()
 	}
+	lutLogicReply(w)
+}
+
+func lutLogicReply(w http.ResponseWriter) {
 	lutEng.mu.Lock()
 	today := ""
 	if lutEng.sc != nil {
 		today = lutEng.sc.Key
 	}
 	lutEng.mu.Unlock()
-	lutJSON(w, http.StatusOK, map[string]string{"today": today, "next_day": lutLogicChoice(),
-		"note": "the set driving a day is fixed for that day; a change applies from the next day"})
+	lutJSON(w, http.StatusOK, map[string]interface{}{"today": today, "chosen": lutLogicChoice(), "show_old": lutShowOld(),
+		"note": "the chosen set drives from now on (a day already recorded under the other set has its files swapped); the old set runs beside it only while show_old is on"})
 }
 
 func lutAnswerOf(e LUTEvaluation) string {
@@ -300,8 +399,10 @@ func lutLoadDaySets(day string) lutDaySets {
 	if sc == nil {
 		sc = lutSchemaOld // files from before two sets existed
 	}
-	alt := lutOther(sc)
-	altMins, _ := lutLoadDayFrom(lutAltStem(day, alt.Key), day)
-	return lutDaySets{Tables: sc.Key, AltTables: alt.Key, Minutes: mins, AltMinutes: altMins,
-		FirstYes: lutFirstYes(mins), AltFirstYes: lutFirstYes(altMins)}
+	out := lutDaySets{Tables: sc.Key, Minutes: mins, FirstYes: lutFirstYes(mins)}
+	if alt := lutOther(sc); lutAltWanted(alt) { // the old set only when shown
+		altMins, _ := lutLoadDayFrom(lutAltStem(day, alt.Key), day)
+		out.AltTables, out.AltMinutes, out.AltFirstYes = alt.Key, altMins, lutFirstYes(altMins)
+	}
+	return out
 }

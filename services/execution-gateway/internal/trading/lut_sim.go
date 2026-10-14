@@ -314,6 +314,13 @@ func (e *lutEngine) newDay(day string) {
 	if e.sc == nil {
 		e.sc = lutSchemaOld
 	}
+	// The chosen set drives, today included: a day recorded under the other
+	// set has its files swapped (renamed, nothing deleted -- lut_alt.go).
+	if want := lutSchemaByKey(lutLogicChoice()); want != nil && want != e.sc {
+		lutSwapDriving(day, e.sc, want)
+		mins, st = lutLoadDay(day)
+		e.sc = want
+	}
 	lutDrivingTables.Store(e.sc.Key) // live hedges follow this set's hedge rule
 	// Restart mid-day: reload what was already recorded today.
 	if len(mins) > 0 || st.U0916 > 0 || st.Entry != nil {
@@ -392,6 +399,15 @@ func (s *Service) lutTick(withGrid bool) {
 			log.Printf("[LUT] %s inputs: prev straddle %.2f prev future %.2f yday IV %.4f IDV %.4f/%.4f weighted %.4f adj chg %.5f",
 				day, in.PrevStraddle, in.PrevFuture, in.YesterdayIV, in.IDVPure, in.IDVWithPrev, in.WeightedIDV, in.NormalizedAdjChg)
 		}
+	}
+	// The other set runs only while wanted ("Show old algorithm"; the new
+	// set always runs beside an old-driven day): switched off -> dropped at
+	// once, switched on -> loaded and caught up from the recorded minutes.
+	if wanted := e.sc != nil && lutAltWanted(lutOther(e.sc)); !wanted && e.alt != nil {
+		log.Printf("[LUT] %s switched off: no longer evaluated or recorded", e.alt.sc.Name)
+		e.alt = nil
+	} else if wanted && e.alt == nil && e.tablesLoaded {
+		e.loadAltLocked(day)
 	}
 	if a := e.alt; a != nil && !a.loaded && time.Since(a.tried) > lutInputsRetry {
 		e.loadAltLocked(day)

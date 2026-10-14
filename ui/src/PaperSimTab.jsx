@@ -430,7 +430,9 @@ export default function PaperSimTab() {
 
       <div style={{ display: 'flex', gap: '14px', 'flex-wrap': 'wrap', 'align-items': 'flex-end', padding: '4px 0 2px' }}>
         <Field label="Day"><input class="symbol-select" type="date" value={day()} onChange={(e) => { setDay(e.currentTarget.value); load(); }} /></Field>
-        <Field label="LUT logic"><Seg value={tables() || data()?.tables || 'old'} onChange={reload(setTables)} options={[['old', 'Old tables'], ['new', 'New tables (backtest)']]} /></Field>
+        <Show when={data()?.alt_tables}>
+          <Field label="LUT logic"><Seg value={tables() || data()?.tables || 'new'} onChange={reload(setTables)} options={[['new', 'New tables (backtest)'], ['old', 'Old tables']]} /></Field>
+        </Show>
         <Field label="Expiry"><Seg value={view()} onChange={reload(setView)} options={[['current', 'Current'], ['next', 'Next week']]} /></Field>
         <Field label="Size (qty)"><input class="symbol-select" style={{ width: '90px' }} type="text" inputmode="decimal" min="1" value={size()} onInput={(e) => setSize(e.currentTarget.value)} onChange={load} title="1 = one straddle (per-qty values); 65 = one NIFTY lot" /></Field>
         <Field label="Hedge"><Seg value={hedge()} onChange={reload(setHedge)} options={[['synthetic', 'Synthetic'], ['lots', 'ATM lots'], ['off', 'Off']]} /></Field>

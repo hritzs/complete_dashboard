@@ -82,6 +82,17 @@ export default function LutBuildTab() {
   const [tset, setTset] = createSignal('main');
   const [raw, setRaw] = createSignal(null); // last pushed payload, both sets
   const [stateRaw, setStateRaw] = createSignal(null);
+  const [showOld, setShowOld] = createSignal(false); // "Show old algorithm": the old set runs only while on
+  const loadShowOld = async () => {
+    try { const d = await (await fetch('/api/lut/logic')).json(); setShowOld(!!d.show_old); } catch (_) { /* restarting */ }
+  };
+  const toggleShowOld = async (on) => {
+    try {
+      const d = await (await fetch('/api/lut/logic', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ show_old: on }) })).json();
+      setShowOld(!!d.show_old);
+      if (!d.show_old && tset() === 'alt') switchSet('main');
+    } catch (_) { /* restarting */ }
+  };
   let seenMinutes = -1;
   let seenAlt = -1;
   const setManField = (k) => (e) => setMan((m) => ({ ...m, [k]: e.currentTarget.value }));
@@ -187,6 +198,7 @@ export default function LutBuildTab() {
 
   onMount(() => {
     loadState();
+    loadShowOld();
     window.addEventListener('lut_update', onUpdate);
   });
   onCleanup(() => window.removeEventListener('lut_update', onUpdate));
@@ -674,6 +686,10 @@ export default function LutBuildTab() {
           </button>
         </Show>
         <Show when={tset() === 'alt'}><span style={{ color: '#ffb74d', 'font-size': '12px' }}>Showing the set that is NOT driving today</span></Show>
+        <span style={{ ...muted, 'margin-left': '12px' }}>Show old algorithm:</span>
+        <label style={{ cursor: 'pointer' }}><input type="radio" name="lut-show-old" checked={!showOld()} onChange={() => toggleShowOld(false)} /> Off</label>
+        <label style={{ cursor: 'pointer' }}><input type="radio" name="lut-show-old" checked={showOld()} onChange={() => toggleShowOld(true)} /> On</label>
+        <span style={muted}>(off = the old tables are not loaded, evaluated, recorded or simulated)</span>
       </div>
 
       <div style={{ display: 'flex', gap: '12px', 'flex-wrap': 'wrap', 'align-items': 'flex-end' }}>
