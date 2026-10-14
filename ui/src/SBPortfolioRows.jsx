@@ -76,6 +76,11 @@ function SBRow(props) {
   const legs = () => (p().legs || []).filter((l) => Number(l.qty) !== 0 || Number(l.realized) !== 0);
   const legsOf = (t) => legs().filter((l) => l.option_type === t && Number(l.qty) !== 0);
   const qtyOf = (t) => legsOf(t).reduce((a, l) => a + Number(l.qty), 0);
+  // Per-strike split when a leg type is held at more than one strike
+  // (ATM moved during the build, or a hedge): "22550: 4875 · 22600: 65".
+  const splitOf = (t) => (legsOf(t).length > 1
+    ? legsOf(t).map((l) => `${fmt(l.strike, 0)}: ${Number(l.qty) > 0 ? '+' : ''}${Math.abs(Number(l.qty)) * (Number(l.qty) > 0 ? 1 : 1)}${Number(l.qty) > 0 ? ' long' : ''}`).join(' · ')
+    : '');
   const ltpOf = (t) => (legsOf(t).length === 1 ? legsOf(t)[0].mark : null);
   const realized = () => legs().reduce((a, l) => a + (Number(l.realized) || 0), 0);
   const total = () => Number(p().pnl) || 0;
@@ -119,9 +124,9 @@ function SBRow(props) {
             <div style={{ 'font-size': '11px', opacity: 0.75, 'margin-top': '2px' }}>Built {sold()}/{target()}</div>
           </Show>
         </td>
-        <td style={td}>{Math.abs(qtyOf('CE'))}</td>
+        <td style={td}>{Math.abs(qtyOf('CE'))}<Show when={splitOf('CE')}><div style={{ 'font-size': '11px', opacity: 0.7 }}>{splitOf('CE')}</div></Show></td>
         <td style={td}>{ltpOf('CE') == null ? '—' : `₹${fmt(ltpOf('CE'))}`}</td>
-        <td style={td}>{Math.abs(qtyOf('PE'))}</td>
+        <td style={td}>{Math.abs(qtyOf('PE'))}<Show when={splitOf('PE')}><div style={{ 'font-size': '11px', opacity: 0.7 }}>{splitOf('PE')}</div></Show></td>
         <td style={td}>{ltpOf('PE') == null ? '—' : `₹${fmt(ltpOf('PE'))}`}</td>
         <td style={td}>{fmt(p().net_delta, 4)}</td>
         <td style={td}>{fmt(pointsOut(), 2)}</td>
