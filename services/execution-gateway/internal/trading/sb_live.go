@@ -426,109 +426,60 @@ func (s *Service) sbExecuteLiveAsync(r *sbRunner, plan DepthEntryPlan, atm Optio
 		}
 		left := func(leg string) int64 { return planQty[leg] - filled[leg] }
 
-		// Multi-lot shots: each leg's whole remaining planned quantity (up
-		// to the freeze qty per order) at the plan's own price -- the IOC
-		// takes every contract resting at or above it, the rest cancels.
-		for shot := 0; shot < 200 && (left("CE") >= lot || left("PE") >= lot); shot++ {
+		// One-lot clips, CE and PE in step (owner, 2026-10-14): each clip
+		// sells one lot of the leg behind its share of the plan (on a tie the
+		// leg likelier to miss), at a fresh quote. A clip of the lagging leg
+		// that misses while its partner is ahead is retried at once, more
+		// marketably; the legs are never more than one lot apart.
+		ahead := func(leg string) int64 { // lots the partner is ahead of leg (plan ratio)
+			p := map[string]string{"CE": "PE", "PE": "CE"}[leg]
+			if planQty[leg] <= 0 || planQty[p] <= 0 {
+				return 0
+			}
+			need := filled[p] * planQty[leg] / planQty[p] / lot * lot
+			return (need - filled[leg]) / lot
+		}
+		for clip := 0; clip < 4000 && (left("CE") >= lot || left("PE") >= lot); clip++ {
 			if !canSend() {
 				break
 			}
-			if shot > 0 {
+			if clip > 0 {
 				bestBid, l5 = s.sbFreshBids(symbol, expiry, atm.Strike, bestBid, l5)
 			}
-			var legs []string
-			for _, leg := range []string{"CE", "PE"} {
-				if left(leg) >= lot {
-					legs = append(legs, leg)
-				}
-			}
-			limits, why := sbPlanLimits(legs, plan, bestBid)
-			if stopWhy = why; stopWhy != "" {
-				break
-			}
-			orders := map[string]order{}
-			for _, leg := range legs {
-				orders[leg] = order{qty: min(left(leg)/lot*lot, maxQ), lim: limits[leg]}
-			}
-			// Never one leg ahead (2026-10-14: PE 2210 filled while every CE
-			// IOC cancelled -> +999 delta): the leg more likely to miss goes
-			// first, its partner follows for exactly what it filled at the
-			// plan's CE:PE ratio. Nothing filled -> nothing sent.
-			var got map[string]int64
-			if anchor, partner, ok := sbAnchorLeg(legs, limits, bestBid); ok && plan.CEQty > 0 && plan.PEQty > 0 {
-				got = send(map[string]order{anchor: orders[anchor]}, "")
-				if stopWhy != "" {
+			leg := sbNextClipLeg(planQty, filled, lot, plan, bestBid)
+			behind := ahead(leg) >= 1
+			limits, why := sbPlanLimits([]string{leg}, plan, bestBid)
+			if why != "" {
+				if !behind {
+					stopWhy = why // legs level: stop and re-plan at the new price
 					break
 				}
-				ratio := float64(plan.PEQty) / float64(plan.CEQty)
-				if partner == "CE" {
-					ratio = 1 / ratio
-				}
-				if pq := min(int64(float64(got[anchor])*ratio)/lot*lot, left(partner)/lot*lot, maxQ); pq >= lot {
-					pg := send(map[string]order{partner: {qty: pq, lim: limits[partner]}}, "")
-					got[partner] = pg[partner]
-					orders[partner] = order{qty: pq, lim: limits[partner]}
-				} else {
-					orders[partner] = order{}
-				}
-			} else {
-				got = send(orders, "")
+				limits = map[string]float64{leg: sbCompletionLimit(1, l5[leg], bestBid[leg])} // balance first
 			}
+			got := send(map[string]order{leg: {qty: lot, lim: limits[leg]}}, "")
 			if stopWhy != "" {
 				break
 			}
-			// Keep the tranche's CE:PE ratio: a leg that filled less than
-			// its share of what its partner filled is completed now at the
-			// fresh L5 bid (not held to the target), multi-lot.
-			if plan.CEQty > 0 && plan.PEQty > 0 {
-				for k := 0; k < sbCompleteRetries && canSend(); k++ {
-					needCE := filled["PE"] * plan.CEQty / plan.PEQty / lot * lot
-					needPE := filled["CE"] * plan.PEQty / plan.CEQty / lot * lot
-					miss, deficit := "", int64(0)
-					if d := needCE - filled["CE"]; d >= lot {
-						miss, deficit = "CE", d
-					} else if d := needPE - filled["PE"]; d >= lot {
-						miss, deficit = "PE", d
-					}
-					if miss == "" {
-						break
-					}
-					bestBid, l5 = s.sbFreshBids(symbol, expiry, atm.Strike, bestBid, l5)
-					if l5[miss] <= 0 {
-						continue
-					}
-					q := min(deficit, maxQ)
-					lim := sbCompletionLimit(k, l5[miss], bestBid[miss])
-					r.mu.Lock()
-					r.event("COMPLETE", "LIVE %s behind its partner by %d -- completing %d, limit %.2f (L5 %.2f, best %.2f, attempt %d/%d)", miss, deficit, q, lim, l5[miss], bestBid[miss], k+1, sbCompleteRetries)
-					r.mu.Unlock()
-					send(map[string]order{miss: {qty: q, lim: lim}}, "COMPLETE ")
-				}
-				if stopWhy == "" {
-					if d := filled["PE"]*plan.CEQty/plan.PEQty/lot*lot - filled["CE"]; d >= lot {
-						stopWhy = fmt.Sprintf("CE still %d behind its partner after %d completion attempts", d, sbCompleteRetries)
-					} else if d := filled["CE"]*plan.PEQty/plan.CEQty/lot*lot - filled["PE"]; d >= lot {
-						stopWhy = fmt.Sprintf("PE still %d behind its partner after %d completion attempts", d, sbCompleteRetries)
-					}
-				}
+			if got[leg] >= lot {
+				continue
+			}
+			if !behind {
+				stopWhy = "nothing filled at the plan's price (IOC cancelled)"
+				break
+			}
+			for k := 1; k < sbCompleteRetries && canSend() && got[leg] < lot; k++ {
+				bestBid, l5 = s.sbFreshBids(symbol, expiry, atm.Strike, bestBid, l5)
+				lim := sbCompletionLimit(k, l5[leg], bestBid[leg])
+				r.mu.Lock()
+				r.event("COMPLETE", "LIVE %s one lot behind its partner -- retry %d/%d at %.2f (best %.2f)", leg, k, sbCompleteRetries-1, lim, bestBid[leg])
+				r.mu.Unlock()
+				g := send(map[string]order{leg: {qty: lot - got[leg], lim: lim}}, "COMPLETE ")
+				got[leg] += g[leg]
+			}
+			if stopWhy == "" && got[leg] < lot {
+				stopWhy = fmt.Sprintf("%s still a lot behind its partner after %d tries", leg, sbCompleteRetries)
 			}
 			if stopWhy != "" {
-				break
-			}
-			// Nothing at all filled, or the book did not hold the rest at
-			// the plan's price: re-plan from the fresh book.
-			if got["CE"]+got["PE"] == 0 {
-				stopWhy = "nothing filled at the plan's prices (IOC cancelled)"
-				break
-			}
-			partial := false
-			for _, leg := range legs {
-				if got[leg] < orders[leg].qty {
-					partial = true
-				}
-			}
-			if partial && (left("CE") >= lot || left("PE") >= lot) {
-				stopWhy = "the book did not hold the whole level at the plan's price -- re-plan"
 				break
 			}
 		}
@@ -544,6 +495,32 @@ func (s *Service) sbExecuteLiveAsync(r *sbRunner, plan DepthEntryPlan, atm Optio
 		r.persistLocked()
 		r.mu.Unlock()
 	}()
+}
+
+// sbNextClipLeg: the leg for the next one-lot clip -- of the legs with at
+// least a lot left, the one furthest behind its share of the plan; on a tie
+// the one likelier to miss (sbAnchorLeg).
+func sbNextClipLeg(planQty, filled map[string]int64, lot int64, plan DepthEntryPlan, bestBid map[string]float64) string {
+	var legs []string
+	for _, leg := range []string{"CE", "PE"} {
+		if planQty[leg]-filled[leg] >= lot {
+			legs = append(legs, leg)
+		}
+	}
+	if len(legs) == 1 {
+		return legs[0]
+	}
+	share := func(leg string) float64 { return float64(filled[leg]) / float64(planQty[leg]) }
+	if a, b := share("CE"), share("PE"); a < b-1e-9 {
+		return "CE"
+	} else if b < a-1e-9 {
+		return "PE"
+	}
+	lim := map[string]float64{"CE": plan.CEWorst, "PE": plan.PEWorst}
+	if a, _, ok := sbAnchorLeg(legs, lim, bestBid); ok {
+		return a
+	}
+	return legs[0]
 }
 
 // sbAnchorLeg picks which of two legs goes first: the one whose limit sits
@@ -624,9 +601,8 @@ func sbCompletionLeg(view PMSView, remaining, lot int64, dCE, dPE float64) (stri
 	return leg, true
 }
 
-// sbCompleteLocked sells the lagging leg at the ATM -- as many lots as bring
-// the net delta nearest zero, in one marketable IOC (best bid -1 %, freeze
-// qty cap) -- not one lot per cycle. Caller holds r.mu.
+// sbCompleteLocked sells one lot of the lagging leg at the ATM, at a
+// marketable limit (best bid -1 %). Caller holds r.mu.
 func (s *Service) sbCompleteLocked(r *sbRunner, leg string, atm OptionChainRow, view PMSView) {
 	lot := int64(r.lotSize)
 	bid := sbRowBids(atm)[leg]
@@ -645,14 +621,11 @@ func (s *Service) sbCompleteLocked(r *sbRunner, leg string, atm OptionChainRow, 
 	if leg == "PE" {
 		legDelta = math.Abs(atm.PEDelta)
 	}
-	remaining := int64(r.cfg.Straddles)*2 - int64(view.BuildCE+view.BuildPE)
-	qty := sbCompletionLots(view.NetDelta, legDelta*float64(lot), remaining, lot) * lot
-	if maxQ := s.resolveMaxOrderQty(r.cfg.Symbol, lot) / lot * lot; maxQ > 0 && qty > maxQ {
-		qty = maxQ
-	}
+	_ = legDelta
+	qty := lot // one lot per order (owner: 65 / 65 clips, never a block on one side)
 	lim := sbCompletionLimit(1, sbRowL5(atm)[leg], bid)
-	r.event("COMPLETE", "build lopsided (CE %d / PE %d, net delta %+.2f): completing %d %s @%.0f in one order, limit %.2f (best %.2f) -- not held to the target",
-		view.BuildCE, view.BuildPE, view.NetDelta, qty, leg, atm.Strike, lim, bid)
+	r.event("COMPLETE", "build lopsided (CE %d / PE %d, net delta %+.2f): completing 1 lot %s @%.0f, limit %.2f (best %.2f) -- not held to the target",
+		view.BuildCE, view.BuildPE, view.NetDelta, leg, atm.Strike, lim, bid)
 	if !r.isLive {
 		r.pms.ApplyFill(PMSFill{Token: tok, Strike: atm.Strike, OptionType: leg, Side: "SELL", Qty: qty, Price: bid, Role: "BUILD", Tranche: r.tranches})
 		r.dirty = true

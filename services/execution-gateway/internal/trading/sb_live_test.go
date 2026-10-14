@@ -209,3 +209,28 @@ func TestSBAnchorLeg(t *testing.T) {
 		t.Fatal("one leg: no anchor")
 	}
 }
+
+// One-lot clips keep CE and PE in step: the leg behind its share of the
+// plan goes next; a leg with nothing left is skipped.
+func TestSBNextClipLeg(t *testing.T) {
+	plan := DepthEntryPlan{CEQty: 1040, PEQty: 975, CEWorst: 140, PEWorst: 158}
+	bb := map[string]float64{"CE": 140.05, "PE": 160}
+	q := map[string]int64{"CE": 1040, "PE": 975}
+	if got := sbNextClipLeg(q, map[string]int64{"CE": 65, "PE": 0}, 65, plan, bb); got != "PE" {
+		t.Fatalf("PE is behind: %s", got)
+	}
+	if got := sbNextClipLeg(q, map[string]int64{"CE": 0, "PE": 0}, 65, plan, bb); got != "CE" {
+		t.Fatalf("tie -> the leg with the least room (CE): %s", got)
+	}
+	if got := sbNextClipLeg(q, map[string]int64{"CE": 1040, "PE": 910}, 65, plan, bb); got != "PE" {
+		t.Fatalf("only PE left: %s", got)
+	}
+	// Over a whole tranche the legs never drift more than one lot apart.
+	f := map[string]int64{}
+	for i := 0; i < 31; i++ {
+		f[sbNextClipLeg(q, f, 65, plan, bb)] += 65
+		if d := float64(f["CE"])/1040 - float64(f["PE"])/975; d > 65.0/975+1e-9 || d < -65.0/975-1e-9 {
+			t.Fatalf("clip %d drifted: CE %d PE %d", i, f["CE"], f["PE"])
+		}
+	}
+}
