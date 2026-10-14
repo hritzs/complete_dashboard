@@ -32,12 +32,13 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 const (
 	simDriveEvery = time.Second
-	simDriveStale = 5 * time.Second
+	simDriveStale = time.Second // warn when the simulation has not run for this long
 )
 
 // SimDriveAction is one simulation event and what the live trade did.
@@ -50,6 +51,25 @@ type SimDriveAction struct {
 	Delta    float64 `json:"live_delta"`
 	Lots     int64   `json:"lots"`
 	Result   string  `json:"result"`
+	// DecideMs: from the data the simulation acted on (the tick, or the
+	// minute's start) to the live decision; OrderMs: the hedge / exit call.
+	DecideMs int64 `json:"decide_ms"`
+	OrderMs  int64 `json:"order_ms"`
+}
+
+// simEventAge: ms from an event's time (HH:MM, HH:MM:SS or HH:MM:SS.mmm
+// today, IST) to now.
+func simEventAge(t string) int64 {
+	now := time.Now().In(lutIST())
+	layout := map[int]string{5: "15:04", 8: "15:04:05", 12: "15:04:05.000"}[len(t)]
+	if layout == "" {
+		return -1
+	}
+	p, err := time.ParseInLocation("2006-01-02 "+layout, now.Format("2006-01-02")+" "+t, lutIST())
+	if err != nil {
+		return -1
+	}
+	return now.Sub(p).Milliseconds()
 }
 
 type simDriver struct {
@@ -59,6 +79,7 @@ type simDriver struct {
 	LastRun  time.Time        `json:"last_run"`
 	SimState string           `json:"sim_status"`
 	SimPnL   float64          `json:"sim_pnl_per_qty"`
+	RunMs    int64            `json:"run_ms"` // last simulation pass
 	Error    string           `json:"error,omitempty"`
 	Actions  []SimDriveAction `json:"actions"`
 	seen     map[string]bool
@@ -104,9 +125,45 @@ func (s *Service) StartSimDrive() {
 		t := time.NewTicker(simDriveEvery)
 		defer t.Stop()
 		for range t.C {
-			s.simDriveTick()
+			s.simDriveKick() // backstop; the LUT engine kicks every 100 ms tick
 		}
 	}()
+}
+
+var simDriveBusy atomic.Bool
+
+// simDriveKick runs one driver pass in the background unless one is
+// running (never blocks the caller -- the LUT engine tick).
+func (s *Service) simDriveKick() {
+	if !simDriveBusy.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer simDriveBusy.Store(false)
+		s.simDriveTick()
+	}()
+}
+
+// The recorded minutes, reloaded only when the LUT engine records a new
+// minute (simDriveMinutes).
+var simDriveCache struct {
+	day, key string
+	mins     []simMinute
+}
+
+func lutRecordKey() string {
+	e := lutEng
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return fmt.Sprintf("%s|%d|%d|%d", e.day, e.lastChain, e.lastMinute, len(e.minutes))
+}
+
+func simDriveMinutes(day string) []simMinute {
+	if k := lutRecordKey(); k != simDriveCache.key || day != simDriveCache.day {
+		simDriveCache.day, simDriveCache.key = day, k
+		simDriveCache.mins = lutLoadSimSetHold(day, "", false)
+	}
+	return simDriveCache.mins
 }
 
 // simDriveCandidates: today's real LUT build, then sim-driven test fires
@@ -174,13 +231,34 @@ func (s *Service) simDriveTick() {
 	if lot <= 0 {
 		lot = 65
 	}
-	mins := lutLoadSimSet(day, "")
+	t0 := time.Now()
+	// Minutes from memory (reloaded only on a new recorded minute) and, for
+	// the trade's minutes, every 100 ms tick of the future (lut_seconds.go).
+	base := simDriveMinutes(day)
+	mins := make([]simMinute, len(base))
+	copy(mins, base)
+	ticks := lutTicksFrom(day, lutHHMM(entry))
+	for i := range mins {
+		if tk, ok := ticks[mins[i].HHMM]; ok && len(tk) > 0 {
+			mins[i].secs = tk
+		}
+	}
 	cfg := simDriveConfigOf(run, tr.Strike)
 	cfg.ExitTime = exitTime
 	res := RunPaperSim(mins, cfg, lot, nil)
+	// Finished minutes: keep only what decides the same next time.
+	cut := map[int]string{}
+	for _, h := range res.Hedges {
+		if h.Kind == "INTRA_MINUTE" {
+			cut[lutHHMM(h.Time[:5])] = h.Time
+		}
+	}
+	nowIST := time.Now().In(lutIST())
+	lutTicksCompact(day, nowIST.Hour()*100+nowIST.Minute(), cut)
 
 	simDrive.mu.Lock()
 	d.LastRun, d.SimState, d.SimPnL, d.Error = time.Now(), res.Status, res.PnLPerStraddle, res.Error
+	d.RunMs = time.Since(t0).Milliseconds()
 	if res.Error != "" {
 		simDrive.mu.Unlock()
 		return
@@ -190,7 +268,7 @@ func (s *Service) simDriveTick() {
 		if h.Kind == "ENTRY_NEUTRAL" { // the live build is delta-neutral by its CE:PE ratio
 			continue
 		}
-		key := h.Time + "|" + h.Kind
+		key := h.Time[:5] + "|" + h.Kind // at most one of each kind per minute
 		if d.seen[key] {
 			continue
 		}
@@ -217,7 +295,8 @@ func (s *Service) simDriveTick() {
 }
 
 func (s *Service) simDriveHedge(d *simDriver, tr StoredTrade, run LUTBuildRun, h PaperSimHedge, lot int64) {
-	a := SimDriveAction{At: time.Now().In(lutIST()).Format("15:04:05"), SimTime: h.Time, Kind: h.Kind, SimDelta: h.DeltaBefore}
+	a := SimDriveAction{At: time.Now().In(lutIST()).Format("15:04:05.000"), SimTime: h.Time, Kind: h.Kind, SimDelta: h.DeltaBefore,
+		DecideMs: simEventAge(h.Time)}
 	frac, how := hedgeIntraFrac, "complete live delta"
 	if snap, ok := s.Store.LoadSnapshot(tr.TradeUID); ok {
 		a.Delta = snap.NetDelta
@@ -242,8 +321,11 @@ func (s *Service) simDriveHedge(d *simDriver, tr StoredTrade, run LUTBuildRun, h
 	} else {
 		reason := fmt.Sprintf("SIM-DRIVEN %s at %s (sim delta %+.4f per qty): %s = %.0f%% of live delta %+.1f = %d lot(s)",
 			h.Kind, h.Time, h.DeltaBefore, how, frac*100, a.Delta, a.Lots)
-		log.Printf("[SIM-DRIVE][%s] %s", tr.TradeUID, reason)
-		if err := s.ManualHedgeLots(context.WithValue(context.Background(), hedgeTriggerKey{}, reason), tr.TradeUID, int(a.Lots)); err != nil {
+		log.Printf("[SIM-DRIVE][%s] %s (decided %d ms after the data)", tr.TradeUID, reason, a.DecideMs)
+		o0 := time.Now()
+		err := s.ManualHedgeLots(context.WithValue(context.Background(), hedgeTriggerKey{}, reason), tr.TradeUID, int(a.Lots))
+		a.OrderMs = time.Since(o0).Milliseconds()
+		if err != nil {
 			a.Result = "hedge failed: " + err.Error()
 		} else {
 			a.Result = "hedged"
@@ -259,8 +341,8 @@ func (s *Service) simDriveExit(d *simDriver, uid string, res PaperSimResult) {
 	if status == "" {
 		reason, status = "MTM", "CLOSED_MTM"
 	}
-	a := SimDriveAction{At: time.Now().In(lutIST()).Format("15:04:05"), SimTime: res.ExitTime, Kind: "EXIT", Reason: res.ExitReason,
-		Result: "square-off started (" + reason + ")"}
+	a := SimDriveAction{At: time.Now().In(lutIST()).Format("15:04:05.000"), SimTime: res.ExitTime, Kind: "EXIT", Reason: res.ExitReason,
+		Result: "square-off started (" + reason + ")", DecideMs: simEventAge(res.ExitTime)}
 	log.Printf("[SIM-DRIVE][%s] simulation exited %s at %s (pnl %.2f per qty) -> squaring off the live trade", uid, res.ExitReason, res.ExitTime, res.PnLPerStraddle)
 	s.executeAutoExit(uid, reason, status)
 	d.record(a)

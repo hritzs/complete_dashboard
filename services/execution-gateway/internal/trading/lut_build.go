@@ -291,11 +291,24 @@ type lutTestOpts struct {
 	SimDrive      bool    `json:"sim_drive"`      // drive it by its simulation
 	PointsAllowed float64 `json:"points_allowed"` // fixed hedge band (sim and live), 0 = computed
 	MinOneLot     bool    `json:"min_one_lot"`    // a simulated hedge sends at least one lot
+	// AtMinute: fire like the real build -- on the next recorded minute, at
+	// that minute's strike (ATM at its open) and TP -- instead of now.
+	AtMinute bool `json:"at_minute"`
 }
 
 func (s *Service) lutTestFireLocked(o lutTestOpts) (*LUTBuildRun, error) {
 	e := lutEng
 	ev := e.live.Eval
+	if o.AtMinute {
+		if e.pendingTest != nil {
+			return nil, fmt.Errorf("a test is already waiting for the next minute")
+		}
+		// Same checks now, so a refusal is seen at once; fired at the
+		// next recorded minute (lutFirePendingTestLocked).
+		if ev == nil {
+			ev = &LUTEvaluation{Strike: 1, TPBps: 1}
+		}
+	}
 	if ev == nil || ev.Strike <= 0 || ev.TPBps <= 0 {
 		return nil, fmt.Errorf("no live LUT evaluation (strike / TP) to use right now")
 	}
@@ -326,6 +339,16 @@ func (s *Service) lutTestFireLocked(o lutTestOpts) (*LUTBuildRun, error) {
 	if len(why) > 0 {
 		return nil, fmt.Errorf("test refused: %s", strings.Join(why, "; "))
 	}
+	if o.AtMinute {
+		run := &LUTBuildRun{Test: true, Status: "WAITING", Minute: "next minute (test)", Expiry: expiry, Lots: c.Lots,
+			ExitTime: c.ExitTime, Account: c.BrokerName + "/" + c.AccountID,
+			SimDriven: o.SimDrive, SimPointsAllowed: o.PointsAllowed, SimMinOneLot: o.MinOneLot}
+		e.tests = append(e.tests, run)
+		e.pendingTest = run
+		e.saveDayLocked(e.day)
+		log.Printf("[LUT-BUILD] 🧪 TEST armed for the next recorded minute: %d lot(s), REAL ORDERS at that minute's strike", c.Lots)
+		return run, nil
+	}
 	run := &LUTBuildRun{Test: true, Status: "FIRING", Minute: now.Format("15:04") + " (test)", FiredAt: now.Format("15:04:05.000"),
 		Expiry: expiry, Strike: ev.Strike, Lots: c.Lots, SLBps: risk.SlBps, TPBps: risk.TpBps, ExitTime: c.ExitTime,
 		Account:   c.BrokerName + "/" + c.AccountID,
@@ -336,6 +359,38 @@ func (s *Service) lutTestFireLocked(o lutTestOpts) (*LUTBuildRun, error) {
 		lutSymbol, expiry, ev.Strike, c.Lots, risk.SlBps, risk.TpBps, c.ExitTime, lutWingsText(c.WingPct), run.Account)
 	s.lutSendBuild(run, lutBuildRequest(c, expiry, ev.Strike, risk))
 	return run, nil
+}
+
+// lutFirePendingTestLocked fires a test waiting for the minute, on the
+// minute's record -- the strike and TP the real build would use. Caller
+// holds e.mu.
+func (s *Service) lutFirePendingTestLocked(rec LUTEvaluation) {
+	e := lutEng
+	run := e.pendingTest
+	if run == nil {
+		return
+	}
+	e.pendingTest = nil
+	now := time.Now().In(lutIST())
+	if rec.Strike <= 0 || rec.TPBps <= 0 {
+		run.Status, run.Error = "REFUSED", "the minute's record has no strike / TP"
+		e.saveDayLocked(e.day)
+		return
+	}
+	c := loadLUTBuildConfig()
+	c.Lots = run.Lots
+	risk := lutBuildRisk(c, rec)
+	if err := risk.Validate(now); err != nil {
+		run.Status, run.Error = "REFUSED", err.Error()
+		e.saveDayLocked(e.day)
+		return
+	}
+	run.Status, run.Minute, run.FiredAt = "FIRING", rec.Time+" (test)", now.Format("15:04:05.000")
+	run.Strike, run.SLBps, run.TPBps = rec.Strike, risk.SlBps, risk.TpBps
+	e.saveDayLocked(e.day)
+	log.Printf("[LUT-BUILD] 🧪 TEST FIRE at minute %s (as the real build) -> REAL ORDERS %s %s %.0f straddle %d lot(s), SL %.2f bps TP %.2f bps exit %s, %s",
+		rec.Time, lutSymbol, run.Expiry, rec.Strike, run.Lots, risk.SlBps, risk.TpBps, run.ExitTime, lutWingsText(c.WingPct))
+	s.lutSendBuild(run, lutBuildRequest(c, run.Expiry, rec.Strike, risk))
 }
 
 // LUTBuildTestHandler: POST /api/lut/build/test {"confirm": "SELL LIVE"}.

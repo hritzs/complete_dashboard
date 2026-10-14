@@ -190,6 +190,7 @@ type lutEngine struct {
 	lastIV       float64
 	lastLTP      map[int64]lutLTPSeen // token -> last non-zero LTP, refreshed every tick
 	build        *LUTBuildRun         // today's REAL build fired by the LUT (one per day)
+	pendingTest  *LUTBuildRun         // a user test waiting for the next recorded minute
 	tests        []*LUTBuildRun       // today's user test fires (never the day's entry)
 	carryLogged  int                  // minute whose carried-LTP fill was last logged
 	levelsLogged string               // day|basis the sell levels were last logged for
@@ -325,6 +326,9 @@ func (e *lutEngine) newDay(day string) {
 		}
 		e.minutes, e.entry, e.build, e.tests = mins, st.Entry, st.Build, st.Tests
 		for _, t := range e.tests {
+			if t.Status == "WAITING" {
+				t.Status, t.Error = "NOT SENT", "gateway restarted before the minute came"
+			}
 			if t.Status == "FIRING" {
 				t.Status, t.Error = "UNKNOWN", "gateway restarted while the test build was being sent -- check Portfolio; NOT re-sent"
 			}
@@ -409,6 +413,7 @@ func (s *Service) lutTick(withGrid bool) {
 	live := s.lutComputeLocked(now, day, hhmm, chain, err, cfg, withGrid)
 	e.live = live
 	e.mu.Unlock()
+	s.simDriveKick() // the sim-driven trade sees this tick at once (sim_drive.go)
 
 	// Always pushed -- also before the open / with errors -- so the tab
 	// shows what is missing and evaluates manual what-ifs at any time.
@@ -705,6 +710,7 @@ func (s *Service) lutComputeLocked(now time.Time, day string, hhmm int, chain *O
 		if rec.Allowed {
 			s.lutFireBuildLocked(day, rec, lutMakeEntry(rec, closed, rc.Row, cfg.Lots, e.lotSize))
 		}
+		s.lutFirePendingTestLocked(rec) // a test armed for "the next minute"
 		if rec.Allowed && e.entry == nil {
 			e.entry = lutMakeEntry(rec, closed, rc.Row, cfg.Lots, e.lotSize)
 			e.entry.Source = "LUT YES"

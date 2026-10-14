@@ -10,14 +10,17 @@ package trading
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -322,23 +325,65 @@ func lutNextExpiry(chain *OptionChainSnapshot) string {
 	return best
 }
 
+// lutChainCache keeps each chain file decoded; a later call reads only the
+// lines appended since (the files are append-only). A file that shrank or
+// whose start changed (rewritten, e.g. by a backfill) is read again in full.
+var lutChainCache = struct {
+	mu sync.Mutex
+	m  map[string]*lutChainCached
+}{m: map[string]*lutChainCached{}}
+
+type lutChainCached struct {
+	size int64
+	head []byte
+	data map[string]lutChainMinute
+}
+
 func lutLoadChainFile(path string) map[string]lutChainMinute {
-	out := map[string]lutChainMinute{}
 	stateReadLines(path, "lut_chain")
 	f, err := os.Open(path)
 	if err != nil {
-		return out
+		return map[string]lutChainMinute{}
 	}
 	defer f.Close()
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 1<<20), 1<<26)
-	for sc.Scan() {
-		var m lutChainMinute
-		if json.Unmarshal(sc.Bytes(), &m) == nil && m.Time != "" {
-			if _, ok := out[m.Time]; !ok {
-				out[m.Time] = m
+	st, err := f.Stat()
+	if err != nil {
+		return map[string]lutChainMinute{}
+	}
+	head := make([]byte, min(int64(512), st.Size()))
+	_, _ = f.ReadAt(head, 0)
+
+	lutChainCache.mu.Lock()
+	defer lutChainCache.mu.Unlock()
+	c := lutChainCache.m[path]
+	if c == nil || st.Size() < c.size || !bytes.HasPrefix(head, c.head) {
+		c = &lutChainCached{data: map[string]lutChainMinute{}}
+		lutChainCache.m[path] = c
+	}
+	if st.Size() > c.size {
+		if _, err := f.Seek(c.size, io.SeekStart); err == nil {
+			rd := bufio.NewReaderSize(f, 1<<20)
+			for {
+				line, err := rd.ReadBytes('\n')
+				if err != nil {
+					break // EOF: a partial last line is read next time
+				}
+				c.size += int64(len(line))
+				var m lutChainMinute
+				if json.Unmarshal(line, &m) == nil && m.Time != "" {
+					if _, ok := c.data[m.Time]; !ok { // the first record of a minute wins
+						c.data[m.Time] = m
+					}
+				}
 			}
 		}
+		if len(c.head) < len(head) && c.size > 0 {
+			c.head = head
+		}
+	}
+	out := make(map[string]lutChainMinute, len(c.data))
+	for k, v := range c.data {
+		out[k] = v
 	}
 	return out
 }

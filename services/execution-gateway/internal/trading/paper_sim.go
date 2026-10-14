@@ -215,7 +215,12 @@ type simMinute struct {
 // lutLoadSimSet loads a view: "" / "current" = the current expiry (LUT
 // minutes + recorded / imported chain), "next" = the next weekly expiry
 // (its own recorded / imported chain only).
-func lutLoadSimSet(day, set string) []simMinute {
+func lutLoadSimSet(day, set string) []simMinute { return lutLoadSimSetHold(day, set, true) }
+
+// lutLoadSimSetHold: hold=false uses a minute as soon as it is recorded
+// (the simulation driving a live trade, sim_drive.go) instead of holding it
+// until the other strikes' GreekSoft closes are in (display).
+func lutLoadSimSetHold(day, set string, hold bool) []simMinute {
 	if set == "current" {
 		set = ""
 	}
@@ -256,7 +261,7 @@ func lutLoadSimSet(day, set string) []simMinute {
 		if c.Future <= 0 {
 			continue
 		}
-		if gsOverlayPending(day, t, pendingOv) {
+		if hold && gsOverlayPending(day, t, pendingOv) {
 			held = append(held, t) // not final yet: shown once its position-strike closes are in
 			continue
 		}

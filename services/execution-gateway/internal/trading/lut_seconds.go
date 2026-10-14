@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -26,12 +27,87 @@ type simSec struct {
 	F float64 // future
 }
 
+// lutTicks: the future on every engine tick (100 ms) in memory, per
+// minute, for the simulation driving a live trade (sim_drive.go). Second
+// :00 is left out, as in the file: that instant is the minute-end check.
+var lutTicks = struct {
+	mu   sync.Mutex
+	day  string
+	m    map[int][]simSec
+	done map[int]bool // minutes already compacted
+}{}
+
+func lutNoteTick(day string, now time.Time, fut float64) {
+	if fut <= 0 || now.Second() == 0 {
+		return
+	}
+	hm := now.Hour()*100 + now.Minute()
+	lutTicks.mu.Lock()
+	if lutTicks.day != day || lutTicks.m == nil {
+		lutTicks.day, lutTicks.m, lutTicks.done = day, map[int][]simSec{}, map[int]bool{}
+	}
+	lutTicks.m[hm] = append(lutTicks.m[hm], simSec{T: now.Format("15:04:05.000"), F: fut})
+	lutTicks.mu.Unlock()
+}
+
+// lutTicksFrom copies the day's ticks of minutes >= from.
+func lutTicksFrom(day string, from int) map[int][]simSec {
+	lutTicks.mu.Lock()
+	defer lutTicks.mu.Unlock()
+	if lutTicks.day != day {
+		return nil
+	}
+	out := map[int][]simSec{}
+	for hm, v := range lutTicks.m {
+		if hm >= from {
+			out[hm] = append([]simSec(nil), v...)
+		}
+	}
+	return out
+}
+
+// lutTicksCompact trims finished minutes (< before) so a re-run stays cheap
+// and decides the same: a minute whose intra-minute hedge fired keeps every
+// tick up to it (cut = that tick's time), any other one keeps one tick per
+// second (a subset of ticks with no breach has no breach either).
+func lutTicksCompact(day string, before int, cut map[int]string) {
+	lutTicks.mu.Lock()
+	defer lutTicks.mu.Unlock()
+	if lutTicks.day != day {
+		return
+	}
+	for hm, v := range lutTicks.m {
+		if hm >= before || len(v) == 0 || lutTicks.done[hm] {
+			continue
+		}
+		lutTicks.done[hm] = true
+		var keep []simSec
+		if c, ok := cut[hm]; ok {
+			for _, s := range v {
+				if s.T <= c {
+					keep = append(keep, s)
+				}
+			}
+		} else {
+			last := ""
+			for _, s := range v {
+				if sec := s.T[:8]; sec != last {
+					last = sec
+					keep = append(keep, s)
+				}
+			}
+		}
+		lutTicks.m[hm] = keep
+	}
+}
+
 // noteSecond records the future once per second. Caller holds e.mu.
 func (e *lutEngine) noteSecond(now time.Time, day string, fut float64) {
 	hhmm := now.Hour()*100 + now.Minute()
 	if fut <= 0 || hhmm < 915 || hhmm > lutRecordUntil {
 		return
 	}
+	lutNoteTick(day, now, fut)
 	sec := now.Unix()
 	if sec == e.secLast {
 		return
