@@ -20,7 +20,6 @@ import (
 )
 
 const (
-	defaultLUTDir      = "/mnt/shared/Hardik/Profilers"
 	defaultLUTDailyCSV = "/mnt/shared/Hardik/Project_Codes/GammaShortDailyProcess/GammaShortDailydata.csv"
 	lutSymbol          = "NIFTY"
 	lutRecordUntil     = 1540                   // minutes are recorded (data) to 15:40 (session close); entries only to 13:30
@@ -131,13 +130,19 @@ type LUTLive struct {
 	// SellLevels: for each opening minute 09:16 .. 09:20, the ATM straddle
 	// at / above which the LUT sells (lut_manual.go). Sent until 09:30.
 	SellLevels []LUTSellLevel `json:"sell_levels,omitempty"`
+	// Tables: the table set driving today; Alt: the other set, shown beside.
+	Tables     string      `json:"tables"`
+	TablesName string      `json:"tables_name"`
+	Alt        *LUTAltLive `json:"alt,omitempty"`
 }
 
 // LUTState is the full state (live payload + every recorded minute).
 type LUTState struct {
 	LUTLive
-	Params  LUTParams       `json:"params"`
-	Minutes []LUTEvaluation `json:"minutes"`
+	Params     LUTParams       `json:"params"`
+	Minutes    []LUTEvaluation `json:"minutes"`
+	AltParams  *LUTParams      `json:"alt_params,omitempty"`
+	AltMinutes []LUTEvaluation `json:"alt_minutes,omitempty"`
 }
 
 type lutEngine struct {
@@ -156,7 +161,9 @@ type lutEngine struct {
 	cfg LUTConfig
 
 	day          string
+	sc           *lutSchema // table set driving the day (fixed per day, lut_alt.go)
 	set          LUTSet
+	alt          *lutAlt // the other table set, shown and recorded beside
 	tablesLoaded bool
 	tablesErr    string
 	tablesTried  time.Time
@@ -170,6 +177,8 @@ type lutEngine struct {
 	lotSizeExpiry string
 	lotSizeTried  time.Time
 	u0916         float64
+	isEvent       bool   // today is in EventDates.xlsx (lut_events.go)
+	eventNote     string // what the event-day check found
 	ogSource      string
 
 	minutes      []LUTEvaluation
@@ -260,6 +269,15 @@ func (e *lutEngine) newDay(day string) {
 	e.day = day
 	e.inputsOK, e.inputsErr, e.inputsTried = false, "", time.Time{}
 	e.u0916, e.ogSource = 0, ""
+	e.isEvent, e.eventNote = false, ""
+	if ev, err := lutLoadEventDays(lutEventDatesPath()); err != nil {
+		e.eventNote = "event dates not read: " + err.Error()
+		log.Printf("[LUT] ⚠ %s -- today trades as a normal day", e.eventNote)
+	} else {
+		e.isEvent = ev[day]
+		e.eventNote = fmt.Sprintf("%d event dates loaded; today is %s", len(ev), map[bool]string{true: "an EVENT day (no entry before 09:18, one third size)", false: "not an event day"}[e.isEvent])
+		log.Printf("[LUT] %s", e.eventNote)
+	}
 	e.minutes, e.lastMinute, e.lastIV, e.entry = nil, 0, 0, nil
 	e.build, e.tests = nil, nil
 	e.lastLTP = nil
@@ -275,8 +293,22 @@ func (e *lutEngine) newDay(day string) {
 			e.lastNext = hm
 		}
 	}
+	// The table set driving the day: as recorded in the day's state (files
+	// from before two sets existed are the old set), else the choice.
+	mins, st := lutLoadDay(day)
+	switch {
+	case st.Tables != "":
+		e.sc = lutSchemaByKey(st.Tables)
+	case len(mins) > 0 || st.U0916 > 0 || st.Entry != nil:
+		e.sc = lutSchemaOld
+	default:
+		e.sc = lutSchemaByKey(lutLogicChoice())
+	}
+	if e.sc == nil {
+		e.sc = lutSchemaOld
+	}
 	// Restart mid-day: reload what was already recorded today.
-	if mins, st := lutLoadDay(day); len(mins) > 0 || st.U0916 > 0 || st.Entry != nil {
+	if len(mins) > 0 || st.U0916 > 0 || st.Entry != nil {
 		for i := range mins {
 			lutRefreshTP(&mins[i])
 		}
@@ -312,14 +344,15 @@ func (e *lutEngine) newDay(day string) {
 			day, len(mins), e.lastMinute/100, e.lastMinute%100, e.u0916, e.entry != nil, lutDataDir())
 	}
 	e.tablesTried = time.Now()
-	set, err := LoadLUTSet(lutEnv("LUT_DIR", defaultLUTDir))
+	e.loadAltLocked(day)
+	set, err := LoadLUTSet(lutTablesDir(e.sc), e.sc)
 	if err != nil {
 		e.tablesLoaded, e.tablesErr = false, err.Error()
-		log.Printf("[LUT] tables not loaded: %v", err)
+		log.Printf("[LUT] %s not loaded: %v", e.sc.Name, err)
 		return
 	}
 	e.set, e.tablesLoaded, e.tablesErr = set, true, ""
-	log.Printf("[LUT] %s: tables loaded, YES cells %d/%d/%d/%d/%d", day, set[0].Yes, set[1].Yes, set[2].Yes, set[3].Yes, set[4].Yes)
+	log.Printf("[LUT] %s: %s drive the LUT, YES cells %d/%d/%d/%d/%d", day, e.sc.Name, set[0].Yes, set[1].Yes, set[2].Yes, set[3].Yes, set[4].Yes)
 }
 
 func (s *Service) lutTick(withGrid bool) {
@@ -349,6 +382,10 @@ func (s *Service) lutTick(withGrid bool) {
 				day, in.PrevStraddle, in.PrevFuture, in.YesterdayIV, in.IDVPure, in.IDVWithPrev, in.WeightedIDV, in.NormalizedAdjChg)
 		}
 	}
+	if a := e.alt; a != nil && !a.loaded && time.Since(a.tried) > lutInputsRetry {
+		e.loadAltLocked(day)
+	}
+	e.backfillAltLocked(day)
 	cfg := e.cfg
 	e.mu.Unlock()
 
@@ -387,8 +424,11 @@ func (s *Service) lutComputeLocked(now time.Time, day string, hhmm int, chain *O
 	whatIf := man.active()
 	live := LUTLive{
 		Now: now.Format("15:04:05.0"), Day: day, Config: cfg,
-		Inputs: e.inputs, InputsError: e.inputsErr, TablesError: e.tablesErr,
+		Inputs: e.inputs, InputsError: e.inputsErr, TablesError: e.tablesErr, Tables: e.scKey(),
 		MinutesCount: len(e.minutes), Entry: e.entry, Manual: whatIf, ManualFields: man.fields(),
+	}
+	if e.sc != nil {
+		live.TablesName = e.sc.Name
 	}
 	if e.tablesLoaded {
 		for i, t := range e.set {
@@ -585,6 +625,7 @@ func (s *Service) lutComputeLocked(now time.Time, day string, hhmm int, chain *O
 	// 09:16 .. 09:20 would sell. Before the open from yesterday's close,
 	// then from live prices. From 09:30 all five are history: computed once
 	// from the recorded minutes and kept for the day (display only).
+	levelsBasis, levelsExp := "", cfg.Expiry
 	if withGrid && shown.Ev != nil && shown.M.Underlying > 0 {
 		expStr := cfg.Expiry
 		if dispChain != nil {
@@ -603,6 +644,7 @@ func (s *Service) lutComputeLocked(now time.Time, day string, hhmm int, chain *O
 			case e.u0916 > 0 || cfg.Underlying0916 > 0:
 				basis = "live future, opening gap fixed at 09:16"
 			}
+			levelsBasis = basis
 			live.SellLevels = e.lutSellLevels(now, shown, expStr, dispMan.DTE != nil, basis, false)
 			// Once before the open and once at the first live prices.
 			if key := day + "|" + basis; !whatIf && hhmm < 916 && e.levelsLogged != key {
@@ -616,7 +658,10 @@ func (s *Service) lutComputeLocked(now time.Time, day string, hhmm int, chain *O
 			}
 			live.SellLevels = e.levelsDone
 		}
+		levelsExp = expStr
 	}
+	// The other table set on the same shown prices (display only).
+	live.Alt = e.altLiveLocked(now, hhmm, shown, withGrid, levelsExp, levelsBasis, whatIf, dispMan.DTE != nil)
 
 	ev := lc.Ev
 	if ev == nil {
@@ -645,6 +690,7 @@ func (s *Service) lutComputeLocked(now time.Time, day string, hhmm int, chain *O
 		e.minutes = append(e.minutes, rec)
 		lutSaveMinute(day, rec)
 		lutLogEval(rec)
+		e.recordAltLocked(day, rc, closed, cfg.Lots)
 		// REAL build: the first YES (minute-end record) while armed, on its
 		// own -- independent of the paper entry ("Start now" never blocks
 		// it); once sent it never fires again that day; a refusal retries
@@ -743,7 +789,12 @@ func (s *Service) LUTStateNow() LUTState {
 	e := lutEng
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return LUTState{LUTLive: e.live, Params: lutParams(), Minutes: append([]LUTEvaluation(nil), e.minutes...)}
+	st := LUTState{LUTLive: e.live, Params: lutParams(e.sc), Minutes: append([]LUTEvaluation(nil), e.minutes...)}
+	if a := e.alt; a != nil {
+		p := lutParams(a.sc)
+		st.AltParams, st.AltMinutes = &p, append([]LUTEvaluation(nil), a.minutes...)
+	}
+	return st
 }
 
 // SetLUTConfig updates lots / expiry / 09:16 override / manual what-if.

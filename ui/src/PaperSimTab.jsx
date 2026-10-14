@@ -180,7 +180,7 @@ function SimDetail(props) {
             Short {fmt(s().strike, 0)} straddle @ {fmt(s().entry_straddle)} <span style={S.muted}>· {s().entry_time}</span>
           </span>
           <span style={S.muted}>
-            LUT {s().lut_answer || '—'} · qty {s().qty} · hedge {s().config.hedge_mode} · {SRC[cur().source] || cur().source || '—'}
+            {data()?.tables || 'LUT'} tables {s().lut_answer || '—'}{s().lut_answer_alt ? ` · ${data()?.alt_tables || 'other'} tables ${s().lut_answer_alt}` : ''} · qty {s().qty} · hedge {s().config.hedge_mode} · {SRC[cur().source] || cur().source || '—'}
             {s().exit_reason ? ` · exit ${s().exit_reason} ${s().exit_time}` : ''}{isLive() ? ` · live ${cur().time}` : ''}
           </span>
           <Show when={s().error}><span class="negative" style={{ 'font-size': '12px' }}>{s().error}</span></Show>
@@ -385,6 +385,7 @@ export default function PaperSimTab() {
   const label = (s) => {
     const id = s.config.id;
     if (id.startsWith('AUTO-')) return id.slice(5);
+    if (id.startsWith('LUT-')) return `First YES ${id.slice(4).toLowerCase()} tables ${s.entry_time || s.config.entry}`;
     if (id.startsWith('PAPER-')) return `Start ${s.config.entry}`;
     return `Actual ${s.entry_time || s.config.entry}`;
   };
@@ -478,7 +479,7 @@ export default function PaperSimTab() {
                 </div>
                 <Show when={!s.error} fallback={<div style={{ ...S.muted, 'margin-top': '8px' }}>{s.error}</div>}>
                   <div style={{ 'font-size': '22px', 'font-weight': 600, margin: '6px 0 2px' }} class={pnlCls(cur(s).pnl)}>{sgn(cur(s).pnl)}</div>
-                  <div style={S.muted}>{sgn(cur(s).pnl_per_straddle)} per qty · LUT {s.lut_answer}</div>
+                  <div style={S.muted}>{sgn(cur(s).pnl_per_straddle)} per qty · {data()?.tables || ''} tables {s.lut_answer}{s.lut_answer_alt ? ` · ${data()?.alt_tables || 'other'} tables ${s.lut_answer_alt}` : ''}</div>
                   <div style={{ ...S.muted, 'margin-top': '6px' }}>{fmt(s.strike, 0)} · {fmt(s.entry_straddle)} → {fmt(cur(s).straddle)} · {(s.hedges || []).length} hedges</div>
                 </Show>
               </div>
@@ -516,6 +517,9 @@ export default function PaperSimTab() {
             <div style={{ 'margin-top': '6px' }}><button class="tab-btn" onClick={restoreHidden}>Show hidden ({data().hidden})</button></div>
           </Show>
           <div style={{ ...S.muted, 'margin-top': '4px' }}>
+            <Show when={data().first_yes}>
+              First YES today: {Object.entries(data().first_yes).map(([k, t]) => `${k} tables ${t || 'none'}`).join(' · ')} ({data().tables} drives the day; the other is shown beside, never executed). ·{' '}
+            </Show>
             Sources: {data().minute_sources?.chain || 0} recorded · {data().minute_sources?.lut_atm_only || 0} LUT-ATM · {(data().minute_sources?.lut_atm_plus_import || 0) + (data().minute_sources?.import_only || 0)} imported minutes. Strikes missing from a minute are priced by Black-Scholes and flagged.
           </div>
         </Show>

@@ -146,7 +146,8 @@ type PaperSimHedge struct {
 type PaperSimResult struct {
 	Config         PaperSimConfig  `json:"config"`
 	EntryTime      string          `json:"entry_time"`
-	LUTAnswer      string          `json:"lut_answer"` // what the LUT said at the entry minute
+	LUTAnswer      string          `json:"lut_answer"`               // what the LUT said at the entry minute
+	LUTAnswerAlt   string          `json:"lut_answer_alt,omitempty"` // the other table set's answer there
 	Strike         float64         `json:"strike"`
 	Qty            int64           `json:"qty"`
 	CEEntry        float64         `json:"ce_entry"`
@@ -191,6 +192,7 @@ type simMinute struct {
 	DTE           float64 // raw days
 	TPBps         float64
 	Answer        string
+	AnswerAlt     string // the other table set's answer (lut_alt.go)
 	lutCE, lutPE  float64
 	lutK          float64
 	chain         map[float64]lutChainRow
@@ -219,9 +221,15 @@ func lutLoadSimSet(day, set string) []simMinute {
 		byT[t] = m
 		return m
 	}
-	var mins []LUTEvaluation
+	var mins, alt []LUTEvaluation
 	if set == "" {
-		mins, _ = lutLoadDay(day)
+		sets := lutLoadDaySets(day)
+		mins, alt = sets.Minutes, sets.AltMinutes
+	}
+	for _, e := range alt {
+		if e.Underlying > 0 {
+			get(e.Time).AnswerAlt = lutAnswerOf(e)
+		}
 	}
 	for _, e := range mins {
 		if e.Underlying <= 0 {
@@ -233,14 +241,7 @@ func lutLoadSimSet(day, set string) []simMinute {
 		m.Future, m.lutK, m.lutCE, m.lutPE = e.Underlying, e.Strike, e.CELTP, e.PELTP
 		lutRefreshTP(&e)
 		m.ATM, m.IV, m.DTE, m.TPBps = e.Strike, e.BuildIV, e.RawDTE, e.TPBps
-		switch {
-		case e.Skip != "":
-			m.Answer = "SKIP"
-		case e.Allowed:
-			m.Answer = "YES"
-		default:
-			m.Answer = "NO"
-		}
+		m.Answer = lutAnswerOf(e)
 	}
 	var held []string
 	pendingOv := gsOverlayLoad(day, set) // this view's own overlay
@@ -639,6 +640,7 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 	ce, _, _, s1 := simPrice(m0, K, "CE")
 	pe, _, _, s2 := simPrice(m0, K, "PE")
 	res.EntryTime, res.LUTAnswer, res.Strike, res.Qty = m0.Time, m0.Answer, K, q
+	res.LUTAnswerAlt = m0.AnswerAlt
 	res.CEEntry, res.PEEntry, res.EntryStraddle, res.EntryFuture = ce, pe, ce+pe, m0.Future
 	res.EntrySource = simWorst(s1, s2)
 	res.TPBps = c.TPBps
@@ -1098,6 +1100,16 @@ func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 	for _, t := range []string{"09:16", "09:17", "09:18", "09:19"} {
 		cfgs = append(cfgs, PaperSimConfig{ID: "AUTO-" + t, Source: "sell at " + t, Entry: t, Lots: lots, Hedge: hedge, HedgeMode: hedgeMode})
 	}
+	// Each table set's first YES of the day (old and new side by side).
+	sets := lutLoadDaySets(day)
+	if view == "" {
+		for _, fy := range []struct{ key, t string }{{sets.Tables, sets.FirstYes}, {sets.AltTables, sets.AltFirstYes}} {
+			if fy.t != "" {
+				cfgs = append(cfgs, PaperSimConfig{ID: "LUT-" + strings.ToUpper(fy.key), Source: "first YES, " + lutSchemaByKey(fy.key).Name,
+					Entry: fy.t, Lots: lots, Hedge: hedge, HedgeMode: hedgeMode})
+			}
+		}
+	}
 	paperMu.Lock()
 	starts := loadPaperStarts(day)
 	paperMu.Unlock()
@@ -1198,6 +1210,7 @@ func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 			return int64(size) * lotSize
 		}(), "minutes": len(mins), "first": first, "last": last,
 		"straddle_range": []PaperStraddleRange{paperStraddleRange(day, "", liveCur), paperStraddleRange(day, "next", liveNext)},
+		"tables":         sets.Tables, "alt_tables": sets.AltTables, "first_yes": map[string]string{sets.Tables: sets.FirstYes, sets.AltTables: sets.AltFirstYes},
 		"minute_sources": src, "sims": sims, "actual": actual, "hidden": hiddenN, "live_at": func() string {
 			if live != nil {
 				return live.Time

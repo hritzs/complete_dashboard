@@ -93,7 +93,7 @@ func TestLUTSellLevels(t *testing.T) {
 	T := rawDTE / 365
 	var set LUTSet
 	for i := range set {
-		set[i] = &LUTTable{cells: make([]bool, lutCellCount)}
+		set[i] = &LUTTable{schema: lutSchemaOld, cells: make([]bool, lutSchemaOld.cellCount())}
 	}
 	// Allow, in the 09:17 table only, the cell a 12% IV straddle lands in.
 	m := LUTMinuteInput{HHMM: 917, Underlying: S, RawDTE: rawDTE, BusDays: 5,
@@ -102,7 +102,7 @@ func TestLUTSellLevels(t *testing.T) {
 	if ev.Skip != "" {
 		t.Fatalf("setup: %+v", ev)
 	}
-	set[1].cells[ev.Coord.index()] = true
+	set[1].cells[lutSchemaOld.index(ev.Coord)] = true
 	set[1].Yes = 1
 
 	e := &lutEngine{set: set}

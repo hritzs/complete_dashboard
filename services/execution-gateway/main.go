@@ -465,6 +465,7 @@ func startHTTPServer(cfg *Config, handlers *trading.Handlers) {
 	mux.HandleFunc("/api/lut/state", handlers.LUTStateHandler)
 	mux.HandleFunc("/api/lut/config", handlers.LUTConfigHandler)
 	mux.HandleFunc("/api/lut/start-now", handlers.LUTStartNowHandler)
+	mux.HandleFunc("/api/lut/logic", handlers.LUTLogicHandler) // which table set drives the LUT from the next day (lut_alt.go)
 	// Paper-trade simulation off the stored minute data -- never places orders.
 	mux.HandleFunc("/api/paper/sim", handlers.PaperSimHandler)
 	mux.HandleFunc("/api/paper/start", handlers.PaperStartHandler)

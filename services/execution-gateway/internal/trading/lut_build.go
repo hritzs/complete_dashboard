@@ -180,6 +180,9 @@ func (s *Service) lutFireBuildLocked(day string, rec LUTEvaluation, entry *LUTEn
 		return
 	}
 	now := time.Now().In(lutIST())
+	if e.isEvent && e.sc != nil && e.sc.UseEvents { // event day: one third of the size (backtest EVENT_SIZE), at least one lot
+		c.Lots = max(1, int(float64(c.Lots)*lutEventSize))
+	}
 	run := &LUTBuildRun{Minute: rec.Time, FiredAt: now.Format("15:04:05.000"), Expiry: entry.Expiry, Strike: entry.Strike,
 		Lots: c.Lots, ExitTime: c.ExitTime, Account: c.BrokerName + "/" + c.AccountID}
 	risk := lutBuildRisk(c, rec)
@@ -347,7 +350,15 @@ func (h *Handlers) LUTBuildTestHandler(w http.ResponseWriter, r *http.Request) {
 
 // saveDayLocked persists the LUT day state (caller holds e.mu).
 func (e *lutEngine) saveDayLocked(day string) {
-	lutSaveDay(lutDayState{Day: day, U0916: e.u0916, OGSource: e.ogSource, Entry: e.entry, Build: e.build, Tests: e.tests})
+	lutSaveDay(lutDayState{Day: day, U0916: e.u0916, OGSource: e.ogSource, Entry: e.entry, Build: e.build, Tests: e.tests, Tables: e.scKey()})
+}
+
+// scKey: the key of the set driving the day ("" before the day started).
+func (e *lutEngine) scKey() string {
+	if e.sc == nil {
+		return ""
+	}
+	return e.sc.Key
 }
 
 // LUTBuildHandler: GET -> config, today's run, readiness checks.

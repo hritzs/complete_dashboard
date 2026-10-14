@@ -74,6 +74,7 @@ func (m LUTManual) applyDaily(in LUTDailyInputs, ok bool, errText string) (LUTDa
 	set(&in.IDVPure, m.IDVPure)
 	set(&in.IDVWithPrev, m.IDVWithPrev)
 	set(&in.NormalizedAdjChg, m.NormAdjChg)
+	set(&in.FinalAdjChg, m.NormAdjChg) // a manual change stands for both
 	if !touched {
 		return in, ok, errText
 	}
@@ -144,6 +145,11 @@ type lutCtx struct {
 	M        LUTMinuteInput
 	Ev       *LUTEvaluation
 	Err      string
+	IsEvent  bool // event day: no entry before 09:18
+	// for re-evaluating against another table set (with)
+	Time         string
+	ManualPx     bool
+	ManualActive bool
 }
 
 // evaluate runs the LUT for one set of inputs (man empty = live). Caller
@@ -255,10 +261,18 @@ func (e *lutEngine) evaluate(now time.Time, hhmm int, chain *OptionChainSnapshot
 		manualPx = false
 	}
 	c.M = m
-	ev := EvaluateLUTMinute(e.set, c.In, c.NormOG, false, m)
-	ev.Time = now.Format("15:04:05")
-	ev.Preview = c.Preview || man.active()
-	if c.Row == nil && !manualPx && ev.Skip == "" {
+	c.IsEvent = e.isEvent
+	c.Time, c.ManualPx, c.ManualActive = now.Format("15:04:05"), manualPx, man.active()
+	return c.with(e.set)
+}
+
+// with evaluates the same minute (same prices, inputs, gap, DTE) against
+// another table set. Only valid on a ctx that reached the evaluation.
+func (c lutCtx) with(set LUTSet) lutCtx {
+	ev := EvaluateLUTMinute(set, c.In, c.NormOG, c.IsEvent, c.M)
+	ev.Time = c.Time
+	ev.Preview = c.Preview || c.ManualActive
+	if c.Row == nil && !c.ManualPx && ev.Skip == "" {
 		ev.Skip, ev.Allowed = fmt.Sprintf("strike %.0f not in chain", c.K), false
 	}
 	c.Ev = &ev
@@ -322,7 +336,7 @@ func lutScanSellRange(set LUTSet, c lutCtx, stageHHMM int) LUTSellRange {
 		}
 		mm := m
 		mm.CELTP, mm.PELTP = lutBSPrice(true, m.Underlying, c.K, T, iv), lutBSPrice(false, m.Underlying, c.K, T, iv)
-		ev := EvaluateLUTMinute(set, c.In, c.NormOG, false, mm)
+		ev := EvaluateLUTMinute(set, c.In, c.NormOG, c.IsEvent, mm)
 		if ev.Skip != "" {
 			r.Skip = ev.Skip
 			cur = nil
@@ -350,7 +364,7 @@ func lutScanSellRange(set LUTSet, c lutCtx, stageHHMM int) LUTSellRange {
 		}
 		mm := m
 		mm.CELTP, mm.PELTP = lutBSPrice(true, m.Underlying, c.K, T, iv), lutBSPrice(false, m.Underlying, c.K, T, iv)
-		ev := EvaluateLUTMinute(set, c.In, c.NormOG, false, mm)
+		ev := EvaluateLUTMinute(set, c.In, c.NormOG, c.IsEvent, mm)
 		return ev, ev.Skip == "" && ev.Allowed
 	}
 	edge := func(in, out float64) (float64, LUTEvaluation, bool) {
@@ -420,10 +434,15 @@ type LUTSellLevel struct {
 // recordedOnly (after the opening window): a minute that was not recorded
 // gets no level -- the live future no longer says anything about it.
 func (e *lutEngine) lutSellLevels(now time.Time, shown lutCtx, expStr string, fixedDTE bool, basis string, recordedOnly bool) []LUTSellLevel {
+	return lutSellLevelsFor(e.set, e.minutes, now, shown, expStr, fixedDTE, basis, recordedOnly)
+}
+
+// lutSellLevelsFor is lutSellLevels for any table set and its recorded minutes.
+func lutSellLevelsFor(set LUTSet, minutes []LUTEvaluation, now time.Time, shown lutCtx, expStr string, fixedDTE bool, basis string, recordedOnly bool) []LUTSellLevel {
 	exp, expErr := lutParseExpiry(expStr)
 	recorded := map[string]*LUTEvaluation{}
-	for i := range e.minutes {
-		recorded[e.minutes[i].Time] = &e.minutes[i]
+	for i := range minutes {
+		recorded[minutes[i].Time] = &minutes[i]
 	}
 	out := make([]LUTSellLevel, 0, 5)
 	for hh := 916; hh <= 920; hh++ {
@@ -443,7 +462,7 @@ func (e *lutEngine) lutSellLevels(now time.Time, shown lutCtx, expStr string, fi
 			at := time.Date(now.Year(), now.Month(), now.Day(), hh/100, hh%100, 0, 0, now.Location())
 			c.M.RawDTE = lutRawDTE(at, exp) // each minute's own time to expiry
 		}
-		lv.LUTSellRange = lutScanSellRange(e.set, c, hh)
+		lv.LUTSellRange = lutScanSellRange(set, c, hh)
 		if n := len(lv.Ranges); n > 0 {
 			lv.SellFrom, lv.SellTo = lv.Ranges[0].StraddleFrom, lv.Ranges[0].StraddleTo
 			lv.Above = lv.SellTo >= lv.To-lv.Step

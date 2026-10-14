@@ -19,7 +19,7 @@ func TestParseLUTCSV_MappingsLikeReference(t *testing.T) {
 		"7,>1.30,>2.00,>=0.20,>0.7501%,>0.004,TRUE\n" +
 		"2,0.66-0.80,0.96-1.00,0.08-0.12,<-0.7501%,<=-0.008,NO\n" +
 		"9,bogus,row,x,y,z,YES\n"
-	tb, err := ParseLUTCSV(strings.NewReader(csvText))
+	tb, err := ParseLUTCSV(strings.NewReader(csvText), lutSchemaOld)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,29 +36,112 @@ func TestParseLUTCSV_MappingsLikeReference(t *testing.T) {
 	}
 }
 
-// The real profiler tables: every YES row must land in a distinct cell.
+// The real profiler tables (old and new set): every YES row must land in a
+// distinct cell.
 func TestLoadLUTSet_RealTables(t *testing.T) {
-	dir := defaultLUTDir
-	if _, err := os.Stat(filepath.Join(dir, lutStageFiles[0])); err != nil {
-		t.Skip("profiler tables not mounted")
+	for _, sc := range []*lutSchema{lutSchemaOld, lutSchemaNew} {
+		dir := sc.DefaultDir
+		if _, err := os.Stat(filepath.Join(dir, lutStageFiles[0])); err != nil {
+			t.Skip("profiler tables not mounted")
+		}
+		set, err := LoadLUTSet(dir, sc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, name := range lutStageFiles {
+			f, _ := os.Open(filepath.Join(dir, name))
+			rows, _ := csv.NewReader(f).ReadAll()
+			f.Close()
+			tc := len(rows[0]) - 1
+			for j, h := range rows[0] {
+				if strings.TrimSpace(strings.TrimPrefix(h, "\uFEFF")) == "Trade" {
+					tc = j
+				}
+			}
+			yes := 0
+			for _, r := range rows[1:] {
+				if tc < len(r) && strings.EqualFold(strings.TrimSpace(r[tc]), "YES") {
+					yes++
+				}
+			}
+			if set[i].Yes != yes {
+				t.Fatalf("%s %s: %d YES cells loaded, %d YES rows in file", sc.Key, name, set[i].Yes, yes)
+			}
+		}
+		if sc == lutSchemaNew {
+			want := [5]int{1298, 3309, 4534, 3828, 2441} // backtest r46V2
+			for i := range want {
+				if set[i].Yes != want[i] {
+					t.Fatalf("new %s: %d YES, backtest has %d", lutStageFiles[i], set[i].Yes, want[i])
+				}
+			}
+		}
 	}
-	set, err := LoadLUTSet(dir)
+}
+
+// New set: straddle veto and Build-IV floor before the table, event days
+// only for the new set, IV change from Final_IV_Chg.
+func TestEvaluateLUTMinute_NewSetRules(t *testing.T) {
+	newSet := func() LUTSet {
+		var s LUTSet
+		for i := range s {
+			s[i] = &LUTTable{schema: lutSchemaNew, cells: make([]bool, lutSchemaNew.cellCount())}
+			for j := range s[i].cells {
+				s[i].cells[j] = true // every cell YES: only the rules can say no
+			}
+		}
+		return s
+	}
+	set := newSet()
+	S, K, raw := 22660.0, 22650.0, 4.9
+	m := LUTMinuteInput{HHMM: 917, Underlying: S, RawDTE: raw, BusDays: 5, CELTP: 1}
+	m.PELTP = lutBSPrice(false, S, K, raw/365, 0.13)
+	in := LUTDailyInputs{PrevStraddle: 0, YesterdayIV: 0.12, NormalizedAdjChg: 0.01, FinalAdjChg: -0.01, HasFinalChg: true, WeightedIDV: 0.127}
+	in.PrevStraddle = 1.10 * (m.PELTP + m.CELTP) // ratio 1.10 < veto 1.15 (DTE row 4)
+	ev := EvaluateLUTMinute(set, in, 0, false, m)
+	if !ev.Allowed || ev.Tables != "new" || ev.AdjIVChg != -0.01 || ev.Coord[5] != 0 {
+		t.Fatalf("new set: %+v", ev)
+	}
+	in.PrevStraddle = 1.16 * (m.PELTP + m.CELTP)
+	if ev := EvaluateLUTMinute(set, in, 0, false, m); ev.Allowed || !strings.HasPrefix(ev.Skip, "straddle veto") || ev.TableSays != "YES" {
+		t.Fatalf("veto: %+v", ev)
+	}
+	in.PrevStraddle = 1.10 * (m.PELTP + m.CELTP)
+	if ev := EvaluateLUTMinute(set, in, 0, true, m); ev.Allowed || ev.Skip == "" {
+		t.Fatalf("event day 09:17 must skip on the new set: %+v", ev)
+	}
+	// 1 DTE: Build IV floor 0.12.
+	m1 := m
+	m1.RawDTE, m1.BusDays = 0.9, 1
+	m1.PELTP = lutBSPrice(false, S, K, 0.9/365, 0.10)
+	in.PrevStraddle = 1.2 * (m1.PELTP + m1.CELTP)
+	if ev := EvaluateLUTMinute(set, in, 0, false, m1); ev.Allowed || !strings.HasPrefix(ev.Skip, "Build IV floor") {
+		t.Fatalf("floor: %+v", ev)
+	}
+	// Old set: no veto, no floor, no events, the old IV change.
+	old := set
+	for i := range old {
+		old[i] = &LUTTable{schema: lutSchemaOld, cells: make([]bool, lutSchemaOld.cellCount())}
+		for j := range old[i].cells {
+			old[i].cells[j] = true
+		}
+	}
+	in.PrevStraddle = 1.16 * (m.PELTP + m.CELTP)
+	if ev := EvaluateLUTMinute(old, in, 0, true, m); !ev.Allowed || ev.AdjIVChg != 0.01 || ev.Tables != "old" {
+		t.Fatalf("old set: %+v", ev)
+	}
+}
+
+func TestLUTLoadEventDays(t *testing.T) {
+	if _, err := os.Stat(lutEventDatesDefault); err != nil {
+		t.Skip("EventDates.xlsx not mounted")
+	}
+	ev, err := lutLoadEventDays(lutEventDatesDefault)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i, name := range lutStageFiles {
-		f, _ := os.Open(filepath.Join(dir, name))
-		rows, _ := csv.NewReader(f).ReadAll()
-		f.Close()
-		yes := 0
-		for _, r := range rows[1:] {
-			if strings.EqualFold(strings.TrimSpace(r[len(r)-1]), "YES") {
-				yes++
-			}
-		}
-		if set[i].Yes != yes {
-			t.Fatalf("%s: %d YES cells loaded, %d YES rows in file", name, set[i].Yes, yes)
-		}
+	if len(ev) < 50 || ev["2026-10-14"] {
+		t.Fatalf("%d event days, 2026-10-14 listed: %v", len(ev), ev["2026-10-14"])
 	}
 }
 
@@ -141,7 +224,7 @@ func TestEvaluateLUTMinute_Rules(t *testing.T) {
 	// Find the coordinate, then allow exactly it in the 09:17 table.
 	var set LUTSet
 	for i := range set {
-		set[i] = &LUTTable{cells: make([]bool, lutCellCount)}
+		set[i] = &LUTTable{schema: lutSchemaOld, cells: make([]bool, lutSchemaOld.cellCount())}
 	}
 	ev := EvaluateLUTMinute(set, in, 0.03, false, m)
 	if ev.Skip != "" || ev.Allowed {
@@ -150,7 +233,7 @@ func TestEvaluateLUTMinute_Rules(t *testing.T) {
 	if !lutNear(ev.BuildIV, 0.12, 1e-4) || ev.Strike != K {
 		t.Fatalf("build iv %v strike %v", ev.BuildIV, ev.Strike)
 	}
-	set[1].cells[ev.Coord.index()] = true
+	set[1].cells[lutSchemaOld.index(ev.Coord)] = true
 	if ev2 := EvaluateLUTMinute(set, in, 0.03, false, m); !ev2.Allowed || ev2.Stage != "09:17" {
 		t.Fatalf("should be allowed at 09:17: %+v", ev2)
 	}
@@ -160,9 +243,10 @@ func TestEvaluateLUTMinute_Rules(t *testing.T) {
 	if ev3 := EvaluateLUTMinute(set, in, 0.03, false, m18); ev3.Allowed {
 		t.Fatal("09:18 must use its own table")
 	}
-	// Event day: nothing before 09:18.
-	if ev4 := EvaluateLUTMinute(set, in, 0.03, true, m); ev4.Skip == "" {
-		t.Fatal("event day must skip 09:17")
+	// Event day: the old set never used event days (the new one does,
+	// TestEvaluateLUTMinute_NewSetRules).
+	if ev4 := EvaluateLUTMinute(set, in, 0.03, true, m); !ev4.Allowed {
+		t.Fatal("old set: event flag must not change the answer")
 	}
 	// 1 DTE: stop after 09:59.
 	m1 := m
@@ -202,12 +286,12 @@ func TestLUTNormOG(t *testing.T) {
 }
 
 func TestLUTNearestYes_TranslatesCellToMarketLevels(t *testing.T) {
-	tb := &LUTTable{cells: make([]bool, lutCellCount)}
+	tb := &LUTTable{schema: lutSchemaOld, cells: make([]bool, lutSchemaOld.cellCount())}
 	// DTE idx 4, IV ratio 0.96-1.00 (idx 4), str 1.06-1.10 (idx 3), build 0.12-0.16 (idx 2), OG mid, ADJ mid.
 	c := LUTCoord{4, 4, 3, 2, 1, 1}
-	tb.cells[c.index()] = true
+	tb.cells[lutSchemaOld.index(c)] = true
 	// An unreachable cell: IV ratio <=0.65 with build >= 0.20 at IDV 0.127.
-	tb.cells[LUTCoord{4, 0, 3, 4, 1, 1}.index()] = true
+	tb.cells[lutSchemaOld.index(LUTCoord{4, 0, 3, 4, 1, 1})] = true
 
 	W, adj, prev := 0.127, 1.0, 274.75
 	got := lutNearestYes(tb, "09:20+", 4, 1, 1, W, adj, prev, 0.123, 250, 0)

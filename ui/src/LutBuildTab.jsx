@@ -75,7 +75,15 @@ export default function LutBuildTab() {
   const [lastSell, setLastSell] = createSignal(null);
   const [lastSell0920, setLastSell0920] = createSignal(null);
   const [levels, setLevels] = createSignal(null); // 09:16 .. 09:20 sell levels (sent until 09:30, then kept as last seen)
+  // Two table sets run side by side: 'main' = the set driving today (its
+  // first YES fires the armed build), 'alt' = the other one, shown and
+  // recorded beside, never executed. The switch picks which one the whole
+  // tab shows.
+  const [tset, setTset] = createSignal('main');
+  const [raw, setRaw] = createSignal(null); // last pushed payload, both sets
+  const [stateRaw, setStateRaw] = createSignal(null);
   let seenMinutes = -1;
+  let seenAlt = -1;
   const setManField = (k) => (e) => setMan((m) => ({ ...m, [k]: e.currentTarget.value }));
   const manualBody = (m) => {
     const out = {};
@@ -92,8 +100,8 @@ export default function LutBuildTab() {
       const res = await fetch('/api/lut/state');
       const data = await res.json();
       const st = data.state || {};
-      setParams(st.params || null);
-      setMinutes(st.minutes || []);
+      setStateRaw(st);
+      applyState(st);
       if (!live()) setLive(st);
       if (st.config) {
         setLots(String(st.config.lots || 1));
@@ -106,8 +114,30 @@ export default function LutBuildTab() {
     } catch (_) { /* gateway restarting */ }
   };
 
+  const applyState = (st) => {
+    const alt = tset() === 'alt';
+    setParams((alt ? st.alt_params : st.params) || null);
+    setMinutes((alt ? st.alt_minutes : st.minutes) || []);
+  };
+  // The payload as the chosen set sees it: the other set's fields laid over.
+  const view = (d) => {
+    if (tset() !== 'alt' || !d.alt) return d;
+    const a = d.alt;
+    return {
+      ...d, eval: a.eval, grid: a.grid, grid_0920: a.grid_0920, sell_range: a.sell_range, sell_range_0920: a.sell_range_0920,
+      sell_levels: a.sell_levels, entry: a.entry, table_yes: a.table_yes, tables_error: a.tables_error,
+      tables: a.tables, tables_name: a.name, alt: { ...a, tables: d.tables, name: d.tables_name, eval: d.eval }
+    };
+  };
+  const switchSet = (v) => {
+    setTset(v);
+    setLastGrid(null); setLastGrid0920(null); setLastSell(null); setLastSell0920(null); setLevels(null);
+    if (stateRaw()) applyState(stateRaw());
+    if (raw()) onUpdate({ detail: raw() });
+  };
   const onUpdate = (e) => {
-    const d = e.detail || {};
+    setRaw(e.detail || {});
+    const d = view(e.detail || {});
     setLive(d);
     if (d.grid) setLastGrid(d.grid);
     if (d.grid_0920) setLastGrid0920(d.grid_0920); else if (d.grid) setLastGrid0920(null);
@@ -115,8 +145,10 @@ export default function LutBuildTab() {
     if (d.sell_range_0920) setLastSell0920(d.sell_range_0920); else if (d.sell_range) setLastSell0920(null);
     if (!d.eval) { setLastSell(null); setLastSell0920(null); }
     if (d.sell_levels) setLevels({ day: d.day, rows: d.sell_levels }); else if (levels() && levels().day !== d.day) setLevels(null);
-    if (d.minutes_count !== seenMinutes) {
-      seenMinutes = d.minutes_count;
+    const altCount = raw()?.alt?.minutes_count ?? -1;
+    if (raw()?.minutes_count !== seenMinutes || altCount !== seenAlt) {
+      seenMinutes = raw()?.minutes_count;
+      seenAlt = altCount;
       loadState();
     }
   };
@@ -342,6 +374,21 @@ export default function LutBuildTab() {
           <span style={muted}> · coord {ev().coord_text} · {ev().table_yes_cells_today} YES cell(s) reachable today in this table</span>
         </Show>
       </Show>
+      <Show when={live()?.alt}>
+        {(() => {
+          const ans = (e) => !e ? '—' : (e.skip ? `no check (${e.skip})` : (e.allowed ? 'YES' : 'NO'));
+          const cls = (e) => !e || e.skip ? '' : (e.allowed ? 'positive' : 'negative');
+          return (
+            <div style={{ 'font-size': '13px', 'margin-top': '4px' }}>
+              <span style={muted}>Same prices, both table sets: </span>
+              <strong>{live().tables_name}</strong> <strong class={cls(ev())}>{ans(ev())}</strong>
+              <span style={muted}> · </span>
+              <strong>{live().alt.name}</strong> <strong class={cls(live().alt.eval)}>{ans(live().alt.eval)}</strong>
+              <Show when={live().alt.tables_error}><span class="negative"> ({live().alt.tables_error})</span></Show>
+            </div>
+          );
+        })()}
+      </Show>
       <Show when={live()?.inputs_error}><div class="negative" style={{ 'font-size': '13px' }}>Daily inputs: {live().inputs_error}</div></Show>
       <Show when={live()?.tables_error}><div class="negative" style={{ 'font-size': '13px' }}>Tables: {live().tables_error}</div></Show>
       <Show when={live()?.chain_error}><div class="negative" style={{ 'font-size': '13px' }}>Chain: {live().chain_error}</div></Show>
@@ -511,6 +558,15 @@ export default function LutBuildTab() {
     </Show>
   );
 
+  const otherMins = () => {
+    const st = stateRaw() || {};
+    const list = (tset() === 'alt' ? st.minutes : st.alt_minutes) || [];
+    const m = {};
+    for (const e of list) m[e.time] = e;
+    return m;
+  };
+  const otherAt = (t) => otherMins()[t];
+  const otherName = () => `${(tset() === 'alt' ? raw()?.tables : raw()?.alt?.tables) || 'other'} tables`;
   const Timeline = () => (
     <div style={box}>
       <div class="section-title">Recorded minutes today (09:16–13:30) — row HH:MM = the prices that minute opens at (last trade before HH:MM:00)</div>
@@ -519,7 +575,7 @@ export default function LutBuildTab() {
           <table class="trade-position-table">
             <thead>
               <tr>
-                <th>Time</th><th>Table</th><th>Answer</th><th title="synthetic future at the minute's open: the price minute HH:MM opens at: the last trade before HH:MM:00 (GreekSoft close of the candle that ended there)">Future (open)</th><th>ATM</th><th title="the price minute HH:MM opens at: the last trade before HH:MM:00 (GreekSoft close of the candle that ended there)">CE / PE open</th><th>Build IV</th><th>Adj build IV</th>
+                <th>Time</th><th>Table</th><th title="the other table set's answer on the same prices">{otherName()}</th><th>Answer</th><th title="synthetic future at the minute's open: the price minute HH:MM opens at: the last trade before HH:MM:00 (GreekSoft close of the candle that ended there)">Future (open)</th><th>ATM</th><th title="the price minute HH:MM opens at: the last trade before HH:MM:00 (GreekSoft close of the candle that ended there)">CE / PE open</th><th>Build IV</th><th>Adj build IV</th>
                 <th>IV ratio</th><th title="the price minute HH:MM opens at: the last trade before HH:MM:00 (GreekSoft close of the candle that ended there)">Straddle (open)</th><th>Str ratio</th><th>DTE / OG / Adj</th><th>Coord</th><th>TP bps</th>
               </tr>
             </thead>
@@ -529,7 +585,8 @@ export default function LutBuildTab() {
                   <tr>
                     <td>{e.time}</td>
                     <td>{e.stage}</td>
-                    <Show when={!e.skip} fallback={<td colSpan="12"style={{ opacity: 0.7 }}>no check: {e.skip}</td>}>
+                    <td>{(() => { const o = otherAt(e.time); return !o ? '—' : (o.skip ? <span style={muted}>skip</span> : <strong class={o.allowed ? 'positive' : 'negative'}>{o.allowed ? 'YES' : 'NO'}</strong>); })()}</td>
+                    <Show when={!e.skip} fallback={<td colSpan="12" style={{ opacity: 0.7 }}>no check: {e.skip}</td>}>
                       <td class={e.allowed ? 'positive' : 'negative'}><strong>{e.allowed ? 'YES' : 'NO'}</strong></td>
                       <td>{fmt(e.underlying)}</td>
                       <td>{fmt(e.strike, 0)}</td>
@@ -602,6 +659,20 @@ export default function LutBuildTab() {
         <div class="panel-subtitle">
           Always on: re-evaluated on every chain tick and shown live. The first tick of each minute 09:16–13:30 is recorded; the first YES of the day is the paper entry.
         </div>
+      </div>
+
+      <div style={{ ...box, display: 'flex', gap: '14px', 'align-items': 'center', 'flex-wrap': 'wrap', border: tset() === 'alt' ? '1px solid #ffb74d' : box.border }}>
+        <strong>Tables shown:</strong>
+        <label style={{ cursor: 'pointer' }}>
+          <input type="radio" name="lut-tset" checked={tset() === 'main'} onChange={() => switchSet('main')} />{' '}
+          {raw()?.tables_name || raw()?.tables || 'driving set'} <span style={muted}>— drives today (paper entry, armed build)</span>
+        </label>
+        <Show when={raw()?.alt}>
+          <label style={{ cursor: 'pointer' }}>
+            <input type="radio" name="lut-tset" checked={tset() === 'alt'} onChange={() => switchSet('alt')} />{' '}
+            {raw().alt.name} <span style={muted}>— shown and recorded beside, never executed</span>
+          </label>
+        </Show>
       </div>
 
       <div style={{ display: 'flex', gap: '12px', 'flex-wrap': 'wrap', 'align-items': 'flex-end' }}>

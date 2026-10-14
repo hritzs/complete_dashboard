@@ -34,10 +34,13 @@ func lutDataDir() string {
 
 // lutDayState is what besides the minutes must survive a restart.
 type lutDayState struct {
-	Day      string    `json:"day"`
-	U0916    float64   `json:"underlying_0916"`
-	OGSource string    `json:"og_source"`
-	Entry    *LUTEntry `json:"entry,omitempty"`
+	Day      string  `json:"day"`
+	U0916    float64 `json:"underlying_0916"`
+	OGSource string  `json:"og_source"`
+	// Tables: the table set that drove the day ("old" / "new"); empty in
+	// files written before two sets existed (= "old").
+	Tables string    `json:"tables,omitempty"`
+	Entry  *LUTEntry `json:"entry,omitempty"`
 	// Build: the day's one REAL build fired by the LUT (lut_build.go).
 	Build *LUTBuildRun `json:"build,omitempty"`
 	// Tests: user test fires of the LUT build (real orders, not the YES).
@@ -67,7 +70,11 @@ func lutCSVRow(day string, ev LUTEvaluation) []string {
 }
 
 // lutSaveMinute appends one recorded minute to the day's JSONL and CSV.
-func lutSaveMinute(day string, ev LUTEvaluation) {
+func lutSaveMinute(day string, ev LUTEvaluation) { lutSaveMinuteTo(day, day, ev) }
+
+// lutSaveMinuteTo appends to <stem>.jsonl / <stem>.csv (the second table
+// set records under its own stem, lut_alt.go).
+func lutSaveMinuteTo(stem, day string, ev LUTEvaluation) {
 	dir := lutDataDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		log.Printf("[LUT] ⚠ cannot save minute %s: %v", ev.Time, err)
@@ -75,12 +82,12 @@ func lutSaveMinute(day string, ev LUTEvaluation) {
 	}
 	b, err := json.Marshal(ev)
 	if err == nil {
-		err = lutAppend(filepath.Join(dir, day+".jsonl"), append(b, '\n'))
+		err = lutAppend(filepath.Join(dir, stem+".jsonl"), append(b, '\n'))
 	}
 	if err != nil {
 		log.Printf("[LUT] ⚠ cannot save minute %s (jsonl): %v", ev.Time, err)
 	}
-	csvPath := filepath.Join(dir, day+".csv")
+	csvPath := filepath.Join(dir, stem+".csv")
 	_, statErr := os.Stat(csvPath)
 	var sb strings.Builder
 	w := csv.NewWriter(&sb)
@@ -123,22 +130,26 @@ func lutJSONLKind(path string) string {
 }
 
 // lutSaveDay writes the day state (09:16 capture + paper entry).
-func lutSaveDay(st lutDayState) {
+func lutSaveDay(st lutDayState) { lutSaveDayTo(st.Day, st) }
+
+func lutSaveDayTo(stem string, st lutDayState) {
 	b, _ := json.MarshalIndent(st, "", "  ")
-	if err := sbWriteAtomic(filepath.Join(lutDataDir(), st.Day+"_day.json"), b); err != nil {
+	if err := sbWriteAtomic(filepath.Join(lutDataDir(), stem+"_day.json"), b); err != nil {
 		log.Printf("[LUT] ⚠ cannot save day state: %v", err)
 	}
 }
 
 // lutLoadDay reloads a day's recorded minutes and state (missing = empty).
-func lutLoadDay(day string) ([]LUTEvaluation, lutDayState) {
+func lutLoadDay(day string) ([]LUTEvaluation, lutDayState) { return lutLoadDayFrom(day, day) }
+
+func lutLoadDayFrom(stem, day string) ([]LUTEvaluation, lutDayState) {
 	st := lutDayState{Day: day}
-	if b, err := stateRead(filepath.Join(lutDataDir(), day+"_day.json")); err == nil {
+	if b, err := stateRead(filepath.Join(lutDataDir(), stem+"_day.json")); err == nil {
 		_ = json.Unmarshal(b, &st)
 	}
 	var mins []LUTEvaluation
-	stateReadLines(filepath.Join(lutDataDir(), day+".jsonl"), "lut_minute")
-	f, err := os.Open(filepath.Join(lutDataDir(), day+".jsonl"))
+	stateReadLines(filepath.Join(lutDataDir(), stem+".jsonl"), "lut_minute")
+	f, err := os.Open(filepath.Join(lutDataDir(), stem+".jsonl"))
 	if err != nil {
 		return nil, st
 	}
