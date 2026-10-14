@@ -1306,7 +1306,11 @@ func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 		if c.HedgeRule == "" { // the chosen set's hedge (a sim-driven trade keeps the driving set's)
 			c.HedgeRule = sets.Tables
 		}
-		sims = append(sims, RunPaperSim(mins, withMTM(c), runLot, live))
+		cm := mins
+		if strings.HasPrefix(c.Source, "simulation that drove ") && view == "" {
+			cm = simWithTicks(day, mins, c.Entry) // the 100 ms ticks the driver acted on (sim_drive.go)
+		}
+		sims = append(sims, RunPaperSim(cm, withMTM(c), runLot, live))
 	}
 	src := map[string]int{}
 	for _, m := range mins {

@@ -151,6 +151,20 @@ var simDriveCache struct {
 	mins     []simMinute
 }
 
+// simWithTicks: a copy of the minutes whose seconds, from entry on, are the
+// in-memory 100 ms ticks (when held -- today, this gateway run).
+func simWithTicks(day string, base []simMinute, entry string) []simMinute {
+	mins := make([]simMinute, len(base))
+	copy(mins, base)
+	ticks := lutTicksFrom(day, lutHHMM(entry))
+	for i := range mins {
+		if tk, ok := ticks[mins[i].HHMM]; ok && len(tk) > 0 {
+			mins[i].secs = tk
+		}
+	}
+	return mins
+}
+
 func lutRecordKey() string {
 	e := lutEng
 	e.mu.Lock()
@@ -234,15 +248,7 @@ func (s *Service) simDriveTick() {
 	t0 := time.Now()
 	// Minutes from memory (reloaded only on a new recorded minute) and, for
 	// the trade's minutes, every 100 ms tick of the future (lut_seconds.go).
-	base := simDriveMinutes(day)
-	mins := make([]simMinute, len(base))
-	copy(mins, base)
-	ticks := lutTicksFrom(day, lutHHMM(entry))
-	for i := range mins {
-		if tk, ok := ticks[mins[i].HHMM]; ok && len(tk) > 0 {
-			mins[i].secs = tk
-		}
-	}
+	mins := simWithTicks(day, simDriveMinutes(day), entry)
 	cfg := simDriveConfigOf(run, tr.Strike, lutDrivingRule().Key)
 	cfg.ExitTime = exitTime
 	res := RunPaperSim(mins, cfg, lot, nil)
