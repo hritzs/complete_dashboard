@@ -5,7 +5,7 @@ package trading
 // out pass 1.2 x allowed; the simulation replays the same check on these
 // seconds). One file per day in LUT_DATA_DIR: <day>_sec.csv, "HH:MM:SS,future"
 // (synthetic future of the current expiry, first tick of each second),
-// 09:15:00 - 15:40:00. Written in small batches; never on the order path.
+// 09:15:00 - 15:40:00. One small append per second; never on the order path.
 
 import (
 	"bufio"
@@ -38,9 +38,7 @@ func (e *lutEngine) noteSecond(now time.Time, day string, fut float64) {
 	}
 	e.secLast = sec
 	e.secBuf = append(e.secBuf, fmt.Sprintf("%s,%.2f\n", now.Format("15:04:05"), fut)...)
-	if len(e.secBuf) >= 5*16 || now.Second() == 0 { // ~5 s batches, and at each minute
-		e.flushSecondsLocked(day)
-	}
+	e.flushSecondsLocked(day) // every second: the simulation-driven trade acts on it (sim_drive.go)
 }
 
 func (e *lutEngine) flushSecondsLocked(day string) {

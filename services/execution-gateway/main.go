@@ -158,6 +158,7 @@ func main() {
 	service.StartStateDB()
 	// Always-on LUT entry check: PAPER only (YES/NO), never places orders.
 	service.StartLUTEngine()
+	service.StartSimDrive() // the LUT trade follows its simulation (sim_drive.go)
 	// Straddle-target build: live straddle preview + SHADOW builds (no orders).
 	service.StartSBEngine()
 	service.StartBrokerAutoSync()
@@ -466,6 +467,7 @@ func startHTTPServer(cfg *Config, handlers *trading.Handlers) {
 	mux.HandleFunc("/api/lut/config", handlers.LUTConfigHandler)
 	mux.HandleFunc("/api/lut/start-now", handlers.LUTStartNowHandler)
 	mux.HandleFunc("/api/lut/logic", handlers.LUTLogicHandler) // which table set drives the LUT from the next day (lut_alt.go)
+	mux.HandleFunc("/api/simdrive", handlers.SimDriveHandler)  // simulation-driven LUT trade (sim_drive.go)
 	// Paper-trade simulation off the stored minute data -- never places orders.
 	mux.HandleFunc("/api/paper/sim", handlers.PaperSimHandler)
 	mux.HandleFunc("/api/paper/start", handlers.PaperStartHandler)

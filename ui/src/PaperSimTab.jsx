@@ -329,6 +329,7 @@ export default function PaperSimTab() {
   const setMtmPct = remember('paper.mtm.pct', setMtmPctRaw);
   const mtmQuery = () => (String(mtmLevel()).trim() === '' ? '' : `&mtm=${encodeURIComponent(mtmLevel())}&mtm_unit=${mtmUnit()}&mtm_pct=${encodeURIComponent(mtmPct() || '100')}`);
   const [data, setData] = createSignal(null);
+  const [drive, setDrive] = createSignal(null); // the live LUT trade driven by its simulation
   const [sel, setSel] = createSignal('overview');
   const [startAt, setStartAt] = createSignal('');
   const [msg, setMsg] = createSignal('');
@@ -346,6 +347,7 @@ export default function PaperSimTab() {
     try {
       const n = Math.max(1, Number(size()) || 1);
       const d = await (await fetch(`/api/paper/sim?day=${day()}&expiry=${view()}&lots=${n}&size=${n}&hedge=${hedge()}&tables=${tables()}${mtmQuery()}`)).json();
+      try { const dv = await (await fetch('/api/simdrive')).json(); setDrive(dv.driver ? dv : null); } catch (_) { /* gateway restarting */ }
       if (d.success) {
         for (const s of d.sims || []) colorOf(s.config.id);
         setData(d);
@@ -454,6 +456,26 @@ export default function PaperSimTab() {
           <SimDetail sim={simById(sel())} color={colorOf(sel())} tables={data()?.tables} altTables={data()?.alt_tables} />
         </Show>
 
+        <Show when={sel() === 'overview' && drive()}>
+          <div style={{ ...S.panel, border: `1px solid ${drive().active ? 'rgba(46,125,50,0.8)' : '#ffb74d'}` }}>
+            <div style={{ display: 'flex', gap: '10px', 'align-items': 'center', 'flex-wrap': 'wrap' }}>
+              <strong>Live LUT trade driven by its simulation</strong>
+              <span style={S.chip(drive().active ? '#2e7d32' : '#ef6c00')}>{drive().active ? 'DRIVING' : 'NOT DRIVING — monitor rules'}</span>
+              <span style={S.muted}>{drive().driver.trade_uid} · entry {drive().driver.entry} · simulation {drive().driver.sim_status} {sgn(drive().driver.sim_pnl_per_qty)} per qty{drive().driver.error ? ` · ${drive().driver.error}` : ''}</span>
+            </div>
+            <div style={{ ...S.muted, margin: '4px 0' }}>{drive().note}. Sizes are the live trade's own; only the decisions come from the simulation.</div>
+            <Show when={(drive().driver.actions || []).length} fallback={<div style={S.muted}>No simulation event since it started driving.</div>}>
+              <table class="trade-position-table">
+                <thead><tr><th>Live at</th><th>Sim event</th><th>Kind</th><th>Sim delta / qty</th><th>Live delta</th><th>Lots</th><th>Result</th></tr></thead>
+                <tbody>
+                  <For each={[...drive().driver.actions].reverse()}>{(a) => (
+                    <tr><td>{a.at}</td><td>{a.sim_time}</td><td>{a.kind}{a.reason ? ` ${a.reason}` : ''}</td><td>{fmt(a.sim_delta, 4)}</td><td>{fmt(a.live_delta, 1)}</td><td>{a.lots || '—'}</td><td>{a.result}</td></tr>
+                  )}</For>
+                </tbody>
+              </table>
+            </Show>
+          </div>
+        </Show>
         <Show when={sel() === 'overview'}>
           <Show when={(data().straddle_range || []).some((r) => r.minutes > 0 || r.live)}>
             <div style={{ ...S.panel, 'margin-top': '12px' }}>

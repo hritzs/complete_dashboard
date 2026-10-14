@@ -1654,7 +1654,10 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 	// points_out beyond 1.2 x allowed hedges the complete net delta (whole
 	// lots, rounded down). At most once per minute: the next one is the
 	// minute-end check with fresh positions. Not in the hedge test modes.
-	if rt, ok := s.Store.LoadRuntime(tradeUID); ok && !exiting && trade.Status == "ACTIVE" &&
+	// A simulation-driven trade (sim_drive.go) takes its hedges and exits
+	// from the simulation; the monitor's own checks stand aside while it runs.
+	simDriven := simDriveActive(tradeUID)
+	if rt, ok := s.Store.LoadRuntime(tradeUID); ok && !exiting && trade.Status == "ACTIVE" && !simDriven &&
 		rt.LastMinuteCheck.Equal(currentMinute) && !rt.LastIntraHedge.Equal(currentMinute) &&
 		!trade.Config.ForceOneLotHedgeTest && !trade.Config.ForceHedgeRegardlessOfPoints {
 		lotSize := int64(trade.LotSize)
@@ -1703,6 +1706,9 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 				ForceRegardless: trade.Config.ForceHedgeRegardlessOfPoints,
 				Frac:            hedgeMinuteFrac,
 			})
+			if simDriven && decision.Hedge {
+				decision.Hedge, decision.Action = false, "SIM_DRIVEN"
+			}
 			hedgeAction = decision.Action
 			pointsCrossed := pointsOut > decision.EffectiveAllowed || trade.Config.ForceHedgeRegardlessOfPoints
 			minimumPointsReached := pointsOut >= decision.Floor
@@ -1869,7 +1875,11 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 					"[RISK] SL_TRIGGER trade=%s source=%s pnl=%.2f pnl_per_straddle=%.2f threshold=%.2f %s",
 					tradeUID, slSource, totalPNL, pnlPerStraddle, slThreshold, snapshotFields,
 				)
-				s.executeAutoExit(tradeUID, "SL", "CLOSED_SL")
+				if simDriven {
+					log.Printf("[RISK] SL_TRIGGER trade=%s left to the simulation (sim-driven)", tradeUID)
+				} else {
+					s.executeAutoExit(tradeUID, "SL", "CLOSED_SL")
+				}
 			}
 
 			tpThreshold := 0.0
@@ -1880,7 +1890,11 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 						"[RISK] TP_TRIGGER trade=%s pnl_per_straddle=%.2f threshold=%.2f bps=%.2f %s",
 						tradeUID, pnlPerStraddle, tpThreshold, trade.Config.TPPnLBpsOfSpot, snapshotFields,
 					)
-					s.executeAutoExit(tradeUID, "TP", "CLOSED_TP")
+					if simDriven {
+						log.Printf("[RISK] TP_TRIGGER trade=%s left to the simulation (sim-driven)", tradeUID)
+					} else {
+						s.executeAutoExit(tradeUID, "TP", "CLOSED_TP")
+					}
 				}
 			}
 
@@ -1889,7 +1903,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 					"[RISK] TIME_TRIGGER trade=%s now=%s target=%s %s",
 					tradeUID, time.Now().Format(time.RFC3339), trade.Config.SquareOffHardTime.Format(time.RFC3339), snapshotFields,
 				)
-				s.executeAutoExit(tradeUID, "TIME", "CLOSED_TIME")
+				s.executeAutoExit(tradeUID, "TIME", "CLOSED_TIME") // a hard stop even when sim-driven
 			}
 
 			slStatus := "NOT_CONFIGURED"
