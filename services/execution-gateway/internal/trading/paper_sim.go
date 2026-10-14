@@ -370,6 +370,14 @@ func lutLoadSimSetHold(day, set string, hold bool) []simMinute {
 	return out
 }
 
+// simOut is a point's points out (|delta / gamma|).
+func simOut(p PaperSimPoint) float64 {
+	if p.NetGamma == 0 {
+		return 0
+	}
+	return math.Abs(p.NetDelta / p.NetGamma)
+}
+
 // simMinBps: the bps floor on points allowed (none with a fixed band).
 func simMinBps(c PaperSimConfig) float64 {
 	if c.PointsAllowed > 0 {
@@ -745,6 +753,25 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 	// future (each leg at its own IV of the minute), and the first second
 	// with points out > 1.2 x allowed hedges the complete delta -- once per
 	// minute, as live. The hedge is marked on the minute's row.
+	// intraRow adds the intra-minute hedge as its own row at the tick: the
+	// position valued at that second's future (legs by Black-Scholes at the
+	// minute's IV), with the before -> after of the hedge in its event.
+	intraRow := func(m simMinute, s simSec, allowed, outBefore, ndBefore, ndAfter, hedgeBefore float64, what string) {
+		tm := m
+		tm.Time, tm.Ts, tm.Future, tm.chain, tm.hasLUT = s.T, s.T+" (tick)", s.F, nil, false
+		pt := book.value(tm, q)
+		posMarks(tm, &pt)
+		pt.Time, pt.QuoteTs, pt.Source = s.T, s.T+" (tick)", "bs"
+		outAfter := 0.0
+		if pt.NetGamma != 0 {
+			outAfter = math.Abs(ndAfter / pt.NetGamma)
+		}
+		pt.PointsOut, pt.PointsAllowed, pt.HedgeCheck = outAfter, allowed, "INTRA_HEDGE"
+		pt.HedgeTarget = book.futQty / float64(q)
+		pt.Event = fmt.Sprintf("INTRA-MINUTE HEDGE %s @ fut %.2f: out %.1f > %.1f x %.1f -> %.1f · delta %+.4f -> %+.4f per qty · hedge %+.4f -> %+.4f per qty",
+			what, s.F, outBefore, hedgeIntraMult, allowed, outAfter, ndBefore/float64(q), ndAfter/float64(q), hedgeBefore/float64(q), book.futQty/float64(q))
+		res.Series = append(res.Series, pt)
+	}
 	intraMinute := func(m simMinute) {
 		if !rule.Intra || c.HedgeMode == "off" || len(m.secs) == 0 || len(res.Series) == 0 {
 			return
@@ -785,8 +812,7 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 				res.Hedges = append(res.Hedges, PaperSimHedge{Time: s.T, Mode: "synthetic", Kind: "INTRA_MINUTE", Qty: int64(math.Round(-nd)), FutQty: -nd,
 					OldHedge: old / float64(q), NewHedge: book.futQty / float64(q), CEPrice: s.F, DeltaBefore: nd, DeltaAfter: 0,
 					PointsOut: out, Allowed: d.EffectiveAllowed, Future: s.F, Source: "seconds"})
-				res.Series[len(res.Series)-1].Event = strings.TrimSpace(res.Series[len(res.Series)-1].Event + fmt.Sprintf(
-					" · INTRA-MINUTE %s: out %.1f > 1.2 x %.1f -> complete delta %+.2f hedged (%+.2f fut @%.2f)", s.T, out, d.EffectiveAllowed, nd, -nd, s.F))
+				intraRow(m, s, d.EffectiveAllowed, out, nd, 0, old, fmt.Sprintf("synthetic %+.2f contracts", -nd))
 				return
 			}
 			if !d.Hedge || d.Lots <= 0 {
@@ -804,13 +830,13 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 			cpx, _, _ := simBlack76(true, s.F, atm, T, ivATM)
 			ppx, _, _ := simBlack76(false, s.F, atm, T, ivATM)
 			hq := d.Lots * lotSize
+			oldFut := book.futQty
 			book.fill("HEDGE", atm, "CE", ceSide, hq, cpx)
 			book.fill("HEDGE", atm, "PE", peSide, hq, ppx)
 			after := nd + float64(hq)*map[bool]float64{true: 1, false: -1}[ceSide == "BUY"]
 			res.Hedges = append(res.Hedges, PaperSimHedge{Time: s.T, Mode: "lots", Kind: "INTRA_MINUTE", Strike: atm, CESide: ceSide, PESide: peSide, Lots: d.Lots, Qty: hq,
 				CEPrice: cpx, PEPrice: ppx, DeltaBefore: nd, DeltaAfter: after, PointsOut: out, Allowed: d.EffectiveAllowed, Future: s.F, Source: "seconds+bs"})
-			res.Series[len(res.Series)-1].Event = strings.TrimSpace(res.Series[len(res.Series)-1].Event + fmt.Sprintf(
-				" · INTRA-MINUTE %s: out %.1f > 1.2 x %.1f -> %d lot(s) %s CE / %s PE @%.0f (complete delta %+.1f)", s.T, out, d.EffectiveAllowed, d.Lots, ceSide, peSide, atm, nd))
+			intraRow(m, s, d.EffectiveAllowed, out, nd, after, oldFut, fmt.Sprintf("%d lot(s) %s CE / %s PE @%.0f", d.Lots, ceSide, peSide, atm))
 			return
 		}
 	}
@@ -896,7 +922,8 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 			res.Hedges = append(res.Hedges, PaperSimHedge{Time: m.Time, Mode: "synthetic", Kind: "RISK_BREACH", Strike: 0, Qty: int64(math.Round(dq)), FutQty: dq,
 				OldHedge: old / float64(q), NewHedge: book.futQty / float64(q), CEPrice: m.Future, PEPrice: 0,
 				DeltaBefore: pt.NetDelta, DeltaAfter: after.NetDelta, PointsOut: pt.PointsOut, Allowed: pt.PointsAllowed, Future: m.Future, Source: pt.Source})
-			ev := fmt.Sprintf("HEDGE synthetic %+.2f contracts @%.2f (%+.4f -> %+.4f per qty): delta %+.2f -> %+.2f", dq, m.Future, old/float64(q), book.futQty/float64(q), pt.NetDelta, after.NetDelta)
+			ev := fmt.Sprintf("HEDGE synthetic %+.2f contracts @%.2f (%+.4f -> %+.4f per qty): delta %+.2f -> %+.2f, out %.1f -> %.1f (allowed %.1f)",
+				dq, m.Future, old/float64(q), book.futQty/float64(q), pt.NetDelta, after.NetDelta, pt.PointsOut, simOut(after), pt.PointsAllowed)
 			keep := pt
 			pt = after
 			posMarks(m, &pt)
@@ -915,7 +942,8 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 				res.Hedges = append(res.Hedges, PaperSimHedge{Time: m.Time, Mode: "lots", Kind: "ATM_LOTS", Strike: m.ATM, CESide: ceSide, PESide: peSide, Lots: d.Lots, Qty: hq,
 					CEPrice: cpx, PEPrice: ppx, DeltaBefore: pt.NetDelta, DeltaAfter: after.NetDelta, PointsOut: pt.PointsOut, Allowed: pt.PointsAllowed,
 					Future: m.Future, Source: simWorst(cs, ps)})
-				ev := fmt.Sprintf("HEDGE %d lot(s) %s CE / %s PE @%.0f: delta %+.1f -> %+.1f", d.Lots, ceSide, peSide, m.ATM, pt.NetDelta, after.NetDelta)
+				ev := fmt.Sprintf("HEDGE %d lot(s) %s CE / %s PE @%.0f: delta %+.1f -> %+.1f, out %.1f -> %.1f (allowed %.1f)",
+					d.Lots, ceSide, peSide, m.ATM, pt.NetDelta, after.NetDelta, pt.PointsOut, simOut(after), pt.PointsAllowed)
 				keep := pt
 				pt = after
 				posMarks(m, &pt)
