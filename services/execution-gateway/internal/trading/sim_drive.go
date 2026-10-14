@@ -175,10 +175,8 @@ func (s *Service) simDriveTick() {
 		lot = 65
 	}
 	mins := lutLoadSimSet(day, "")
-	// The simulation as the Paper Sim runs it, with the SL / TP the live
-	// trade was armed with.
-	cfg := PaperSimConfig{ID: "LIVE-" + uid, Source: "drives " + uid, Entry: entry, Lots: 1, HedgeMode: "synthetic", ExitTime: exitTime,
-		SLBps: run.SLBps, TPBps: run.TPBps, PointsAllowed: run.SimPointsAllowed}
+	cfg := simDriveConfigOf(run, tr.Strike)
+	cfg.ExitTime = exitTime
 	res := RunPaperSim(mins, cfg, lot, nil)
 
 	simDrive.mu.Lock()
@@ -280,6 +278,34 @@ func (d *simDriver) record(a SimDriveAction) {
 		_, _ = f.Write(append(b, '\n'))
 		_ = f.Close()
 	}
+}
+
+// simDriveConfigOf is the simulation that drives a LUT trade: the Paper
+// Sim as it runs, on the trade's own strike, with the SL / TP / exit time
+// the trade was armed with and, for a test fire, its fixed hedge band. The
+// Paper Sim tab shows the same simulation for that trade.
+func simDriveConfigOf(run LUTBuildRun, strike float64) PaperSimConfig {
+	exit := run.ExitTime
+	if exit == "" {
+		exit = "15:37"
+	}
+	return PaperSimConfig{ID: "LIVE-" + run.TradeUID, Source: "drives " + run.TradeUID, Entry: strings.TrimSuffix(run.Minute, " (test)"),
+		Lots: 1, HedgeMode: "synthetic", ExitTime: exit, SLBps: run.SLBps, TPBps: run.TPBps, PointsAllowed: run.SimPointsAllowed, Strike: strike}
+}
+
+// simDrivenRun finds the LUT run (real build or sim-driven test) that made
+// a trade on a day, from the LUT day state.
+func simDrivenRun(day, uid string) (LUTBuildRun, bool) {
+	_, st := lutLoadDay(day)
+	if b := st.Build; b != nil && b.TradeUID == uid {
+		return *b, true
+	}
+	for _, t := range st.Tests {
+		if t != nil && t.SimDriven && t.TradeUID == uid {
+			return *t, true
+		}
+	}
+	return LUTBuildRun{}, false
 }
 
 // SimDriveHandler: GET -> the driven trade, the simulation's state and

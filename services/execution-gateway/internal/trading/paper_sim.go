@@ -45,7 +45,10 @@ type PaperSimConfig struct {
 	// PointsAllowed > 0 replaces the computed points allowed and its bps
 	// floor (a sim-driven test trade with a small hedge band).
 	PointsAllowed float64 `json:"points_allowed,omitempty"`
-	CreatedAt     string  `json:"created_at,omitempty"`
+	// Strike > 0: the position's strike (a real trade's own strike, which
+	// can differ from the ATM at the minute's open); 0 = ATM at entry.
+	Strike    float64 `json:"strike,omitempty"`
+	CreatedAt string  `json:"created_at,omitempty"`
 
 	// MTM square-off (its own exit type, separate from SL/TP/time): once
 	// the trade can be closed at executable prices (shorts at the ask,
@@ -654,6 +657,9 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 	if K <= 0 {
 		K = math.Round(m0.Future/lutStrikeStep) * lutStrikeStep
 	}
+	if c.Strike > 0 {
+		K = c.Strike
+	}
 	ce, _, _, s1 := simPrice(m0, K, "CE")
 	pe, _, _, s2 := simPrice(m0, K, "PE")
 	res.EntryTime, res.LUTAnswer, res.Strike, res.Qty = m0.Time, m0.Answer, K, q
@@ -1236,8 +1242,16 @@ func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 		if lotSize > 0 && actual[i].Qty > 0 {
 			l = int(actual[i].Qty / lotSize)
 		}
-		cfgs = append(cfgs, PaperSimConfig{ID: id, Source: "actual trade " + actual[i].TradeUID, Entry: actual[i].EntryTime, Lots: l, Hedge: hedge, HedgeMode: hedgeMode,
-			ActualExit: actual[i].ExitTime, ActualReason: actual[i].ExitReason})
+		c := PaperSimConfig{ID: id, Source: "actual trade " + actual[i].TradeUID, Entry: actual[i].EntryTime, Lots: l, Hedge: hedge, HedgeMode: hedgeMode,
+			ActualExit: actual[i].ExitTime, ActualReason: actual[i].ExitReason, Strike: actual[i].Strike}
+		if run, ok := simDrivenRun(day, actual[i].TradeUID); ok {
+			// A sim-driven LUT trade shows the very simulation that drove
+			// it (sim_drive.go): same band, strike, SL / TP, exit time.
+			d := simDriveConfigOf(run, actual[i].Strike)
+			d.ID, d.Source, d.Lots, d.ActualExit, d.ActualReason = id, "simulation that drove "+actual[i].TradeUID, l, c.ActualExit, c.ActualReason
+			c = d
+		}
+		cfgs = append(cfgs, c)
 	}
 	// Live chains of both expiries (today only): the selected one values the
 	// sims right now, and both feed the overview's ATM straddle range.

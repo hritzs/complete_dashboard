@@ -234,3 +234,16 @@ func TestLUTLoadSeconds(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 }
+
+// A real trade's simulation sits on the trade's own strike, not the ATM at
+// the minute's open.
+func TestPaperSim_StrikeOverride(t *testing.T) {
+	mins := mkMinutes(5, func(i int) float64 { return 22679 }) // ATM 22700
+	r := RunPaperSim(mins, PaperSimConfig{Entry: "09:16", Lots: 1, HedgeMode: "off", Strike: 22650}, 65, nil)
+	if r.Strike != 22650 || r.CEEntry <= r.PEEntry {
+		t.Fatalf("strike %v CE %v PE %v", r.Strike, r.CEEntry, r.PEEntry)
+	}
+	if r := RunPaperSim(mins, PaperSimConfig{Entry: "09:16", Lots: 1, HedgeMode: "off"}, 65, nil); r.Strike != 22700 {
+		t.Fatalf("default strike %v", r.Strike)
+	}
+}
