@@ -170,7 +170,8 @@ type PaperSimResult struct {
 	SLPoints       float64         `json:"sl_points"`
 	TPPoints       float64         `json:"tp_points"`
 	TPBps          float64         `json:"tp_bps"`
-	Status         string          `json:"status"` // OPEN / EXITED / NO DATA
+	DeltaBand      float64         `json:"delta_band,omitempty"` // new logic, DTE rows 0 / 1: |delta| per straddle unit
+	Status         string          `json:"status"`               // OPEN / EXITED / NO DATA
 	ExitTime       string          `json:"exit_time,omitempty"`
 	ExitReason     string          `json:"exit_reason,omitempty"`
 	PnL            float64         `json:"pnl"`
@@ -201,6 +202,8 @@ type simMinute struct {
 	Future        float64
 	ATM           float64
 	IV            float64 // ATM build IV (raw, fraction)
+	AdjIV         float64 // adjusted build IV (LUT minutes)
+	TradingDTE    float64 // weekend-adjusted DTE (LUT minutes)
 	DTE           float64 // raw days
 	TPBps         float64
 	Answer        string
@@ -259,6 +262,7 @@ func lutLoadSimSetHold(day, set string, hold bool) []simMinute {
 		m.Future, m.lutK, m.lutCE, m.lutPE = e.Underlying, e.Strike, e.CELTP, e.PELTP
 		lutRefreshTP(&e)
 		m.ATM, m.IV, m.DTE, m.TPBps = e.Strike, e.BuildIV, e.RawDTE, e.TPBps
+		m.AdjIV, m.TradingDTE = e.AdjBuildIV, e.TradingDTE
 		m.Answer = lutAnswerOf(e)
 	}
 	var held []string
@@ -388,6 +392,60 @@ func simOut(p PaperSimPoint) float64 {
 		return 0
 	}
 	return math.Abs(p.NetDelta / p.NetGamma)
+}
+
+// New-logic exits and bands (GammaShort_Backtest_Final.py).
+const (
+	simTVThresh     = 0.00015 // TV: 2 x OTM premium at the traded strike < this x future
+	simTV4Thresh    = 0.0006  // TV4: 2 x OTM premium at the current ATM < this x future
+	simIVDropThresh = 0.10    // IV drop: from 14:57, DTE <= 1, OTM IV at the ATM below this
+	simIVDropFrom   = 1457
+)
+
+// simDeltaBand: on DTE rows 0 / 1 the hedge band is |net delta| per
+// straddle unit (backtest DELTA_MAP); other rows use the points band.
+var simDeltaBand = map[int]float64{0: 0.25, 1: 0.20}
+
+// simNewExit is the new logic's exit test at a minute (after SL / TP):
+// TV, TV4, then the 14:57 IV drop; "" = none.
+func simNewExit(on bool, m simMinute, K float64) string {
+	if !on || m.Future <= 0 {
+		return ""
+	}
+	otmAt := func(k float64) (float64, bool) {
+		opt := "CE"
+		if m.Future > k {
+			opt = "PE"
+		}
+		px, _, _, _ := simPrice(m, k, opt)
+		return px, opt == "CE"
+	}
+	if px, _ := otmAt(K); px > 0 && 2*px < simTVThresh*m.Future {
+		return "TV"
+	}
+	atm := m.ATM
+	if atm <= 0 {
+		atm = math.Round(m.Future/lutStrikeStep) * lutStrikeStep
+	}
+	px, isCall := otmAt(atm)
+	if px > 0 && 2*px < simTV4Thresh*m.Future {
+		return "TV4"
+	}
+	if m.HHMM >= simIVDropFrom && m.DTE <= 1 && px > 0 {
+		T := math.Max(m.DTE/365, 1e-5)
+		if iv, ok := lutImpliedVol(isCall, px, m.Future, atm, T); ok && iv < simIVDropThresh {
+			return "IV_DROP"
+		}
+	}
+	return ""
+}
+
+// simMinBpsFor: no bps floor on a fixed band or a delta band.
+func simMinBpsFor(c PaperSimConfig, deltaBand float64) float64 {
+	if deltaBand > 0 {
+		return 0
+	}
+	return simMinBps(c)
 }
 
 // simMinBps: the bps floor on points allowed (none with a fixed band).
@@ -652,8 +710,10 @@ func (b *simBook) value(m simMinute, q int64) PaperSimPoint {
 // RunPaperSim simulates one entry over the day's minutes. live (optional)
 // is the market right now: an open position is also valued on it.
 func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMinute) PaperSimResult {
+	slGiven := c.SLBps > 0
 	c = paperDefaults(c)
 	rule := hedgeRuleFor(c.HedgeRule)
+	newLogic := rule.Key == "new" // the new tables' exits and expiry-day rules (backtest)
 	res := PaperSimResult{Config: c, Status: "NO DATA"}
 	entry := lutHHMM(c.Entry)
 	exitAt := lutHHMM(c.ExitTime)
@@ -699,6 +759,25 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 	if res.TPBps <= 0 {
 		res.TPBps = m0.TPBps
 	}
+	// New logic (GammaShort_Backtest_Final.py): DTE row of the day, SL 16
+	// bps on DTE row 0, TP rounded, SL / TP in points of the ENTRY future,
+	// and on DTE rows 0 / 1 a delta band instead of the points band.
+	dteRow := lutDTEIndex(m0.DTE)
+	if m0.TradingDTE > 0 {
+		dteRow = lutDTEIndex(m0.TradingDTE)
+	}
+	deltaBand := 0.0
+	if newLogic {
+		if !slGiven && dteRow == 0 {
+			c.SLBps = lutSLBpsExpiry
+			res.Config.SLBps = c.SLBps
+		}
+		if c.TPBps <= 0 && m0.AdjIV > 0 {
+			res.TPBps = lutTPBpsRounded(dteRow, m0.AdjIV)
+		}
+		deltaBand = simDeltaBand[dteRow]
+		res.DeltaBand = deltaBand
+	}
 	res.SLPoints = m0.Future * c.SLBps / 10000
 	res.TPPoints = m0.Future * res.TPBps / 10000
 	res.MinStraddle, res.MaxStraddle = ce+pe, ce+pe
@@ -722,13 +801,15 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 		allowed := math.Min((atmCE+atmPE)/c.StraddleDiv, m.Future*m.IV/c.HedgeDiv)
 		if c.PointsAllowed > 0 {
 			allowed = c.PointsAllowed
+		} else if deltaBand > 0 && pt.NetGamma != 0 {
+			allowed = deltaBand * float64(q) / math.Abs(pt.NetGamma) // delta band in points
 		}
 		out := 0.0
 		if pt.NetGamma != 0 {
 			out = math.Abs(pt.NetDelta / pt.NetGamma)
 		}
 		d := decideHedge(hedgeDecisionInput{PointsOut: out, PointsAllowed: allowed, Spot: m.Future, NetDelta: pt.NetDelta,
-			LotSize: lotSize, TradeLots: int64(c.Lots), MinThresholdBps: simMinBps(c), LeaveBand: rule.LeaveBand})
+			LotSize: lotSize, TradeLots: int64(c.Lots), MinThresholdBps: simMinBpsFor(c, deltaBand), LeaveBand: rule.LeaveBand})
 		pt.PointsOut, pt.PointsAllowed, pt.HedgeFloor, pt.HedgeCheck, pt.HedgeLotsNeeded = out, d.EffectiveAllowed, d.Floor, d.Action, d.Lots
 		if !d.Hedge {
 			pt.HedgeLotsNeeded = 0
@@ -819,8 +900,11 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 				continue
 			}
 			out := math.Abs(nd / ng)
+			if deltaBand > 0 && c.PointsAllowed <= 0 {
+				allowed = deltaBand * float64(q) / math.Abs(ng) // delta band at this tick's gamma
+			}
 			d := decideHedge(hedgeDecisionInput{PointsOut: out, PointsAllowed: allowed, Spot: s.F, NetDelta: nd,
-				LotSize: lotSize, TradeLots: int64(c.Lots), MinThresholdBps: simMinBps(c), Mult: hedgeIntraMult, Frac: hedgeIntraFrac})
+				LotSize: lotSize, TradeLots: int64(c.Lots), MinThresholdBps: simMinBpsFor(c, deltaBand), Mult: hedgeIntraMult, Frac: hedgeIntraFrac})
 			if c.HedgeMode != "lots" {
 				if out <= hedgeIntraMult*d.EffectiveAllowed || math.Abs(nd) < 1e-9 {
 					continue
@@ -895,10 +979,16 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 			continue
 		}
 		exit := ""
-		if pt.PnLPerStraddle <= -m.Future*c.SLBps/10000 {
+		slBase := m.Future
+		if newLogic {
+			slBase = m0.Future // backtest: SL / TP in points of the entry future
+		}
+		if pt.PnLPerStraddle <= -slBase*c.SLBps/10000 {
 			exit = "SL"
-		} else if res.TPBps > 0 && pt.PnLPerStraddle >= m.Future*res.TPBps/10000 {
+		} else if res.TPBps > 0 && pt.PnLPerStraddle >= slBase*res.TPBps/10000 {
 			exit = "TP"
+		} else if why := simNewExit(newLogic, m, K); why != "" {
+			exit = why
 		} else if exitAt > 0 && m.HHMM >= exitAt {
 			exit = "TIME"
 		}

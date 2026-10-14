@@ -272,3 +272,37 @@ func TestPaperSim_OldHedgeRule(t *testing.T) {
 		t.Fatal("expected minute-end hedges")
 	}
 }
+
+// New logic (backtest): rounded TP, 16 bps SL on DTE row 0 with a delta
+// band, TV exit when the traded strike's OTM premium has decayed.
+func TestPaperSim_NewLogicRules(t *testing.T) {
+	if got := lutTPBpsRounded(0, 0.1449); got != 23 { // round(0.1449,2)=0.14 -> 16 + 0.5 x 14 = 23
+		t.Fatalf("rounded TP %v", got)
+	}
+	if got := lutTPBpsRounded(4, 0.0); got != 3 { // 8 + (-0.08/0.12) x 7 = 3.33 -> 3
+		t.Fatalf("TP %v", got)
+	}
+	mins := mkMinutes(10, func(i int) float64 { return 22600 })
+	r := RunPaperSim(mins, PaperSimConfig{Entry: "09:16", Lots: 1, HedgeMode: "synthetic", HedgeRule: "new"}, 65, nil)
+	if r.Config.SLBps != lutSLBpsExpiry || r.DeltaBand != 0.25 {
+		t.Fatalf("DTE row 0: SL %v band %v", r.Config.SLBps, r.DeltaBand)
+	}
+	if r := RunPaperSim(mins, PaperSimConfig{Entry: "09:16", Lots: 1, HedgeMode: "synthetic", HedgeRule: "old"}, 65, nil); r.Config.SLBps != lutSLBps || r.DeltaBand != 0 {
+		t.Fatalf("old logic must keep 14 bps and no delta band: %v %v", r.Config.SLBps, r.DeltaBand)
+	}
+	// Future runs 600 points away: the traded strike's OTM side is worth
+	// almost nothing -> TV (SL / TP out of the way).
+	far := mkMinutes(10, func(i int) float64 {
+		if i == 0 {
+			return 22600
+		}
+		return 23200
+	})
+	r = RunPaperSim(far, PaperSimConfig{Entry: "09:16", Lots: 1, HedgeMode: "off", HedgeRule: "new", SLBps: 5000, TPBps: 5000}, 65, nil)
+	if r.ExitReason != "TV" && r.ExitReason != "TV4" {
+		t.Fatalf("expected a TV exit, got %s at %s", r.ExitReason, r.ExitTime)
+	}
+	if r := RunPaperSim(far, PaperSimConfig{Entry: "09:16", Lots: 1, HedgeMode: "off", HedgeRule: "old", SLBps: 5000, TPBps: 5000}, 65, nil); r.ExitReason == "TV" || r.ExitReason == "TV4" {
+		t.Fatalf("old logic has no TV exit: %s", r.ExitReason)
+	}
+}

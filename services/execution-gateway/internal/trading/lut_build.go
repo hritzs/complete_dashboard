@@ -139,6 +139,9 @@ func lutBuildRisk(c LUTBuildConfig, rec LUTEvaluation) *BuildRiskConfig {
 	sl, tp := c.SLBps, c.TPBps
 	if sl <= 0 {
 		sl = lutSLBps
+		if rec.Tables == "new" && lutDTEIndex(rec.TradingDTE) == 0 {
+			sl = lutSLBpsExpiry // new logic: 16 bps on DTE row 0 (backtest SL_BPS_BY_DTE)
+		}
 	}
 	if tp <= 0 {
 		tp = rec.TPBps

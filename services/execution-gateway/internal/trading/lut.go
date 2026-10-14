@@ -29,10 +29,11 @@ import (
 
 // Reference parameters.
 const (
-	lutWkndAdj    = 1.0
-	lutSLBps      = 14.0
-	lutStrikeStep = 50.0
-	lutLastScan   = 1330 // hhmm
+	lutWkndAdj     = 1.0
+	lutSLBps       = 14.0
+	lutSLBpsExpiry = 16.0 // new logic, DTE row 0 (backtest SL_BPS_BY_DTE)
+	lutStrikeStep  = 50.0
+	lutLastScan    = 1330 // hhmm
 )
 
 var (
@@ -69,6 +70,7 @@ type lutSchema struct {
 	IVFloor     map[int]float64 // DTE row -> min adjusted Build IV
 	UseFinalChg bool            // IV change from the daily file's Final_IV_Chg
 	UseEvents   bool            // event days (EventDates.xlsx): nothing before 09:18, one third size
+	RoundTP     bool            // TP bps rounded to a whole number (backtest), from adj IV rounded to 2 dp
 
 	csvIV, csvStr, csvBld map[string]int
 }
@@ -133,6 +135,7 @@ var (
 		IVFloor:       map[int]float64{0: 0.12, 1: 0.12},
 		UseFinalChg:   true,
 		UseEvents:     true,
+		RoundTP:       true,
 	}).init()
 )
 
@@ -661,7 +664,7 @@ func lutRefreshTP(ev *LUTEvaluation) bool {
 	if ev == nil || ev.AdjBuildIV <= 0 || ev.TradingDTE <= 0 {
 		return false
 	}
-	tp := lutTPBps(lutDTEIndex(ev.TradingDTE), ev.AdjBuildIV)
+	tp := lutTPFor(lutSchemaByKey(ev.Tables), lutDTEIndex(ev.TradingDTE), ev.AdjBuildIV)
 	if tp == ev.TPBps {
 		return false
 	}
@@ -672,6 +675,21 @@ func lutRefreshTP(ev *LUTEvaluation) bool {
 // lutDTEIndex is the DTE row (0-6) for a trading-days-to-expiry value.
 func lutDTEIndex(trading float64) int {
 	return min(max(int(math.Ceil(trading))-1, 0), 6)
+}
+
+// lutTPBpsRounded is the backtest's TP (GammaShort_Backtest_Final.py
+// simulate_cw): max(1, round(low + (round(adj IV, 2) - 0.08) / 0.12 x (high - low))).
+func lutTPBpsRounded(dteIdx int, adjBuildIV float64) float64 {
+	fraction := (math.Round(adjBuildIV*100)/100 - 0.08) / 0.12
+	return math.Max(1, math.Round(lutTPLow[dteIdx]+fraction*(lutTPHigh[dteIdx]-lutTPLow[dteIdx])))
+}
+
+// lutTPFor: the TP of a table set (rounded for the new set).
+func lutTPFor(sc *lutSchema, dteIdx int, adjBuildIV float64) float64 {
+	if sc != nil && sc.RoundTP {
+		return lutTPBpsRounded(dteIdx, adjBuildIV)
+	}
+	return lutTPBps(dteIdx, adjBuildIV)
 }
 
 // lutTPBps interpolates TP by adj build IV between the DTE row's low/high.
@@ -791,7 +809,7 @@ func EvaluateLUTMinute(set LUTSet, in LUTDailyInputs, normOG float64, isEvent bo
 	} else if fl, ok := sc.IVFloor[dteIdx]; ok && ev.AdjBuildIV < fl {
 		ruleSkip = fmt.Sprintf("Build IV floor: %.4f < %.2f on DTE %d", ev.AdjBuildIV, fl, dteIdx+1)
 	}
-	ev.TPBps = lutTPBps(dteIdx, ev.AdjBuildIV)
+	ev.TPBps = lutTPFor(sc, dteIdx, ev.AdjBuildIV)
 	ev.DTELabel = lutDTELabels[ev.Coord[0]]
 	ev.IVLabel = sc.IVLabels[ev.Coord[1]]
 	ev.StrLabel = sc.StrLabels[ev.Coord[2]]

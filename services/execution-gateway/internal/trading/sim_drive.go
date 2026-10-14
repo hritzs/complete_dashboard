@@ -73,18 +73,19 @@ func simEventAge(t string) int64 {
 }
 
 type simDriver struct {
-	TradeUID string           `json:"trade_uid"`
-	Entry    string           `json:"entry"`
-	Started  string           `json:"started"`
-	LastRun  time.Time        `json:"last_run"`
-	SimState string           `json:"sim_status"`
-	SimPnL   float64          `json:"sim_pnl_per_qty"`
-	RunMs    int64            `json:"run_ms"` // last simulation pass
-	Error    string           `json:"error,omitempty"`
-	Actions  []SimDriveAction `json:"actions"`
-	seen     map[string]bool
-	exited   bool
-	day      string
+	TradeUID  string           `json:"trade_uid"`
+	Entry     string           `json:"entry"`
+	Started   string           `json:"started"`
+	LastRun   time.Time        `json:"last_run"`
+	SimState  string           `json:"sim_status"`
+	SimPnL    float64          `json:"sim_pnl_per_qty"`
+	RunMs     int64            `json:"run_ms"` // last simulation pass
+	Error     string           `json:"error,omitempty"`
+	Actions   []SimDriveAction `json:"actions"`
+	seen      map[string]bool
+	exited    bool
+	deltaBand float64 // the simulation's delta band (new logic, DTE rows 0 / 1)
+	day       string
 }
 
 var simDrive = struct {
@@ -264,6 +265,7 @@ func (s *Service) simDriveTick() {
 
 	simDrive.mu.Lock()
 	d.LastRun, d.SimState, d.SimPnL, d.Error = time.Now(), res.Status, res.PnLPerStraddle, res.Error
+	d.deltaBand = res.DeltaBand
 	d.RunMs = time.Since(t0).Milliseconds()
 	if res.Error != "" {
 		simDrive.mu.Unlock()
@@ -310,6 +312,9 @@ func (s *Service) simDriveHedge(d *simDriver, tr StoredTrade, run LUTBuildRun, h
 			eff := math.Max(snap.PointsAllowed, snap.Underlying*resolveHedgeMinThresholdBps(tr.Config.HedgeMinThresholdBps)/10000)
 			if run.SimPointsAllowed > 0 {
 				eff = run.SimPointsAllowed // test band, as in its simulation
+			} else if band := d.deltaBand; band > 0 && snap.NetGamma != 0 {
+				// new logic, DTE rows 0 / 1: the band is |delta| per straddle unit
+				eff = band * float64(tr.Lots*tr.LotSize) / math.Abs(snap.NetGamma)
 			}
 			frac = rule.minuteFrac(snap.PointsOut, eff)
 			how = fmt.Sprintf("live points out %.1f -> %.1f (25%% of allowed %.1f)", snap.PointsOut, hedgeLeaveBand*eff, eff)
@@ -343,8 +348,12 @@ func (s *Service) simDriveHedge(d *simDriver, tr StoredTrade, run LUTBuildRun, h
 
 func (s *Service) simDriveExit(d *simDriver, uid string, res PaperSimResult) {
 	reason := res.ExitReason
-	status := map[string]string{"SL": "CLOSED_SL", "TP": "CLOSED_TP", "TIME": "CLOSED_TIME"}[reason]
-	if status == "" {
+	status := map[string]string{"SL": "CLOSED_SL", "TP": "CLOSED_TP", "TIME": "CLOSED_TIME", "MTM_SQF": "CLOSED_MTM",
+		"TV": "CLOSEDSQF", "TV4": "CLOSEDSQF", "IV_DROP": "CLOSEDSQF"}[reason]
+	switch {
+	case reason == "MTM_SQF":
+		reason = "MTM"
+	case status == "":
 		reason, status = "MTM", "CLOSED_MTM"
 	}
 	a := SimDriveAction{At: time.Now().In(lutIST()).Format("15:04:05.000"), SimTime: res.ExitTime, Kind: "EXIT", Reason: res.ExitReason,
