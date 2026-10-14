@@ -450,7 +450,30 @@ func (s *Service) sbExecuteLiveAsync(r *sbRunner, plan DepthEntryPlan, atm Optio
 			for _, leg := range legs {
 				orders[leg] = order{qty: min(left(leg)/lot*lot, maxQ), lim: limits[leg]}
 			}
-			got := send(orders, "")
+			// Never one leg ahead (2026-10-14: PE 2210 filled while every CE
+			// IOC cancelled -> +999 delta): the leg more likely to miss goes
+			// first, its partner follows for exactly what it filled at the
+			// plan's CE:PE ratio. Nothing filled -> nothing sent.
+			var got map[string]int64
+			if anchor, partner, ok := sbAnchorLeg(legs, limits, bestBid); ok && plan.CEQty > 0 && plan.PEQty > 0 {
+				got = send(map[string]order{anchor: orders[anchor]}, "")
+				if stopWhy != "" {
+					break
+				}
+				ratio := float64(plan.PEQty) / float64(plan.CEQty)
+				if partner == "CE" {
+					ratio = 1 / ratio
+				}
+				if pq := min(int64(float64(got[anchor])*ratio)/lot*lot, left(partner)/lot*lot, maxQ); pq >= lot {
+					pg := send(map[string]order{partner: {qty: pq, lim: limits[partner]}}, "")
+					got[partner] = pg[partner]
+					orders[partner] = order{qty: pq, lim: limits[partner]}
+				} else {
+					orders[partner] = order{}
+				}
+			} else {
+				got = send(orders, "")
+			}
 			if stopWhy != "" {
 				break
 			}
@@ -521,6 +544,26 @@ func (s *Service) sbExecuteLiveAsync(r *sbRunner, plan DepthEntryPlan, atm Optio
 		r.persistLocked()
 		r.mu.Unlock()
 	}()
+}
+
+// sbAnchorLeg picks which of two legs goes first: the one whose limit sits
+// closest to its best bid (the least room, the likelier to miss). ok=false
+// when fewer than two legs are being sent.
+func sbAnchorLeg(legs []string, limits, best map[string]float64) (anchor, partner string, ok bool) {
+	if len(legs) != 2 {
+		return "", "", false
+	}
+	room := func(leg string) float64 {
+		if best[leg] <= 0 {
+			return 0
+		}
+		return (best[leg] - limits[leg]) / best[leg]
+	}
+	a, b := legs[0], legs[1]
+	if room(b) < room(a) {
+		a, b = b, a
+	}
+	return a, b, true
 }
 
 // sbCompletionLimit: the lagging leg's IOC limit, more marketable on each

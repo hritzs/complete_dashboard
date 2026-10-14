@@ -143,6 +143,7 @@ func (s *Service) sbFollowHandedOffLocked(r *sbRunner) {
 		return
 	}
 	r.followAt = time.Now()
+	s.sbClearWrongPartialLocked(r)
 	tr, ok := s.Store.LoadTrade(r.tradeUID)
 	if !ok || !isTerminalTradeStatus(tr.Status) {
 		return
@@ -150,4 +151,27 @@ func (s *Service) sbFollowHandedOffLocked(r *sbRunner) {
 	r.phase = "EXITED"
 	r.event("EXIT", "trade %s closed by the standard monitor (%s, realized ₹%.2f) -- build finished", tr.TradeUID, tr.Status, tr.RealizedPnL)
 	r.persistLocked()
+}
+
+// sbClearWrongPartialLocked: a handed-off trade marked partial although
+// its build was complete (2026-10-14 13:20: a multi-strike hand-off counted
+// only the main legs) has the flag cleared. Under the trade's lock, so the
+// monitor's own writes are not overwritten. Caller holds r.mu.
+func (s *Service) sbClearWrongPartialLocked(r *sbRunner) {
+	if r.phase != sbPhaseHandedOff || r.tradeUID == "" || r.cfg.Straddles <= 0 {
+		return
+	}
+	v := r.pms.View(r.chain)
+	if int64(v.BuildCE+v.BuildPE) < 2*int64(r.cfg.Straddles) {
+		return // really partial
+	}
+	defer s.lockTrade(r.tradeUID)()
+	tr, ok := s.Store.LoadTrade(r.tradeUID)
+	if !ok || !tr.Config.PartialFill {
+		return
+	}
+	tr.Config.PartialFill, tr.Config.RequestedCEQty, tr.Config.RequestedPEQty = false, 0, 0
+	tr.LastUpdateTime = time.Now()
+	s.Store.UpdateTrade(tr)
+	log.Printf("[SBUILD-LIVE] rule=%s trade=%s: build was complete (CE %d + PE %d of 2 x %d) -- 'partial' flag cleared", r.cfg.ID, r.tradeUID, v.BuildCE, v.BuildPE, r.cfg.Straddles)
 }

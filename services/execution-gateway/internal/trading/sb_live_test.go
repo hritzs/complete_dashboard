@@ -197,3 +197,15 @@ func TestSBCompletionLotsCoversTheImbalance(t *testing.T) {
 		t.Fatalf("min 1: %d", got)
 	}
 }
+
+// The leg with the least room between its limit and its best bid goes
+// first; its partner follows for what it filled.
+func TestSBAnchorLeg(t *testing.T) {
+	a, p, ok := sbAnchorLeg([]string{"CE", "PE"}, map[string]float64{"CE": 140.10, "PE": 158.00}, map[string]float64{"CE": 140.15, "PE": 160.45})
+	if !ok || a != "CE" || p != "PE" {
+		t.Fatalf("CE has 0.04%% room, PE 1.5%%: CE first, got %s then %s", a, p)
+	}
+	if _, _, ok := sbAnchorLeg([]string{"PE"}, nil, nil); ok {
+		t.Fatal("one leg: no anchor")
+	}
+}
