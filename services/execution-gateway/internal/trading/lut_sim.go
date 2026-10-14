@@ -164,6 +164,8 @@ type lutEngine struct {
 	sc           *lutSchema // table set driving the day (fixed per day, lut_alt.go)
 	set          LUTSet
 	alt          *lutAlt // the other table set, shown and recorded beside
+	secLast      int64   // unix second last written to <day>_sec.csv (lut_seconds.go)
+	secBuf       []byte
 	tablesLoaded bool
 	tablesErr    string
 	tablesTried  time.Time
@@ -266,6 +268,10 @@ func (s *Service) StartLUTEngine() {
 
 // lutNewDay resets per-day state and (re)loads the tables.
 func (e *lutEngine) newDay(day string) {
+	if e.day != "" && e.day != day {
+		e.flushSecondsLocked(e.day)
+	}
+	e.secLast, e.secBuf = 0, nil
 	e.day = day
 	e.inputsOK, e.inputsErr, e.inputsTried = false, "", time.Time{}
 	e.u0916, e.ogSource = 0, ""
@@ -455,6 +461,7 @@ func (s *Service) lutComputeLocked(now time.Time, day string, hhmm int, chain *O
 
 	if chain != nil {
 		e.noteLTPs(now, chain)
+		e.noteSecond(now, day, lutUnderlying(chain))
 		if e.expiry != chain.Expiry {
 			e.expiry = chain.Expiry
 		}

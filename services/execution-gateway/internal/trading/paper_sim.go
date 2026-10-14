@@ -136,7 +136,7 @@ type PaperSimHedge struct {
 	Allowed     float64 `json:"allowed"`
 	Future      float64 `json:"future"`
 	Mode        string  `json:"mode"`          // synthetic / lots
-	Kind        string  `json:"kind"`          // ENTRY_NEUTRAL / RISK_BREACH / ATM_LOTS
+	Kind        string  `json:"kind"`          // ENTRY_NEUTRAL / RISK_BREACH / ATM_LOTS / INTRA_MINUTE
 	OldHedge    float64 `json:"old_hedge_qty"` // synthetic: per qty of the straddle
 	NewHedge    float64 `json:"new_hedge_qty"`
 	FutQty      float64 `json:"fut_contracts"` // synthetic: contracts traded
@@ -201,6 +201,7 @@ type simMinute struct {
 	Expiry        string
 	Ts            string // exact time the minute's prices were recorded
 	hasLUT        bool
+	secs          []simSec // the minute's seconds :01-:59 (lut_seconds.go), current expiry only
 	hasChainSpots bool
 	imported      bool // every chain row of this minute came from an import
 }
@@ -331,8 +332,13 @@ func lutLoadSimSet(day, set string) []simMinute {
 			}
 		}
 	}
+	var secs map[int][]simSec
+	if set == "" {
+		secs = lutLoadSeconds(day)
+	}
 	for i := range out {
 		m := &out[i]
+		m.secs = secs[m.HHMM]
 		if m.TPBps <= 0 && m.IV > 0 && m.DTE > 0 {
 			idx := int(math.Ceil(m.DTE)) - 1
 			if idx < 0 {
@@ -704,6 +710,81 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 		}
 	}
 
+	// intraMinute replays the live monitor's intra-minute check on the
+	// minute's recorded seconds: the position is revalued at each second's
+	// future (each leg at its own IV of the minute), and the first second
+	// with points out > 1.2 x allowed hedges the complete delta -- once per
+	// minute, as live. The hedge is marked on the minute's row.
+	intraMinute := func(m simMinute) {
+		if c.HedgeMode == "off" || len(m.secs) == 0 || len(res.Series) == 0 {
+			return
+		}
+		ref := book.value(m, q)
+		hedgeCheck(m, &ref)
+		allowed := ref.PointsAllowed // effective (with the bps floor) at the minute's open
+		T := math.Max(m.DTE/365, 1e-5)
+		ivs := map[string]float64{}
+		for k, l := range book.legs {
+			if l.qty != 0 {
+				_, _, _, _, _, iv, _ := simGreeks(m, l.K, l.opt)
+				ivs[k] = iv
+			}
+		}
+		for _, s := range m.secs {
+			nd, ng := book.futQty, 0.0
+			for k, l := range book.legs {
+				if l.qty == 0 || ivs[k] <= 0 {
+					continue
+				}
+				_, d, g := simBlack76(l.opt == "CE", s.F, l.K, T, ivs[k])
+				nd += float64(l.qty) * d
+				ng += float64(l.qty) * g
+			}
+			if ng == 0 {
+				continue
+			}
+			out := math.Abs(nd / ng)
+			d := decideHedge(hedgeDecisionInput{PointsOut: out, PointsAllowed: allowed, Spot: s.F, NetDelta: nd,
+				LotSize: lotSize, TradeLots: int64(c.Lots), MinThresholdBps: c.HedgeMinBps, Mult: hedgeIntraMult, Frac: hedgeIntraFrac})
+			if c.HedgeMode != "lots" {
+				if out <= hedgeIntraMult*d.EffectiveAllowed || math.Abs(nd) < 1e-9 {
+					continue
+				}
+				old := book.futQty
+				book.fillFut(-nd, s.F)
+				res.Hedges = append(res.Hedges, PaperSimHedge{Time: s.T, Mode: "synthetic", Kind: "INTRA_MINUTE", Qty: int64(math.Round(-nd)), FutQty: -nd,
+					OldHedge: old / float64(q), NewHedge: book.futQty / float64(q), CEPrice: s.F, DeltaBefore: nd, DeltaAfter: 0,
+					PointsOut: out, Allowed: d.EffectiveAllowed, Future: s.F, Source: "seconds"})
+				res.Series[len(res.Series)-1].Event = strings.TrimSpace(res.Series[len(res.Series)-1].Event + fmt.Sprintf(
+					" · INTRA-MINUTE %s: out %.1f > 1.2 x %.1f -> complete delta %+.2f hedged (%+.2f fut @%.2f)", s.T, out, d.EffectiveAllowed, nd, -nd, s.F))
+				return
+			}
+			if !d.Hedge || d.Lots <= 0 {
+				continue
+			}
+			ceSide, peSide, ok := hedgeSidesFromSignedDelta(nd)
+			if !ok {
+				continue
+			}
+			atm := math.Round(s.F/lutStrikeStep) * lutStrikeStep
+			_, _, _, _, _, ivATM, _ := simGreeks(m, atm, "CE")
+			if ivATM <= 0 {
+				ivATM = m.IV
+			}
+			cpx, _, _ := simBlack76(true, s.F, atm, T, ivATM)
+			ppx, _, _ := simBlack76(false, s.F, atm, T, ivATM)
+			hq := d.Lots * lotSize
+			book.fill("HEDGE", atm, "CE", ceSide, hq, cpx)
+			book.fill("HEDGE", atm, "PE", peSide, hq, ppx)
+			after := nd + float64(hq)*map[bool]float64{true: 1, false: -1}[ceSide == "BUY"]
+			res.Hedges = append(res.Hedges, PaperSimHedge{Time: s.T, Mode: "lots", Kind: "INTRA_MINUTE", Strike: atm, CESide: ceSide, PESide: peSide, Lots: d.Lots, Qty: hq,
+				CEPrice: cpx, PEPrice: ppx, DeltaBefore: nd, DeltaAfter: after, PointsOut: out, Allowed: d.EffectiveAllowed, Future: s.F, Source: "seconds+bs"})
+			res.Series[len(res.Series)-1].Event = strings.TrimSpace(res.Series[len(res.Series)-1].Event + fmt.Sprintf(
+				" · INTRA-MINUTE %s: out %.1f > 1.2 x %.1f -> %d lot(s) %s CE / %s PE @%.0f (complete delta %+.1f)", s.T, out, d.EffectiveAllowed, d.Lots, ceSide, peSide, atm, nd))
+			return
+		}
+	}
+
 	res.Status = "OPEN"
 	for i := i0; i < len(mins); i++ {
 		m := mins[i]
@@ -734,6 +815,7 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 			}
 			hedgeCheck(m, &pt)
 			res.Series = append(res.Series, pt)
+			intraMinute(m)
 			continue
 		}
 		exit := ""
@@ -834,6 +916,7 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 			break
 		}
 		res.Series = append(res.Series, pt)
+		intraMinute(m)
 	}
 	if n := len(res.Series); n > 0 {
 		last := res.Series[n-1]

@@ -3,6 +3,7 @@ package trading
 import (
 	"fmt"
 	"math"
+	"os"
 	"testing"
 )
 
@@ -184,5 +185,51 @@ func TestLoadSimSet_NextExpiry(t *testing.T) {
 	}
 	if r2 := RunPaperSim(mins, PaperSimConfig{Entry: "09:16", Lots: 1}, 1, nil); r2.Error == "" {
 		t.Fatal("09:16 entry with data only from 09:40 must report no data")
+	}
+}
+
+// Intra-minute: a jump inside a minute (recorded seconds) beyond 1.2 x
+// allowed hedges the complete delta at that second, once in the minute,
+// in both hedge modes.
+func TestPaperSim_IntraMinuteHedge(t *testing.T) {
+	for _, mode := range []string{"synthetic", "lots"} {
+		mins := mkMinutes(5, func(i int) float64 { return 22600 })
+		for s := 1; s < 60; s++ {
+			f := 22600.0
+			if s >= 30 {
+				f = 22750 // +150 points at 09:17:30
+			}
+			mins[1].secs = append(mins[1].secs, simSec{T: fmt.Sprintf("09:17:%02d", s), F: f})
+		}
+		r := RunPaperSim(mins, PaperSimConfig{Entry: "09:16", Lots: 10, HedgeMode: mode, SLBps: 500}, 65, nil)
+		var intra []PaperSimHedge
+		for _, h := range r.Hedges {
+			if h.Kind == "INTRA_MINUTE" {
+				intra = append(intra, h)
+			}
+		}
+		if len(intra) != 1 || intra[0].Time != "09:17:30" || intra[0].PointsOut <= hedgeIntraMult*intra[0].Allowed {
+			t.Fatalf("%s: want one intra hedge at 09:17:30, got %+v", mode, intra)
+		}
+		if mode == "synthetic" && math.Abs(intra[0].FutQty+intra[0].DeltaBefore) > 1e-6 {
+			t.Fatalf("synthetic intra must take the complete delta: %+v", intra[0])
+		}
+	}
+	// No seconds recorded: no intra-minute hedge.
+	r := RunPaperSim(mkMinutes(5, func(i int) float64 { return 22600 }), PaperSimConfig{Entry: "09:16", Lots: 10, HedgeMode: "synthetic", SLBps: 500}, 65, nil)
+	for _, h := range r.Hedges {
+		if h.Kind == "INTRA_MINUTE" {
+			t.Fatalf("unexpected %+v", h)
+		}
+	}
+}
+
+func TestLUTLoadSeconds(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("LUT_DATA_DIR", dir)
+	_ = os.WriteFile(lutSecFile("2026-10-14"), []byte("09:15:00,1\n09:15:01,22600.5\n09:15:01,22601\n09:16:59,22610\nbad\n"), 0o644)
+	got := lutLoadSeconds("2026-10-14")
+	if len(got[915]) != 1 || got[915][0].F != 22600.5 || len(got[916]) != 1 {
+		t.Fatalf("%+v", got)
 	}
 }
