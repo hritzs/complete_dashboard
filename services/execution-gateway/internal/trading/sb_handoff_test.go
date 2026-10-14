@@ -48,16 +48,30 @@ func TestSBHandOff_PlainStraddleBecomesNormalTrade(t *testing.T) {
 	}
 }
 
-func TestSBHandOff_HedgeLegStaysWithBuild(t *testing.T) {
+// A build with a hedge leg, or spread over two strikes, is handed off too:
+// the largest short CE / PE are the main legs, the rest ride as extra legs
+// (trade_legs) and the lot count covers the whole position.
+func TestSBHandOff_HedgeAndSecondStrikeHandedOff(t *testing.T) {
 	s, r := handoffRunner(t)
-	r.pms.ApplyFill(PMSFill{Token: 1, Strike: 22700, OptionType: "CE", Side: "SELL", Qty: 65, Price: 100, Role: "BUILD"})
+	r.pms.ApplyFill(PMSFill{Token: 1, Strike: 22700, OptionType: "CE", Side: "SELL", Qty: 130, Price: 100, Role: "BUILD"})
 	r.pms.ApplyFill(PMSFill{Token: 2, Strike: 22700, OptionType: "PE", Side: "SELL", Qty: 65, Price: 90, Role: "BUILD"})
+	r.pms.ApplyFill(PMSFill{Token: 4, Strike: 22650, OptionType: "PE", Side: "SELL", Qty: 65, Price: 70, Role: "BUILD"})
 	r.pms.ApplyFill(PMSFill{Token: 3, Strike: 22750, OptionType: "CE", Side: "BUY", Qty: 65, Price: 80, Role: "HEDGE"})
-	if s.sbHandOffLocked(r) {
-		stopRuntime(s, "SB-T-1")
-		t.Fatal("a build with a hedge leg must stay with its own monitor")
+	if !s.sbHandOffLocked(r) {
+		t.Fatal("expected hand-off of a multi-strike build with a hedge")
 	}
-	if r.phase != "COMPLETE" {
+	defer stopRuntime(s, "SB-T-1")
+	tr, _ := s.Store.LoadTrade("SB-T-1")
+	if tr.CEToken != 1 || tr.CEQty != 130 || tr.Status != "ACTIVE" {
+		t.Fatalf("main CE must be the largest short CE: %+v", tr)
+	}
+	if tr.PEQty != 65 || (tr.PEToken != 2 && tr.PEToken != 4) {
+		t.Fatalf("main PE must be a short PE: %+v", tr)
+	}
+	if tr.Lots != 2 || tr.Config.PartialFill { // shorts 130 + 65 + 65 = 260 = 2 x 130
+		t.Fatalf("lots %d partial %v: the whole position counts", tr.Lots, tr.Config.PartialFill)
+	}
+	if r.phase != sbPhaseHandedOff {
 		t.Fatalf("phase %s", r.phase)
 	}
 }

@@ -9,9 +9,11 @@ package trading
 // on. The build's own runner stops monitoring (phase HANDED_OFF), so exactly
 // one monitor owns the position.
 //
-// Only a plain straddle is handed off: one short CE token + one short PE
-// token. A build spread over several strikes (ATM moved) or carrying hedge
-// legs stays with the build's own monitor (logged once).
+// A build spread over several strikes (ATM moved) or carrying hedge legs is
+// handed off too: its largest short CE and PE legs become the trade's main
+// legs and every other open leg is carried as an extra leg (trade_legs --
+// the standard monitor folds them into delta / PnL / SL / TP and closes them
+// with the trade, as it does for hedges at a moved ATM).
 
 import (
 	"fmt"
@@ -34,24 +36,22 @@ func (s *Service) sbHandOffLocked(r *sbRunner) bool {
 	}
 	var ce, pe *PMSLeg
 	why := ""
+	var shortQty int64 // every short leg, all strikes: the position's size
 	for i := range v.Legs {
 		l := v.Legs[i]
-		if l.Qty == 0 {
-			continue
+		if l.Qty >= 0 {
+			continue // flat, or long (a hedge): an extra leg
 		}
+		shortQty += -l.Qty
 		switch {
-		case l.Qty > 0:
-			why = fmt.Sprintf("long %s %.0f leg (a hedge) is open", l.OptionType, l.Strike)
-		case l.OptionType == "CE" && ce == nil:
+		case l.OptionType == "CE" && (ce == nil || l.Qty < ce.Qty):
 			ce = &v.Legs[i]
-		case l.OptionType == "PE" && pe == nil:
+		case l.OptionType == "PE" && (pe == nil || l.Qty < pe.Qty):
 			pe = &v.Legs[i]
-		default:
-			why = fmt.Sprintf("more than one %s strike is open", l.OptionType)
 		}
 	}
-	if why == "" && (ce == nil || pe == nil) {
-		why = "only one leg is open"
+	if ce == nil || pe == nil {
+		why = "no short CE and short PE both open"
 	}
 	if why != "" {
 		if !r.handoffNoted {
@@ -70,11 +70,17 @@ func (s *Service) sbHandOffLocked(r *sbRunner) bool {
 		return false
 	}
 	tr.Strike = (ce.Strike + pe.Strike) / 2
+	extras := 0
+	for _, l := range v.Legs {
+		if l.Qty != 0 && l.Token != ce.Token && l.Token != pe.Token {
+			extras++
+		}
+	}
 	tr.CEToken, tr.PEToken = ce.Token, pe.Token
 	tr.CEQty, tr.PEQty = int(-ce.Qty), int(-pe.Qty)
 	tr.CELtp, tr.PELtp = ce.AvgPrice, pe.AvgPrice
 	tr.LotSize = lot
-	tr.Lots = (tr.CEQty + tr.PEQty) / (2 * lot)
+	tr.Lots = int(shortQty) / (2 * lot) // the whole position, extra strikes included
 	if tr.Lots <= 0 {
 		tr.Lots = 1
 	}
@@ -92,7 +98,7 @@ func (s *Service) sbHandOffLocked(r *sbRunner) bool {
 	// legs are rarely equal (CE 585 + PE 715 of 650 is complete): partial
 	// only when the total is short.
 	target := int(cfg.Straddles)
-	if tr.CEQty+tr.PEQty < 2*target {
+	if int(shortQty) < 2*target { // the whole position, not just the main legs
 		tr.Config.PartialFill = true
 		tr.Config.RequestedCEQty, tr.Config.RequestedPEQty = target, target
 	}
@@ -119,8 +125,8 @@ func (s *Service) sbHandOffLocked(r *sbRunner) bool {
 	s.startRuntime(tr)
 
 	r.phase = sbPhaseHandedOff
-	r.event("HANDOFF", "position handed to the STANDARD monitor as trade %s: CE %d @%.2f + PE %d @%.2f at %.0f (%d lots%s), SL %.0f bps, TP %.0f bps, exit %s, straddle/hedge div %.0f/%.0f -- it now shows as a normal Portfolio trade (Hedge / Partial Exit / Full Exit there); this build stops monitoring",
-		tr.TradeUID, tr.CEQty, tr.CELtp, tr.PEQty, tr.PELtp, tr.Strike, tr.Lots, map[bool]string{true: ", PARTIAL of " + fmt.Sprint(target), false: ""}[tr.Config.PartialFill],
+	r.event("HANDOFF", "position handed to the STANDARD monitor as trade %s: main CE %d @%.2f + PE %d @%.2f at %.0f (%d lots%s, %d extra leg(s) at other strikes / hedges carried with it), SL %.0f bps, TP %.0f bps, exit %s, straddle/hedge div %.0f/%.0f -- it now shows as a normal Portfolio trade (Hedge / Partial Exit / Full Exit there); this build stops monitoring",
+		tr.TradeUID, tr.CEQty, tr.CELtp, tr.PEQty, tr.PELtp, tr.Strike, tr.Lots, map[bool]string{true: ", PARTIAL of " + fmt.Sprint(target), false: ""}[tr.Config.PartialFill], extras,
 		cfg.SLBps, cfg.TPBps, cfg.ExitTime, tr.Config.StraddleDiv, tr.Config.HedgeDiv)
 	log.Printf("[SBUILD-LIVE] rule=%s trade=%s HANDED OFF to the standard monitor: CE %d / PE %d, net delta %.2f, sold straddle %.2f",
 		cfg.ID, tr.TradeUID, tr.CEQty, tr.PEQty, v.NetDelta, math.Round(v.BuildStraddle*100)/100)
