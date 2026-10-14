@@ -1100,15 +1100,20 @@ func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 	for _, t := range []string{"09:16", "09:17", "09:18", "09:19"} {
 		cfgs = append(cfgs, PaperSimConfig{ID: "AUTO-" + t, Source: "sell at " + t, Entry: t, Lots: lots, Hedge: hedge, HedgeMode: hedgeMode})
 	}
-	// Each table set's first YES of the day (old and new side by side).
+	// LUT logic shown (?tables=old|new, blank = the set driving the day):
+	// its answers on every minute and its first YES as a sim; the other
+	// set's answer is shown beside.
 	sets := lutLoadDaySets(day)
-	if view == "" {
-		for _, fy := range []struct{ key, t string }{{sets.Tables, sets.FirstYes}, {sets.AltTables, sets.AltFirstYes}} {
-			if fy.t != "" {
-				cfgs = append(cfgs, PaperSimConfig{ID: "LUT-" + strings.ToUpper(fy.key), Source: "first YES, " + lutSchemaByKey(fy.key).Name,
-					Entry: fy.t, Lots: lots, Hedge: hedge, HedgeMode: hedgeMode})
-			}
+	if want := r.URL.Query().Get("tables"); want != "" && want == sets.AltTables {
+		sets.Tables, sets.AltTables = sets.AltTables, sets.Tables
+		sets.FirstYes, sets.AltFirstYes = sets.AltFirstYes, sets.FirstYes
+		for i := range mins {
+			mins[i].Answer, mins[i].AnswerAlt = mins[i].AnswerAlt, mins[i].Answer
 		}
+	}
+	if view == "" && sets.FirstYes != "" {
+		cfgs = append(cfgs, PaperSimConfig{ID: "LUT-" + strings.ToUpper(sets.Tables), Source: "first YES, " + lutSchemaByKey(sets.Tables).Name,
+			Entry: sets.FirstYes, Lots: lots, Hedge: hedge, HedgeMode: hedgeMode})
 	}
 	paperMu.Lock()
 	starts := loadPaperStarts(day)

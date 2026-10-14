@@ -180,7 +180,7 @@ function SimDetail(props) {
             Short {fmt(s().strike, 0)} straddle @ {fmt(s().entry_straddle)} <span style={S.muted}>· {s().entry_time}</span>
           </span>
           <span style={S.muted}>
-            {data()?.tables || 'LUT'} tables {s().lut_answer || '—'}{s().lut_answer_alt ? ` · ${data()?.alt_tables || 'other'} tables ${s().lut_answer_alt}` : ''} · qty {s().qty} · hedge {s().config.hedge_mode} · {SRC[cur().source] || cur().source || '—'}
+            {props.tables || 'LUT'} tables {s().lut_answer || '—'}{s().lut_answer_alt ? ` · ${props.altTables || 'other'} tables ${s().lut_answer_alt}` : ''} · qty {s().qty} · hedge {s().config.hedge_mode} · {SRC[cur().source] || cur().source || '—'}
             {s().exit_reason ? ` · exit ${s().exit_reason} ${s().exit_time}` : ''}{isLive() ? ` · live ${cur().time}` : ''}
           </span>
           <Show when={s().error}><span class="negative" style={{ 'font-size': '12px' }}>{s().error}</span></Show>
@@ -313,6 +313,9 @@ function SimDetail(props) {
 export default function PaperSimTab() {
   const [day, setDay] = createSignal(today());
   const [view, setView] = createSignal('current');
+  // Which LUT table set's answers and first YES are shown ('' = the set
+  // driving the day). Both are recorded every minute.
+  const [tables, setTables] = createSignal('');
   const [size, setSize] = createSignal('1');
   const [hedge, setHedge] = createSignal('synthetic');
   // MTM square-off, applied to every simulated build; remembered per browser.
@@ -342,7 +345,7 @@ export default function PaperSimTab() {
     busy = true;
     try {
       const n = Math.max(1, Number(size()) || 1);
-      const d = await (await fetch(`/api/paper/sim?day=${day()}&expiry=${view()}&lots=${n}&size=${n}&hedge=${hedge()}${mtmQuery()}`)).json();
+      const d = await (await fetch(`/api/paper/sim?day=${day()}&expiry=${view()}&lots=${n}&size=${n}&hedge=${hedge()}&tables=${tables()}${mtmQuery()}`)).json();
       if (d.success) {
         for (const s of d.sims || []) colorOf(s.config.id);
         setData(d);
@@ -407,6 +410,7 @@ export default function PaperSimTab() {
 
       <div style={{ display: 'flex', gap: '14px', 'flex-wrap': 'wrap', 'align-items': 'flex-end', padding: '4px 0 2px' }}>
         <Field label="Day"><input class="symbol-select" type="date" value={day()} onChange={(e) => { setDay(e.currentTarget.value); load(); }} /></Field>
+        <Field label="LUT logic"><Seg value={tables() || data()?.tables || 'old'} onChange={reload(setTables)} options={[['old', 'Old tables'], ['new', 'New tables (backtest)']]} /></Field>
         <Field label="Expiry"><Seg value={view()} onChange={reload(setView)} options={[['current', 'Current'], ['next', 'Next week']]} /></Field>
         <Field label="Size (qty)"><input class="symbol-select" style={{ width: '90px' }} type="text" inputmode="decimal" min="1" value={size()} onInput={(e) => setSize(e.currentTarget.value)} onChange={load} title="1 = one straddle (per-qty values); 65 = one NIFTY lot" /></Field>
         <Field label="Hedge"><Seg value={hedge()} onChange={reload(setHedge)} options={[['synthetic', 'Synthetic'], ['lots', 'ATM lots'], ['off', 'Off']]} /></Field>
@@ -447,7 +451,7 @@ export default function PaperSimTab() {
           <div style={{ display: 'flex', 'justify-content': 'flex-end', 'margin-top': '6px' }}>
             <button class="tab-btn" onClick={() => remove(sel())} title={String(sel()).startsWith('PAPER-') ? 'Delete this paper trade' : 'Hide this simulation for this day (Overview → Show hidden brings it back)'}>Remove</button>
           </div>
-          <SimDetail sim={simById(sel())} color={colorOf(sel())} />
+          <SimDetail sim={simById(sel())} color={colorOf(sel())} tables={data()?.tables} altTables={data()?.alt_tables} />
         </Show>
 
         <Show when={sel() === 'overview'}>

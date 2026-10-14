@@ -661,18 +661,19 @@ export default function LutBuildTab() {
         </div>
       </div>
 
-      <div style={{ ...box, display: 'flex', gap: '14px', 'align-items': 'center', 'flex-wrap': 'wrap', border: tset() === 'alt' ? '1px solid #ffb74d' : box.border }}>
-        <strong>Tables shown:</strong>
-        <label style={{ cursor: 'pointer' }}>
-          <input type="radio" name="lut-tset" checked={tset() === 'main'} onChange={() => switchSet('main')} />{' '}
-          {raw()?.tables_name || raw()?.tables || 'driving set'} <span style={muted}>— drives today (paper entry, armed build)</span>
-        </label>
+      <div style={{ display: 'flex', gap: '8px', 'align-items': 'center', 'flex-wrap': 'wrap', margin: '6px 0 10px' }}>
+        <span style={muted}>LUT logic:</span>
+        <button class={`tab-btn ${tset() === 'main' ? 'active' : ''}`} onClick={() => switchSet('main')}
+          title="drives today: its first YES is the paper entry and fires the armed build">
+          {raw()?.tables === 'new' ? 'New tables (backtest)' : 'Old tables'} · drives today
+        </button>
         <Show when={raw()?.alt}>
-          <label style={{ cursor: 'pointer' }}>
-            <input type="radio" name="lut-tset" checked={tset() === 'alt'} onChange={() => switchSet('alt')} />{' '}
-            {raw().alt.name} <span style={muted}>— shown and recorded beside, never executed</span>
-          </label>
+          <button class={`tab-btn ${tset() === 'alt' ? 'active' : ''}`} onClick={() => switchSet('alt')}
+            title="shown and recorded beside on the same prices, never executed">
+            {raw().alt.tables === 'new' ? 'New tables (backtest)' : 'Old tables'} · shown beside, never executed
+          </button>
         </Show>
+        <Show when={tset() === 'alt'}><span style={{ color: '#ffb74d', 'font-size': '12px' }}>Showing the set that is NOT driving today</span></Show>
       </div>
 
       <div style={{ display: 'flex', gap: '12px', 'flex-wrap': 'wrap', 'align-items': 'flex-end' }}>
