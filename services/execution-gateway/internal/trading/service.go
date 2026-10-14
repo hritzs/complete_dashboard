@@ -1650,6 +1650,33 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 	// While an exit is running (in the background) the minute-end hedge /
 	// SL / TP / TIME checks wait -- not consumed, they run once it ends.
 	exiting := trade.Status == "SQUARING_OFF" || trade.Status == "PARTIAL-SQF" || s.exitRunning(tradeUID)
+	// Intra-minute hedge: on every tick after this minute's minute-end check,
+	// points_out beyond 1.2 x allowed hedges the complete net delta (whole
+	// lots, rounded down). At most once per minute: the next one is the
+	// minute-end check with fresh positions. Not in the hedge test modes.
+	if rt, ok := s.Store.LoadRuntime(tradeUID); ok && !exiting && trade.Status == "ACTIVE" &&
+		rt.LastMinuteCheck.Equal(currentMinute) && !rt.LastIntraHedge.Equal(currentMinute) &&
+		!trade.Config.ForceOneLotHedgeTest && !trade.Config.ForceHedgeRegardlessOfPoints {
+		lotSize := int64(trade.LotSize)
+		if lotSize <= 0 {
+			lotSize = 1
+		}
+		d := decideHedge(hedgeDecisionInput{
+			PointsOut: pointsOut, PointsAllowed: pointsAllowed, Spot: spot, NetDelta: netDelta,
+			LotSize: lotSize, TradeLots: int64(trade.Lots),
+			MinThresholdBps: resolveHedgeMinThresholdBps(trade.Config.HedgeMinThresholdBps),
+			Mult:            hedgeIntraMult, Frac: hedgeIntraFrac,
+		})
+		if d.Hedge {
+			rt.LastIntraHedge = currentMinute
+			reason := fmt.Sprintf("INTRA-MINUTE points_out=%.2f > %.1f x effective_allowed=%.2f net_delta=%.4f lot_size=%d hedge_lots=%d (complete delta)",
+				pointsOut, hedgeIntraMult, d.EffectiveAllowed, netDelta, lotSize, d.Lots)
+			log.Printf("[MONITOR][%s] %s invoking trade-scoped hedge %s", tradeUID, now.Format("15:04:05"), reason)
+			if err := s.ManualHedgeLots(context.WithValue(context.Background(), hedgeTriggerKey{}, reason), tradeUID, int(d.Lots)); err != nil {
+				log.Printf("[MONITOR][%s] intra-minute hedge failed: %v", tradeUID, err)
+			}
+		}
+	}
 	if rt, ok := s.Store.LoadRuntime(tradeUID); ok && !exiting {
 		if rt.LastMinuteCheck.IsZero() || !rt.LastMinuteCheck.Equal(currentMinute) {
 			rt.LastMinuteCheck = currentMinute
@@ -1674,6 +1701,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 				ForceOneLotTest: forceOneLotTest,
 				TestPointsFloor: trade.Config.HedgePointsFloor,
 				ForceRegardless: trade.Config.ForceHedgeRegardlessOfPoints,
+				Frac:            hedgeMinuteFrac,
 			})
 			hedgeAction = decision.Action
 			pointsCrossed := pointsOut > decision.EffectiveAllowed || trade.Config.ForceHedgeRegardlessOfPoints

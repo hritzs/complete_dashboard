@@ -64,6 +64,18 @@ func hedgeLotsFloor(netDelta float64, lotSize int64) int64 {
 	return int64(math.Floor(math.Abs(netDelta) / float64(lotSize)))
 }
 
+// Hedge sizing (owner's rule, 2026-10-14):
+//   - minute end: points_out > allowed -> hedge 75 % of the total net delta;
+//   - within the minute (every monitor tick): points_out > 1.2 x allowed ->
+//     hedge the complete net delta.
+//
+// Lots are whole lots rounded down in both cases (hedgeLotsFloor).
+const (
+	hedgeMinuteFrac = 0.75
+	hedgeIntraMult  = 1.2
+	hedgeIntraFrac  = 1.0
+)
+
 func resolveHedgeMinThresholdBps(cfg *float64) float64 {
 	if cfg == nil {
 		return defaultHedgeMinThresholdBps
@@ -80,6 +92,12 @@ type hedgeDecisionInput struct {
 	TradeLots     int64
 
 	MinThresholdBps float64
+
+	// Frac: share of the net delta hedged (hedgeMinuteFrac at minute end,
+	// hedgeIntraFrac within the minute). 0 = all of it.
+	Frac float64
+	// Mult: the trigger is points_out > Mult x effective_allowed (0 = 1).
+	Mult float64
 
 	// Test overrides (the forced hedge test).
 	ForceOneLotTest bool
@@ -118,7 +136,11 @@ func decideHedge(in hedgeDecisionInput) hedgeDecision {
 		return d
 	}
 
-	crossed := in.PointsOut > d.EffectiveAllowed || in.ForceRegardless
+	mult := in.Mult
+	if mult <= 0 {
+		mult = 1
+	}
+	crossed := in.PointsOut > mult*d.EffectiveAllowed || in.ForceRegardless
 	if !crossed {
 		if in.PointsOut > in.PointsAllowed {
 			d.Action = "BELOW_MIN_THRESHOLD"
@@ -136,7 +158,11 @@ func decideHedge(in hedgeDecisionInput) hedgeDecision {
 		return d
 	}
 
-	lots := hedgeLotsFloor(in.NetDelta, in.LotSize)
+	frac := in.Frac
+	if frac <= 0 || frac > 1 {
+		frac = 1
+	}
+	lots := hedgeLotsFloor(frac*in.NetDelta, in.LotSize)
 	if in.ForceOneLotTest && lots == 0 {
 		lots = 1
 	}

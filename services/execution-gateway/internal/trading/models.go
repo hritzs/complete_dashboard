@@ -472,6 +472,8 @@ type RuntimeTrade struct {
 	StopCh          chan struct{}
 	DoneCh          chan struct{}
 	LastMinuteCheck time.Time
+	// LastIntraHedge: minute of the last intra-minute hedge (hedge_decision.go)
+	LastIntraHedge time.Time
 }
 
 // HedgeEvent is one hedge attempt on a trade.

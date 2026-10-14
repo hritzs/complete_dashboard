@@ -164,3 +164,20 @@ func TestManualHedgeLots_SizesAndBooksMultipleLots(t *testing.T) {
 		t.Fatal("want error for zero lots")
 	}
 }
+
+// Owner's rule: 75 % of the net delta at minute end; complete delta above
+// 1.2 x allowed within the minute.
+func TestDecideHedge_MinuteFracAndIntra(t *testing.T) {
+	in := hedgeDecisionInput{PointsOut: 30, PointsAllowed: 25, Spot: 22000, NetDelta: -1300, LotSize: 65, TradeLots: 77, Frac: hedgeMinuteFrac}
+	if d := decideHedge(in); !d.Hedge || d.Lots != 15 { // floor(0.75 x 1300 / 65) = 15
+		t.Fatalf("minute end: %+v", d)
+	}
+	in.Frac, in.Mult = hedgeIntraFrac, hedgeIntraMult
+	if d := decideHedge(in); d.Hedge { // 30 is not above 1.2 x 25
+		t.Fatalf("intra must wait for 1.2x: %+v", d)
+	}
+	in.PointsOut = 30.1
+	if d := decideHedge(in); !d.Hedge || d.Lots != 20 {
+		t.Fatalf("intra: %+v", d)
+	}
+}
