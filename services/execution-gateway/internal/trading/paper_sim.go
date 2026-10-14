@@ -434,7 +434,7 @@ func paperDefaults(c PaperSimConfig) PaperSimConfig {
 		c.SLBps = lutSLBps
 	}
 	if strings.TrimSpace(c.ExitTime) == "" {
-		c.ExitTime = "15:40"
+		c.ExitTime = "15:37" // the hard exit time, as live
 	}
 	if c.StraddleDiv <= 0 {
 		c.StraddleDiv = 4
@@ -679,20 +679,21 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 			out = math.Abs(pt.NetDelta / pt.NetGamma)
 		}
 		d := decideHedge(hedgeDecisionInput{PointsOut: out, PointsAllowed: allowed, Spot: m.Future, NetDelta: pt.NetDelta,
-			LotSize: lotSize, TradeLots: int64(c.Lots), MinThresholdBps: c.HedgeMinBps, Frac: hedgeMinuteFrac})
+			LotSize: lotSize, TradeLots: int64(c.Lots), MinThresholdBps: c.HedgeMinBps, LeaveBand: hedgeLeaveBand})
 		pt.PointsOut, pt.PointsAllowed, pt.HedgeFloor, pt.HedgeCheck, pt.HedgeLotsNeeded = out, d.EffectiveAllowed, d.Floor, d.Action, d.Lots
 		if !d.Hedge {
 			pt.HedgeLotsNeeded = 0
 		}
 		if c.HedgeMode != "lots" {
-			// Synthetic future: hedge 75 % of the net delta whenever the
-			// position is further out than allowed (no lot rounding).
+			// Synthetic future: whenever the position is further out than
+			// allowed, hedge until points out is 25 % of allowed (no lot
+			// rounding).
 			pt.HedgeLotsNeeded = 0
 			pt.HedgeCheck = "OK"
 			if out > d.EffectiveAllowed && math.Abs(pt.NetDelta) > 1e-9 {
 				pt.HedgeCheck = "RISK_BREACH"
 			}
-			pt.HedgeTarget = (pt.HedgeFut - hedgeMinuteFrac*pt.NetDelta) / float64(q)
+			pt.HedgeTarget = (pt.HedgeFut - hedgeMinuteFracFor(out, d.EffectiveAllowed)*pt.NetDelta) / float64(q)
 		}
 		return d
 	}
@@ -860,7 +861,7 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 		d := hedgeCheck(m, &pt)
 		if exit == "" && c.HedgeMode == "synthetic" && pt.HedgeCheck == "RISK_BREACH" {
 			old := book.futQty
-			dq := -hedgeMinuteFrac * pt.NetDelta // 75 % of the net delta (hedge_decision.go)
+			dq := -hedgeMinuteFracFor(pt.PointsOut, pt.PointsAllowed) * pt.NetDelta // points out -> 25 % of allowed (hedge_decision.go)
 			book.fillFut(dq, m.Future)
 			after := book.value(m, q)
 			res.Hedges = append(res.Hedges, PaperSimHedge{Time: m.Time, Mode: "synthetic", Kind: "RISK_BREACH", Strike: 0, Qty: int64(math.Round(dq)), FutQty: dq,

@@ -65,16 +65,29 @@ func hedgeLotsFloor(netDelta float64, lotSize int64) int64 {
 }
 
 // Hedge sizing (owner's rule, 2026-10-14):
-//   - minute end: points_out > allowed -> hedge 75 % of the total net delta;
-//   - within the minute (every monitor tick): points_out > 1.2 x allowed ->
-//     hedge the complete net delta.
+//   - minute end: points_out > allowed -> hedge until points out is 25 % of
+//     the (effective) points allowed, i.e. the hedge closes 75 % of the
+//     allowed band. Points out = |delta / gamma| is proportional to delta,
+//     so the share of the net delta hedged is 1 - 0.25 x allowed / out
+//     (out 105, allowed 100, delta 105 -> hedge 80, leaving out 25);
+//   - within the minute: points_out > 1.2 x allowed -> the complete delta.
 //
 // Lots are whole lots rounded down in both cases (hedgeLotsFloor).
 const (
-	hedgeMinuteFrac = 0.75
-	hedgeIntraMult  = 1.2
-	hedgeIntraFrac  = 1.0
+	hedgeLeaveBand = 0.25
+	hedgeIntraMult = 1.2
+	hedgeIntraFrac = 1.0
 )
+
+// hedgeMinuteFracFor is the share of the net delta a minute-end hedge takes
+// so that points out falls to hedgeLeaveBand x effective allowed (0 when
+// it is already there).
+func hedgeMinuteFracFor(pointsOut, effAllowed float64) float64 {
+	if pointsOut <= 0 || effAllowed <= 0 {
+		return 0
+	}
+	return math.Min(1, math.Max(0, 1-hedgeLeaveBand*effAllowed/pointsOut))
+}
 
 func resolveHedgeMinThresholdBps(cfg *float64) float64 {
 	if cfg == nil {
@@ -93,9 +106,11 @@ type hedgeDecisionInput struct {
 
 	MinThresholdBps float64
 
-	// Frac: share of the net delta hedged (hedgeMinuteFrac at minute end,
-	// hedgeIntraFrac within the minute). 0 = all of it.
-	Frac float64
+	// Frac: share of the net delta hedged (hedgeIntraFrac within the
+	// minute). 0 = all of it. LeaveBand (minute end) overrides it: hedge
+	// until points out = LeaveBand x effective allowed.
+	Frac      float64
+	LeaveBand float64
 	// Mult: the trigger is points_out > Mult x effective_allowed (0 = 1).
 	Mult float64
 
@@ -161,6 +176,9 @@ func decideHedge(in hedgeDecisionInput) hedgeDecision {
 	frac := in.Frac
 	if frac <= 0 || frac > 1 {
 		frac = 1
+	}
+	if in.LeaveBand > 0 {
+		frac = math.Min(1, math.Max(0, 1-in.LeaveBand*d.EffectiveAllowed/in.PointsOut))
 	}
 	lots := hedgeLotsFloor(frac*in.NetDelta, in.LotSize)
 	if in.ForceOneLotTest && lots == 0 {

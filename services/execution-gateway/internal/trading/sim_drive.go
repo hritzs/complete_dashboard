@@ -6,27 +6,30 @@ package trading
 //   - the build: the LUT fires the real build on the same first YES the
 //     simulation enters on (lut_build.go);
 //   - each hedge the simulation books -> the live trade hedges at its own
-//     size: a minute-end hedge takes 75 % of the live net delta, an
-//     intra-minute hedge the complete delta (whole lots, rounded down);
+//     size with the same rule on its own numbers: a minute-end hedge brings
+//     live points out to 25 % of live points allowed, an intra-minute hedge
+//     takes the complete delta (whole lots, rounded down);
 //   - the simulation's exit (SL / TP / TIME / MTM) -> the live trade is
 //     squared off with that reason.
 // Sizes are never copied from the simulation, only the decisions.
 //
 // The simulation of the live trade is re-run every second on the recorded
-// minutes and seconds (the same data the Paper Sim tab shows). While it is
-// healthy the monitor's own hedge and SL / TP / TIME checks stand aside for
-// this trade (simDriveActive); if it cannot run for simDriveStale, the
-// monitor's own rules take over again.
+// minutes and seconds (the same data the Paper Sim tab shows). From the
+// first second until the trade closes, the monitor takes no hedge, SL or TP
+// of its own for this trade (simDriveOwns) -- only what the simulation
+// triggered; a stalled simulation is reported, not replaced. The hard exit
+// time (15:37) stays with the monitor as well. When the trade is closed by
+// any path, everything here is released.
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 )
@@ -67,12 +70,31 @@ var simDrive = struct {
 	d  *simDriver // today's LUT trade (one per day)
 }{}
 
-// simDriveActive: the simulation is driving this trade right now.
-func simDriveActive(tradeUID string) bool {
+// simDriveOwns: this trade's hedges and SL / TP come from its simulation;
+// fresh = the simulation ran within simDriveStale.
+func simDriveOwns(tradeUID string) (owned, fresh bool) {
 	simDrive.mu.Lock()
 	defer simDrive.mu.Unlock()
 	d := simDrive.d
-	return d != nil && d.TradeUID == tradeUID && d.Error == "" && time.Since(d.LastRun) <= simDriveStale
+	if d == nil || d.TradeUID != tradeUID {
+		return false, false
+	}
+	return true, d.Error == "" && time.Since(d.LastRun) <= simDriveStale
+}
+
+func simDriveActive(tradeUID string) bool {
+	owned, fresh := simDriveOwns(tradeUID)
+	return owned && fresh
+}
+
+// simDriveRelease drops the driver of a closed trade.
+func simDriveRelease(tradeUID, why string) {
+	simDrive.mu.Lock()
+	defer simDrive.mu.Unlock()
+	if d := simDrive.d; d != nil && d.TradeUID == tradeUID {
+		simDrive.d = nil
+		log.Printf("[SIM-DRIVE][%s] released (%s): no further simulation actions", tradeUID, why)
+	}
 }
 
 // StartSimDrive starts the loop (call once at boot).
@@ -86,25 +108,38 @@ func (s *Service) StartSimDrive() {
 	}()
 }
 
-// simDriveTarget is today's real LUT build trade, if any.
-func simDriveTarget() (uid, entry, exitTime, day string) {
+// simDriveTarget is today's real LUT build (a copy), if it made a trade.
+func simDriveTarget() (LUTBuildRun, string) {
 	e := lutEng
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if b := e.build; b != nil && b.TradeUID != "" {
-		return b.TradeUID, b.Minute, b.ExitTime, e.day
+		return *b, e.day
 	}
-	return "", "", "", e.day
+	return LUTBuildRun{}, e.day
 }
 
 func (s *Service) simDriveTick() {
-	uid, entry, exitTime, day := simDriveTarget()
+	run, day := simDriveTarget()
+	uid, entry, exitTime := run.TradeUID, run.Minute, run.ExitTime
 	if uid == "" || entry == "" {
 		return
 	}
 	tr, ok := s.Store.LoadTrade(uid)
-	if !ok || tr.Status != "ACTIVE" {
+	if !ok {
+		simDriveRelease(uid, "trade not found")
 		return
+	}
+	switch tr.Status {
+	case "ACTIVE":
+	case "SQUARING_OFF", "PARTIAL-SQF":
+		return // exit running: no new actions, kept until it ends
+	default:
+		simDriveRelease(uid, "trade "+tr.Status)
+		return
+	}
+	if exitTime == "" {
+		exitTime = "15:37"
 	}
 	simDrive.mu.Lock()
 	d := simDrive.d
@@ -120,7 +155,10 @@ func (s *Service) simDriveTick() {
 		lot = 65
 	}
 	mins := lutLoadSimSet(day, "")
-	cfg := PaperSimConfig{ID: "LIVE-" + uid, Source: "drives " + uid, Entry: entry, Lots: 1, HedgeMode: "synthetic", ExitTime: exitTime}
+	// The simulation as the Paper Sim runs it, with the SL / TP the live
+	// trade was armed with.
+	cfg := PaperSimConfig{ID: "LIVE-" + uid, Source: "drives " + uid, Entry: entry, Lots: 1, HedgeMode: "synthetic", ExitTime: exitTime,
+		SLBps: run.SLBps, TPBps: run.TPBps}
 	res := RunPaperSim(mins, cfg, lot, nil)
 
 	simDrive.mu.Lock()
@@ -161,23 +199,25 @@ func (s *Service) simDriveTick() {
 }
 
 func (s *Service) simDriveHedge(d *simDriver, tr StoredTrade, h PaperSimHedge, lot int64) {
-	frac := hedgeMinuteFrac
-	if h.Kind == "INTRA_MINUTE" {
-		frac = hedgeIntraFrac
-	}
 	a := SimDriveAction{At: time.Now().In(lutIST()).Format("15:04:05"), SimTime: h.Time, Kind: h.Kind, SimDelta: h.DeltaBefore}
+	frac, how := hedgeIntraFrac, "complete live delta"
 	if snap, ok := s.Store.LoadSnapshot(tr.TradeUID); ok {
 		a.Delta = snap.NetDelta
+		if h.Kind != "INTRA_MINUTE" { // minute end: live points out -> 25 % of live allowed
+			eff := math.Max(snap.PointsAllowed, snap.Underlying*resolveHedgeMinThresholdBps(tr.Config.HedgeMinThresholdBps)/10000)
+			frac = hedgeMinuteFracFor(snap.PointsOut, eff)
+			how = fmt.Sprintf("live points out %.1f -> %.1f (25%% of allowed %.1f)", snap.PointsOut, hedgeLeaveBand*eff, eff)
+		}
 	}
 	a.Lots = hedgeLotsFloor(frac*a.Delta, lot)
 	if tr.Lots > 0 && a.Lots > int64(tr.Lots) {
 		a.Lots = int64(tr.Lots)
 	}
 	if a.Lots <= 0 {
-		a.Result = fmt.Sprintf("no order: %.0f%% of live delta %+.1f is under one lot", frac*100, a.Delta)
+		a.Result = fmt.Sprintf("no order: %s needs %.0f%% of live delta %+.1f, under one lot", how, frac*100, a.Delta)
 	} else {
-		reason := fmt.Sprintf("SIM-DRIVEN %s at %s (sim delta %+.4f per qty): %.0f%% of live delta %+.1f = %d lot(s)",
-			h.Kind, h.Time, h.DeltaBefore, frac*100, a.Delta, a.Lots)
+		reason := fmt.Sprintf("SIM-DRIVEN %s at %s (sim delta %+.4f per qty): %s = %.0f%% of live delta %+.1f = %d lot(s)",
+			h.Kind, h.Time, h.DeltaBefore, how, frac*100, a.Delta, a.Lots)
 		log.Printf("[SIM-DRIVE][%s] %s", tr.TradeUID, reason)
 		if err := s.ManualHedgeLots(context.WithValue(context.Background(), hedgeTriggerKey{}, reason), tr.TradeUID, int(a.Lots)); err != nil {
 			a.Result = "hedge failed: " + err.Error()
@@ -229,5 +269,5 @@ func (h *Handlers) SimDriveHandler(w http.ResponseWriter, r *http.Request) {
 	simDrive.mu.Unlock()
 	active := d != nil && simDriveActive(d.TradeUID)
 	lutJSON(w, http.StatusOK, map[string]interface{}{"success": true, "driver": d, "active": active,
-		"note": strings.TrimSpace(fmt.Sprintf("hedge %.0f%% of live delta at a simulated minute-end hedge, %.0f%% at an intra-minute one; exits follow the simulation", hedgeMinuteFrac*100, hedgeIntraFrac*100))})
+		"note": "a simulated minute-end hedge brings live points out to 25% of live points allowed, an intra-minute one hedges the complete live delta; SL / TP / MTM exits follow the simulation; hard exit 15:37"})
 }

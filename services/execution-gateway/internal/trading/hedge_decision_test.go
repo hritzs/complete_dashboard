@@ -2,6 +2,7 @@ package trading
 
 import (
 	"context"
+	"math"
 	"testing"
 )
 
@@ -165,14 +166,19 @@ func TestManualHedgeLots_SizesAndBooksMultipleLots(t *testing.T) {
 	}
 }
 
-// Owner's rule: 75 % of the net delta at minute end; complete delta above
-// 1.2 x allowed within the minute.
+// Owner's rule: at minute end hedge until points out is 25 % of allowed;
+// complete delta above 1.2 x allowed within the minute.
 func TestDecideHedge_MinuteFracAndIntra(t *testing.T) {
-	in := hedgeDecisionInput{PointsOut: 30, PointsAllowed: 25, Spot: 22000, NetDelta: -1300, LotSize: 65, TradeLots: 77, Frac: hedgeMinuteFrac}
-	if d := decideHedge(in); !d.Hedge || d.Lots != 15 { // floor(0.75 x 1300 / 65) = 15
+	// Owner's example: out 105, allowed 100, delta 105 -> hedge 80 (out 25).
+	if f := hedgeMinuteFracFor(105, 100); math.Abs(f*105-80) > 1e-9 {
+		t.Fatalf("frac %v", f)
+	}
+	in := hedgeDecisionInput{PointsOut: 30, PointsAllowed: 25, Spot: 22000, NetDelta: -1300, LotSize: 65, TradeLots: 77, LeaveBand: hedgeLeaveBand}
+	// 1 - 0.25 x 25 / 30 = 0.7917 -> 1029 delta -> 15 lots
+	if d := decideHedge(in); !d.Hedge || d.Lots != 15 {
 		t.Fatalf("minute end: %+v", d)
 	}
-	in.Frac, in.Mult = hedgeIntraFrac, hedgeIntraMult
+	in.LeaveBand, in.Frac, in.Mult = 0, hedgeIntraFrac, hedgeIntraMult
 	if d := decideHedge(in); d.Hedge { // 30 is not above 1.2 x 25
 		t.Fatalf("intra must wait for 1.2x: %+v", d)
 	}

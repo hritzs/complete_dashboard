@@ -114,8 +114,9 @@ func TestPaperSim_LiveAndGreeks(t *testing.T) {
 	}
 }
 
-// Synthetic hedge: on every minute-end breach 75 % of the net delta is
-// hedged with fractional future contracts (no lot rounding), even at 1 lot.
+// Synthetic hedge: on every minute-end breach the delta is hedged until
+// points out is 25 % of allowed, with fractional future contracts (no lot
+// rounding), even at 1 lot.
 func TestPaperSim_SyntheticHedgeOneLot(t *testing.T) {
 	mins := mkMinutes(60, func(i int) float64 { return 22600 + float64(i)*2 })
 	r := RunPaperSim(mins, PaperSimConfig{Entry: "09:16", Lots: 1, HedgeMode: "synthetic", SLBps: 500}, 65, nil)
@@ -123,12 +124,12 @@ func TestPaperSim_SyntheticHedgeOneLot(t *testing.T) {
 		t.Fatal("expected synthetic hedges at 1 lot")
 	}
 	for _, h := range r.Hedges {
-		want := (1 - hedgeMinuteFrac) * h.DeltaBefore // breach: 75 % of the delta
+		want := h.DeltaBefore * hedgeLeaveBand * h.Allowed / h.PointsOut // breach: points out -> 25 % of allowed
 		if h.Kind == "ENTRY_NEUTRAL" {
 			want = 0 // the entry itself is made delta neutral
 		}
 		if h.Mode != "synthetic" || math.Abs(h.DeltaAfter-want) > 1e-6 {
-			t.Fatalf("hedge must take 75%% of the delta: %+v", h)
+			t.Fatalf("hedge must leave points out at 25%% of allowed: %+v", h)
 		}
 	}
 	last := r.Series[len(r.Series)-1]
