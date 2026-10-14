@@ -93,37 +93,40 @@ type PaperSimLeg struct {
 }
 
 type PaperSimPoint struct {
-	Time            string        `json:"time"`
-	Future          float64       `json:"future"`
-	ATM             float64       `json:"atm"`
-	ATMStraddle     float64       `json:"atm_straddle"`
-	ATMCE           float64       `json:"atm_ce"`
-	ATMPE           float64       `json:"atm_pe"`
-	Strike          float64       `json:"strike"`   // the position's strike
-	QuoteTs         string        `json:"quote_ts"` // when these prices were recorded
-	CE              float64       `json:"ce"`       // position-strike marks
-	PE              float64       `json:"pe"`
-	Straddle        float64       `json:"straddle"`
-	PnL             float64       `json:"pnl"`
-	OptionPnL       float64       `json:"option_pnl"` // the sold straddle
-	HedgePnL        float64       `json:"hedge_pnl"`  // hedge legs
-	PnLPerStraddle  float64       `json:"pnl_per_straddle"`
-	NetDelta        float64       `json:"net_delta"` // whole position (qty-weighted)
-	NetGamma        float64       `json:"net_gamma"`
-	NetTheta        float64       `json:"net_theta"`     // per day
-	NetVega         float64       `json:"net_vega"`      // per 1 vol point
-	HedgeQty        int64         `json:"hedge_qty"`     // open ATM-straddle hedge qty (lots mode, signed sum)
-	HedgeFut        float64       `json:"hedge_fut"`     // synthetic-future hedge, contracts (signed, fractional)
-	HedgeFutPerQty  float64       `json:"hedge_fut_qty"` // the same per 1 qty of the straddle
-	HedgeTarget     float64       `json:"hedge_target"`  // per qty: where a breach would set it now
-	PointsOut       float64       `json:"points_out"`
-	PointsAllowed   float64       `json:"points_allowed"` // effective (after the bps floor)
-	HedgeFloor      float64       `json:"hedge_floor"`
-	HedgeCheck      string        `json:"hedge_check"` // decideHedge action this minute
-	HedgeLotsNeeded int64         `json:"hedge_lots_needed"`
-	Source          string        `json:"source"` // worst price source used this minute
-	Event           string        `json:"event,omitempty"`
-	Legs            []PaperSimLeg `json:"legs,omitempty"`
+	Time            string  `json:"time"`
+	Future          float64 `json:"future"`
+	ATM             float64 `json:"atm"`
+	ATMStraddle     float64 `json:"atm_straddle"`
+	ATMCE           float64 `json:"atm_ce"`
+	ATMPE           float64 `json:"atm_pe"`
+	Strike          float64 `json:"strike"`   // the position's strike
+	QuoteTs         string  `json:"quote_ts"` // when these prices were recorded
+	CE              float64 `json:"ce"`       // position-strike marks
+	PE              float64 `json:"pe"`
+	Straddle        float64 `json:"straddle"`
+	PnL             float64 `json:"pnl"`
+	OptionPnL       float64 `json:"option_pnl"` // the sold straddle
+	HedgePnL        float64 `json:"hedge_pnl"`  // hedge legs
+	PnLPerStraddle  float64 `json:"pnl_per_straddle"`
+	NetDelta        float64 `json:"net_delta"` // whole position (qty-weighted)
+	NetGamma        float64 `json:"net_gamma"`
+	NetTheta        float64 `json:"net_theta"`     // per day
+	NetVega         float64 `json:"net_vega"`      // per 1 vol point
+	HedgeQty        int64   `json:"hedge_qty"`     // open ATM-straddle hedge qty (lots mode, signed sum)
+	HedgeFut        float64 `json:"hedge_fut"`     // synthetic-future hedge, contracts (signed, fractional)
+	HedgeFutPerQty  float64 `json:"hedge_fut_qty"` // the same per 1 qty of the straddle
+	HedgeTarget     float64 `json:"hedge_target"`  // per qty: where a breach would set it now
+	PointsOut       float64 `json:"points_out"`
+	PointsAllowed   float64 `json:"points_allowed"` // effective (after the bps floor)
+	HedgeFloor      float64 `json:"hedge_floor"`
+	HedgeCheck      string  `json:"hedge_check"` // decideHedge action this minute
+	HedgeLotsNeeded int64   `json:"hedge_lots_needed"`
+	Source          string  `json:"source"` // worst price source used this minute
+	Event           string  `json:"event,omitempty"`
+	// Before: the same row just before this row's hedge (hedge rows only),
+	// so before and after can be compared column by column.
+	Before *PaperSimPoint `json:"before,omitempty"`
+	Legs   []PaperSimLeg  `json:"legs,omitempty"`
 	// ExecPnL: total MTM if the whole position were closed now at
 	// executable prices (shorts at the ask, longs at the bid) -- what the
 	// MTM square-off compares to its level. 0 when that rule is off.
@@ -368,6 +371,15 @@ func lutLoadSimSetHold(day, set string, hold bool) []simMinute {
 		}
 	}
 	return out
+}
+
+// simBeforeOf is a row's copy kept as the "before hedge" of the next one.
+func simBeforeOf(p PaperSimPoint) *PaperSimPoint {
+	p.Legs, p.Before, p.Event = nil, nil, ""
+	if p.HedgeCheck == "" || p.HedgeCheck == "RISK_BREACH" {
+		p.HedgeCheck = "BEFORE"
+	}
+	return &p
 }
 
 // simOut is a point's points out (|delta / gamma|).
@@ -756,12 +768,18 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 	// intraRow adds the intra-minute hedge as its own row at the tick: the
 	// position valued at that second's future (legs by Black-Scholes at the
 	// minute's IV), with the before -> after of the hedge in its event.
-	intraRow := func(m simMinute, s simSec, allowed, outBefore, ndBefore, ndAfter, hedgeBefore float64, what string) {
+	tickPoint := func(m simMinute, s simSec) PaperSimPoint {
 		tm := m
 		tm.Time, tm.Ts, tm.Future, tm.chain, tm.hasLUT = s.T, s.T+" (tick)", s.F, nil, false
 		pt := book.value(tm, q)
 		posMarks(tm, &pt)
 		pt.Time, pt.QuoteTs, pt.Source = s.T, s.T+" (tick)", "bs"
+		return pt
+	}
+	intraRow := func(m simMinute, s simSec, allowed, outBefore, ndBefore, ndAfter, hedgeBefore float64, what string, pre PaperSimPoint) {
+		pt := tickPoint(m, s)
+		pre.PointsOut, pre.PointsAllowed, pre.HedgeCheck = outBefore, allowed, "BEFORE"
+		pt.Before = simBeforeOf(pre)
 		outAfter := 0.0
 		if pt.NetGamma != 0 {
 			outAfter = math.Abs(ndAfter / pt.NetGamma)
@@ -808,11 +826,12 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 					continue
 				}
 				old := book.futQty
+				pre := tickPoint(m, s)
 				book.fillFut(-nd, s.F)
 				res.Hedges = append(res.Hedges, PaperSimHedge{Time: s.T, Mode: "synthetic", Kind: "INTRA_MINUTE", Qty: int64(math.Round(-nd)), FutQty: -nd,
 					OldHedge: old / float64(q), NewHedge: book.futQty / float64(q), CEPrice: s.F, DeltaBefore: nd, DeltaAfter: 0,
 					PointsOut: out, Allowed: d.EffectiveAllowed, Future: s.F, Source: "seconds"})
-				intraRow(m, s, d.EffectiveAllowed, out, nd, 0, old, fmt.Sprintf("synthetic %+.2f contracts", -nd))
+				intraRow(m, s, d.EffectiveAllowed, out, nd, 0, old, fmt.Sprintf("synthetic %+.2f contracts", -nd), pre)
 				return
 			}
 			if !d.Hedge || d.Lots <= 0 {
@@ -831,12 +850,13 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 			ppx, _, _ := simBlack76(false, s.F, atm, T, ivATM)
 			hq := d.Lots * lotSize
 			oldFut := book.futQty
+			pre := tickPoint(m, s)
 			book.fill("HEDGE", atm, "CE", ceSide, hq, cpx)
 			book.fill("HEDGE", atm, "PE", peSide, hq, ppx)
 			after := nd + float64(hq)*map[bool]float64{true: 1, false: -1}[ceSide == "BUY"]
 			res.Hedges = append(res.Hedges, PaperSimHedge{Time: s.T, Mode: "lots", Kind: "INTRA_MINUTE", Strike: atm, CESide: ceSide, PESide: peSide, Lots: d.Lots, Qty: hq,
 				CEPrice: cpx, PEPrice: ppx, DeltaBefore: nd, DeltaAfter: after, PointsOut: out, Allowed: d.EffectiveAllowed, Future: s.F, Source: "seconds+bs"})
-			intraRow(m, s, d.EffectiveAllowed, out, nd, after, oldFut, fmt.Sprintf("%d lot(s) %s CE / %s PE @%.0f", d.Lots, ceSide, peSide, atm))
+			intraRow(m, s, d.EffectiveAllowed, out, nd, after, oldFut, fmt.Sprintf("%d lot(s) %s CE / %s PE @%.0f", d.Lots, ceSide, peSide, atm), pre)
 			return
 		}
 	}
@@ -930,6 +950,7 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 			pt.ATMStraddle, pt.PointsOut, pt.PointsAllowed, pt.HedgeFloor, pt.HedgeCheck, pt.HedgeTarget =
 				keep.ATMStraddle, keep.PointsOut, keep.PointsAllowed, keep.HedgeFloor, keep.HedgeCheck, keep.HedgeTarget
 			pt.Event = ev
+			pt.PointsOut, pt.Before = simOut(pt), simBeforeOf(keep)
 		}
 		if exit == "" && c.HedgeMode == "lots" && d.Hedge && d.Lots > 0 {
 			if ceSide, peSide, ok := hedgeSidesFromSignedDelta(pt.NetDelta); ok {
@@ -950,6 +971,7 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 				pt.ATMStraddle, pt.PointsOut, pt.PointsAllowed, pt.HedgeFloor, pt.HedgeCheck, pt.HedgeLotsNeeded =
 					keep.ATMStraddle, keep.PointsOut, keep.PointsAllowed, keep.HedgeFloor, keep.HedgeCheck, keep.HedgeLotsNeeded
 				pt.Event = ev
+				pt.PointsOut, pt.Before = simOut(pt), simBeforeOf(keep)
 			}
 		}
 		if exit != "" {

@@ -249,7 +249,7 @@ function SimDetail(props) {
                 <th style={S.th}>Hedge / qty</th><th style={S.th}>Out / allowed</th><th>Check</th><th>Event</th>
               </tr></thead>
               <tbody>
-                <For each={minutes()}>{(p) => (
+                <For each={minutes()}>{(p) => (<>
                   <tr style={{ background: p._live ? 'rgba(57,135,229,0.10)' : p.event ? 'rgba(201,133,0,0.07)' : '' }}>
                     <td>{p._live ? `${p.time} ·live` : p.time}</td>
                     <td style={{ ...S.muted, 'white-space': 'nowrap' }}>{p.quote_ts || ''}</td>
@@ -266,7 +266,25 @@ function SimDetail(props) {
                     <td style={{ color: /BREACH/.test(p.hedge_check || '') ? '#e66767' : 'rgba(255,255,255,0.6)' }}>{p.hedge_check || ''}</td>
                     <td style={{ color: '#d9a441', 'white-space': 'nowrap' }} title={p.event || ''}>{(p.event || '').replace(/^ENTRY.*?; /, 'ENTRY; ').slice(0, 70)}</td>
                   </tr>
-                )}</For>
+                  <Show when={p.before}>{(b) => (
+                    <tr style={{ background: 'rgba(255,255,255,0.03)', opacity: 0.75, 'font-style': 'italic' }} title="the same position just before this row's hedge -- compare column by column">
+                      <td>↳ before hedge</td>
+                      <td style={{ ...S.muted, 'white-space': 'nowrap' }}>{b().quote_ts || ''}</td>
+                      <td style={S.th}>{fmt(b().future)}</td><td style={S.th}>{fmt(b().atm, 0)}</td><td style={S.th}>{fmt(b().atm_ce)}</td><td style={S.th}>{fmt(b().atm_pe)}</td>
+                      <td style={S.th}>{fmt(b().strike || s().strike, 0)}</td>
+                      <td style={S.th}>{fmt(b().ce)}</td><td style={S.th}>{fmt(b().pe)}</td><td style={S.th}>{fmt(b().straddle)}</td>
+                      <td style={S.th} class={pnlCls(b().option_pnl)}>{sgn(b().option_pnl)}</td>
+                      <td style={S.th} class={pnlCls(b().hedge_pnl)}>{sgn(b().hedge_pnl)}</td>
+                      <td style={{ ...S.th, 'font-weight': 600 }} class={pnlCls(b().pnl)}>{sgn(b().pnl)}</td>
+                      <Show when={s().config.mtm_sqf_on}><td style={S.th} class={pnlCls(b().exec_pnl)}>{sgn(b().exec_pnl)}</td></Show>
+                      <td style={S.th}>{fmt(b().net_delta, 3)}</td><td style={S.th}>{fmt(b().net_gamma, 5)}</td><td style={S.th}>{fmt(b().net_theta, 2)}</td><td style={S.th}>{fmt(b().net_vega, 2)}</td>
+                      <td style={S.th}>{fmt(b().hedge_fut_qty, 4)}</td>
+                      <td style={S.th}>{b().points_allowed ? `${fmt(b().points_out, 1)} / ${fmt(b().points_allowed, 1)}` : '—'}</td>
+                      <td style={{ color: 'rgba(255,255,255,0.6)' }}>{b().hedge_check || 'BEFORE'}</td>
+                      <td></td>
+                    </tr>
+                  )}</Show>
+                </>)}</For>
               </tbody>
             </table>
           </div>
