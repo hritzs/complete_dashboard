@@ -108,7 +108,7 @@ func TestLUTBuild_TestFireRefusedAndSeparate(t *testing.T) {
 	lutEng.mu.Lock()
 	lutEng.live.Eval = &LUTEvaluation{Strike: 22600, TPBps: 11.2}
 	lutEng.expiry = "13-OCT-26"
-	run, err := s.lutTestFireLocked()
+	run, err := s.lutTestFireLocked(lutTestOpts{})
 	build, tests := lutEng.build, len(lutEng.tests)
 	lutEng.live.Eval = nil
 	lutEng.mu.Unlock()

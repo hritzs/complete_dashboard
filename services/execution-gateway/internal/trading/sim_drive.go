@@ -30,6 +30,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -108,34 +109,53 @@ func (s *Service) StartSimDrive() {
 	}()
 }
 
-// simDriveTarget is today's real LUT build (a copy), if it made a trade.
-func simDriveTarget() (LUTBuildRun, string) {
+// simDriveCandidates: today's real LUT build, then sim-driven test fires
+// (newest first) -- copies, those that made a trade.
+func simDriveCandidates() ([]LUTBuildRun, string) {
 	e := lutEng
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	var out []LUTBuildRun
 	if b := e.build; b != nil && b.TradeUID != "" {
-		return *b, e.day
+		out = append(out, *b)
 	}
-	return LUTBuildRun{}, e.day
+	for i := len(e.tests) - 1; i >= 0; i-- {
+		if t := e.tests[i]; t.SimDriven && t.TradeUID != "" {
+			out = append(out, *t)
+		}
+	}
+	return out, e.day
 }
 
 func (s *Service) simDriveTick() {
-	run, day := simDriveTarget()
-	uid, entry, exitTime := run.TradeUID, run.Minute, run.ExitTime
+	runs, day := simDriveCandidates()
+	// Release a driver whose trade has closed.
+	simDrive.mu.Lock()
+	cur := ""
+	if simDrive.d != nil {
+		cur = simDrive.d.TradeUID
+	}
+	simDrive.mu.Unlock()
+	if cur != "" {
+		if t, ok := s.Store.LoadTrade(cur); !ok {
+			simDriveRelease(cur, "trade not found")
+		} else if t.Status == "SQUARING_OFF" || t.Status == "PARTIAL-SQF" {
+			return // exit running: no new actions, kept until it ends
+		} else if t.Status != "ACTIVE" {
+			simDriveRelease(cur, "trade "+t.Status)
+		}
+	}
+	// The first candidate whose trade is open.
+	var run LUTBuildRun
+	var tr StoredTrade
+	for _, c := range runs {
+		if t, ok := s.Store.LoadTrade(c.TradeUID); ok && t.Status == "ACTIVE" {
+			run, tr = c, t
+			break
+		}
+	}
+	uid, entry, exitTime := run.TradeUID, strings.TrimSuffix(run.Minute, " (test)"), run.ExitTime
 	if uid == "" || entry == "" {
-		return
-	}
-	tr, ok := s.Store.LoadTrade(uid)
-	if !ok {
-		simDriveRelease(uid, "trade not found")
-		return
-	}
-	switch tr.Status {
-	case "ACTIVE":
-	case "SQUARING_OFF", "PARTIAL-SQF":
-		return // exit running: no new actions, kept until it ends
-	default:
-		simDriveRelease(uid, "trade "+tr.Status)
 		return
 	}
 	if exitTime == "" {
@@ -158,7 +178,7 @@ func (s *Service) simDriveTick() {
 	// The simulation as the Paper Sim runs it, with the SL / TP the live
 	// trade was armed with.
 	cfg := PaperSimConfig{ID: "LIVE-" + uid, Source: "drives " + uid, Entry: entry, Lots: 1, HedgeMode: "synthetic", ExitTime: exitTime,
-		SLBps: run.SLBps, TPBps: run.TPBps}
+		SLBps: run.SLBps, TPBps: run.TPBps, PointsAllowed: run.SimPointsAllowed}
 	res := RunPaperSim(mins, cfg, lot, nil)
 
 	simDrive.mu.Lock()
@@ -191,25 +211,31 @@ func (s *Service) simDriveTick() {
 	simDrive.mu.Unlock()
 
 	for _, h := range todo {
-		s.simDriveHedge(d, tr, h, lot)
+		s.simDriveHedge(d, tr, run, h, lot)
 	}
 	if exitNow {
 		s.simDriveExit(d, uid, res)
 	}
 }
 
-func (s *Service) simDriveHedge(d *simDriver, tr StoredTrade, h PaperSimHedge, lot int64) {
+func (s *Service) simDriveHedge(d *simDriver, tr StoredTrade, run LUTBuildRun, h PaperSimHedge, lot int64) {
 	a := SimDriveAction{At: time.Now().In(lutIST()).Format("15:04:05"), SimTime: h.Time, Kind: h.Kind, SimDelta: h.DeltaBefore}
 	frac, how := hedgeIntraFrac, "complete live delta"
 	if snap, ok := s.Store.LoadSnapshot(tr.TradeUID); ok {
 		a.Delta = snap.NetDelta
 		if h.Kind != "INTRA_MINUTE" { // minute end: live points out -> 25 % of live allowed
 			eff := math.Max(snap.PointsAllowed, snap.Underlying*resolveHedgeMinThresholdBps(tr.Config.HedgeMinThresholdBps)/10000)
+			if run.SimPointsAllowed > 0 {
+				eff = run.SimPointsAllowed // test band, as in its simulation
+			}
 			frac = hedgeMinuteFracFor(snap.PointsOut, eff)
 			how = fmt.Sprintf("live points out %.1f -> %.1f (25%% of allowed %.1f)", snap.PointsOut, hedgeLeaveBand*eff, eff)
 		}
 	}
 	a.Lots = hedgeLotsFloor(frac*a.Delta, lot)
+	if a.Lots == 0 && run.SimMinOneLot && math.Abs(a.Delta) > 0 {
+		a.Lots = 1 // test: a real hedge order on every simulated hedge
+	}
 	if tr.Lots > 0 && a.Lots > int64(tr.Lots) {
 		a.Lots = int64(tr.Lots)
 	}

@@ -42,7 +42,10 @@ type PaperSimConfig struct {
 	Hedge       bool    `json:"hedge"`          // legacy: true = HedgeMode "lots"
 	HedgeMode   string  `json:"hedge_mode"`     // synthetic (default) / lots / off
 	View        string  `json:"view,omitempty"` // "" current expiry / "next"
-	CreatedAt   string  `json:"created_at,omitempty"`
+	// PointsAllowed > 0 replaces the computed points allowed and its bps
+	// floor (a sim-driven test trade with a small hedge band).
+	PointsAllowed float64 `json:"points_allowed,omitempty"`
+	CreatedAt     string  `json:"created_at,omitempty"`
 
 	// MTM square-off (its own exit type, separate from SL/TP/time): once
 	// the trade can be closed at executable prices (shorts at the ask,
@@ -354,6 +357,14 @@ func lutLoadSimSet(day, set string) []simMinute {
 		}
 	}
 	return out
+}
+
+// simMinBps: the bps floor on points allowed (none with a fixed band).
+func simMinBps(c PaperSimConfig) float64 {
+	if c.PointsAllowed > 0 {
+		return 0
+	}
+	return c.HedgeMinBps
 }
 
 func simMinutesBetween(a, b int) int { return (b/100*60 + b%100) - (a/100*60 + a%100) }
@@ -674,12 +685,15 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 		atmPE, _, _, _ := simPrice(m, m.ATM, "PE")
 		pt.ATMStraddle = atmCE + atmPE
 		allowed := math.Min((atmCE+atmPE)/c.StraddleDiv, m.Future*m.IV/c.HedgeDiv)
+		if c.PointsAllowed > 0 {
+			allowed = c.PointsAllowed
+		}
 		out := 0.0
 		if pt.NetGamma != 0 {
 			out = math.Abs(pt.NetDelta / pt.NetGamma)
 		}
 		d := decideHedge(hedgeDecisionInput{PointsOut: out, PointsAllowed: allowed, Spot: m.Future, NetDelta: pt.NetDelta,
-			LotSize: lotSize, TradeLots: int64(c.Lots), MinThresholdBps: c.HedgeMinBps, LeaveBand: hedgeLeaveBand})
+			LotSize: lotSize, TradeLots: int64(c.Lots), MinThresholdBps: simMinBps(c), LeaveBand: hedgeLeaveBand})
 		pt.PointsOut, pt.PointsAllowed, pt.HedgeFloor, pt.HedgeCheck, pt.HedgeLotsNeeded = out, d.EffectiveAllowed, d.Floor, d.Action, d.Lots
 		if !d.Hedge {
 			pt.HedgeLotsNeeded = 0
@@ -746,7 +760,7 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 			}
 			out := math.Abs(nd / ng)
 			d := decideHedge(hedgeDecisionInput{PointsOut: out, PointsAllowed: allowed, Spot: s.F, NetDelta: nd,
-				LotSize: lotSize, TradeLots: int64(c.Lots), MinThresholdBps: c.HedgeMinBps, Mult: hedgeIntraMult, Frac: hedgeIntraFrac})
+				LotSize: lotSize, TradeLots: int64(c.Lots), MinThresholdBps: simMinBps(c), Mult: hedgeIntraMult, Frac: hedgeIntraFrac})
 			if c.HedgeMode != "lots" {
 				if out <= hedgeIntraMult*d.EffectiveAllowed || math.Abs(nd) < 1e-9 {
 					continue

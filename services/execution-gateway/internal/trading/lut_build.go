@@ -79,6 +79,12 @@ type LUTBuildRun struct {
 	Message    string  `json:"message,omitempty"`
 	Error      string  `json:"error,omitempty"`
 	Test       bool    `json:"test,omitempty"` // a user test fire, not the LUT's YES
+	// A test fire driven by its simulation (sim_drive.go): a fixed points
+	// allowed for both, and at least one lot per simulated hedge so a real
+	// hedge order is seen even on a 1-lot trade.
+	SimDriven        bool    `json:"sim_driven,omitempty"`
+	SimPointsAllowed float64 `json:"sim_points_allowed,omitempty"`
+	SimMinOneLot     bool    `json:"sim_min_one_lot,omitempty"`
 }
 
 func lutBuildDefaults(c LUTBuildConfig) LUTBuildConfig {
@@ -279,7 +285,15 @@ func (r *LUTBuildRun) Kind() string {
 // path, as if the LUT had just said YES at the current minute: the LUT's
 // current strike, expiry and TP, the tab's config. Never consumes the
 // day's real entry. Caller holds e.mu.
-func (s *Service) lutTestFireLocked() (*LUTBuildRun, error) {
+// lutTestOpts: what a test fire may override.
+type lutTestOpts struct {
+	Lots          int     `json:"lots"`           // 0 = the saved config
+	SimDrive      bool    `json:"sim_drive"`      // drive it by its simulation
+	PointsAllowed float64 `json:"points_allowed"` // fixed hedge band (sim and live), 0 = computed
+	MinOneLot     bool    `json:"min_one_lot"`    // a simulated hedge sends at least one lot
+}
+
+func (s *Service) lutTestFireLocked(o lutTestOpts) (*LUTBuildRun, error) {
 	e := lutEng
 	ev := e.live.Eval
 	if ev == nil || ev.Strike <= 0 || ev.TPBps <= 0 {
@@ -290,6 +304,9 @@ func (s *Service) lutTestFireLocked() (*LUTBuildRun, error) {
 		return nil, fmt.Errorf("the LUT has no expiry yet")
 	}
 	c := loadLUTBuildConfig()
+	if o.Lots > 0 {
+		c.Lots = o.Lots
+	}
 	now := time.Now().In(lutIST())
 	if !sbLiveWindow(now) {
 		return nil, fmt.Errorf("outside the broker session (09:15-15:40)")
@@ -311,7 +328,8 @@ func (s *Service) lutTestFireLocked() (*LUTBuildRun, error) {
 	}
 	run := &LUTBuildRun{Test: true, Status: "FIRING", Minute: now.Format("15:04") + " (test)", FiredAt: now.Format("15:04:05.000"),
 		Expiry: expiry, Strike: ev.Strike, Lots: c.Lots, SLBps: risk.SlBps, TPBps: risk.TpBps, ExitTime: c.ExitTime,
-		Account: c.BrokerName + "/" + c.AccountID}
+		Account:   c.BrokerName + "/" + c.AccountID,
+		SimDriven: o.SimDrive, SimPointsAllowed: o.PointsAllowed, SimMinOneLot: o.MinOneLot}
 	e.tests = append(e.tests, run)
 	e.saveDayLocked(e.day)
 	log.Printf("[LUT-BUILD] 🧪 TEST FIRE (user) -> REAL ORDERS %s %s %.0f straddle %d lot(s), delta-neutral, SL %.2f bps TP %.2f bps exit %s, %s, account %s",
@@ -328,6 +346,7 @@ func (h *Handlers) LUTBuildTestHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	var b struct {
 		Confirm string `json:"confirm"`
+		lutTestOpts
 	}
 	_ = json.NewDecoder(r.Body).Decode(&b)
 	if strings.TrimSpace(b.Confirm) != lutBuildConfirm {
@@ -335,7 +354,7 @@ func (h *Handlers) LUTBuildTestHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lutEng.mu.Lock()
-	run, err := h.Service.lutTestFireLocked()
+	run, err := h.Service.lutTestFireLocked(b.lutTestOpts)
 	var cp LUTBuildRun
 	if run != nil {
 		cp = *run
