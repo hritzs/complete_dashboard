@@ -20,8 +20,11 @@ const td = { padding: '10px' };
 
 // A run that holds (or may hold) a real or simulated position.
 // HANDED_OFF: the position is now a normal trade (its own Portfolio row).
+// EXITED / STOPPED-after-hand-off: the build's own position record is not
+// updated by the standard monitor's exit, so a finished build never counts as
+// holding (it showed the old position twice after the 15:37 exit).
 export const sbHolding = (s) =>
-  s?.phase !== 'HANDED_OFF' &&
+  !['HANDED_OFF', 'EXITED'].includes(s?.phase) &&
   (['BUILDING', 'PAUSED', 'COMPLETE', 'EXITING', 'HALTED'].includes(s?.phase) || (s?.position && !s.position.flat));
 
 export const sbStore = createRoot(() => {
