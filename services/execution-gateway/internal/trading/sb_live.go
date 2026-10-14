@@ -475,10 +475,11 @@ func (s *Service) sbExecuteLiveAsync(r *sbRunner, plan DepthEntryPlan, atm Optio
 						continue
 					}
 					q := min(deficit, maxQ)
+					lim := sbCompletionLimit(k, l5[miss], bestBid[miss])
 					r.mu.Lock()
-					r.event("COMPLETE", "LIVE %s behind its partner by %d -- completing %d at the L5 bid %.2f (best %.2f, attempt %d/%d)", miss, deficit, q, l5[miss], bestBid[miss], k+1, sbCompleteRetries)
+					r.event("COMPLETE", "LIVE %s behind its partner by %d -- completing %d, limit %.2f (L5 %.2f, best %.2f, attempt %d/%d)", miss, deficit, q, lim, l5[miss], bestBid[miss], k+1, sbCompleteRetries)
 					r.mu.Unlock()
-					send(map[string]order{miss: {qty: q, lim: l5[miss]}}, "COMPLETE ")
+					send(map[string]order{miss: {qty: q, lim: lim}}, "COMPLETE ")
 				}
 				if stopWhy == "" {
 					if d := filled["PE"]*plan.CEQty/plan.PEQty/lot*lot - filled["CE"]; d >= lot {
@@ -522,6 +523,41 @@ func (s *Service) sbExecuteLiveAsync(r *sbRunner, plan DepthEntryPlan, atm Optio
 	}()
 }
 
+// sbCompletionLimit: the lagging leg's IOC limit, more marketable on each
+// attempt so a fast market does not leave the build one-sided (2026-10-14:
+// CE 2340 behind for 15 s at +999 delta while its L5-bid IOCs cancelled):
+// attempt 1 the L5 bid, 2 the best bid -1 %, 3+ the best bid -3 %. The cap
+// keeps a fill out of an empty book's absurd prices.
+func sbCompletionLimit(attempt int, l5, best float64) float64 {
+	lim := l5
+	switch {
+	case attempt == 1 && best > 0:
+		lim = best * 0.99
+	case attempt >= 2 && best > 0:
+		lim = best * 0.97
+	}
+	if l5 > 0 && lim > l5 {
+		lim = l5
+	}
+	return math.Max(0.05, math.Floor(lim*20)/20) // tick 0.05, rounded down (a sell)
+}
+
+// sbCompletionLots: lots of the lagging leg that bring the build's net delta
+// nearest zero (at least 1, at most what is left to build).
+func sbCompletionLots(netDelta, legDeltaPerLot float64, remaining, lot int64) int64 {
+	if legDeltaPerLot == 0 || lot <= 0 {
+		return 1
+	}
+	n := int64(math.Round(math.Abs(netDelta) / math.Abs(legDeltaPerLot)))
+	if maxN := remaining / lot; n > maxN {
+		n = maxN
+	}
+	if n < 1 {
+		n = 1
+	}
+	return n
+}
+
 // sbCompletionLeg: when the build is lopsided -- one leg ahead, the
 // position carrying delta that one lot of the lagging leg would cut -- it
 // returns that leg. Completion sells it at the best bid without the
@@ -545,8 +581,9 @@ func sbCompletionLeg(view PMSView, remaining, lot int64, dCE, dPE float64) (stri
 	return leg, true
 }
 
-// sbCompleteLocked sells one lot of the lagging leg at the ATM best bid.
-// Caller holds r.mu.
+// sbCompleteLocked sells the lagging leg at the ATM -- as many lots as bring
+// the net delta nearest zero, in one marketable IOC (best bid -1 %, freeze
+// qty cap) -- not one lot per cycle. Caller holds r.mu.
 func (s *Service) sbCompleteLocked(r *sbRunner, leg string, atm OptionChainRow, view PMSView) {
 	lot := int64(r.lotSize)
 	bid := sbRowBids(atm)[leg]
@@ -561,19 +598,27 @@ func (s *Service) sbCompleteLocked(r *sbRunner, leg string, atm OptionChainRow, 
 	r.tranches++
 	r.lastTranche = time.Now()
 	r.addStrike(atm.Strike)
-	r.event("COMPLETE", "build lopsided (CE %d / PE %d, net delta %+.2f): completing 1 lot %s @%.0f, limit the L5 bid %.2f (best %.2f) -- not held to the target",
-		view.BuildCE, view.BuildPE, view.NetDelta, leg, atm.Strike, sbRowL5(atm)[leg], bid)
+	legDelta := math.Abs(atm.CEDelta)
+	if leg == "PE" {
+		legDelta = math.Abs(atm.PEDelta)
+	}
+	remaining := int64(r.cfg.Straddles)*2 - int64(view.BuildCE+view.BuildPE)
+	qty := sbCompletionLots(view.NetDelta, legDelta*float64(lot), remaining, lot) * lot
+	if maxQ := s.resolveMaxOrderQty(r.cfg.Symbol, lot) / lot * lot; maxQ > 0 && qty > maxQ {
+		qty = maxQ
+	}
+	lim := sbCompletionLimit(1, sbRowL5(atm)[leg], bid)
+	r.event("COMPLETE", "build lopsided (CE %d / PE %d, net delta %+.2f): completing %d %s @%.0f in one order, limit %.2f (best %.2f) -- not held to the target",
+		view.BuildCE, view.BuildPE, view.NetDelta, qty, leg, atm.Strike, lim, bid)
 	if !r.isLive {
-		r.pms.ApplyFill(PMSFill{Token: tok, Strike: atm.Strike, OptionType: leg, Side: "SELL", Qty: lot, Price: bid, Role: "BUILD", Tranche: r.tranches})
+		r.pms.ApplyFill(PMSFill{Token: tok, Strike: atm.Strike, OptionType: leg, Side: "SELL", Qty: qty, Price: bid, Role: "BUILD", Tranche: r.tranches})
 		r.dirty = true
 		return
 	}
 	r.busy = true
 	tranche, tradeUID, symbol := r.tranches, r.tradeUID, r.cfg.Symbol
-	l5 := sbRowL5(atm)[leg] // the L5 bid is the limit (fills at the best bids above it)
 	go func() {
-		lim := l5
-		res := s.sbLiveSendOne(r, tradeUID, symbol, lot, tok, atm.Strike, leg, "SELL", lot, &lim, "BUILD")
+		res := s.sbLiveSendOne(r, tradeUID, symbol, lot, tok, atm.Strike, leg, "SELL", qty, &lim, "BUILD")
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		if res.Filled > 0 {
@@ -588,8 +633,8 @@ func (s *Service) sbCompleteLocked(r *sbRunner, leg string, atm OptionChainRow, 
 			s.sbLiveHaltLocked(r, fmt.Sprintf("%s completion order unconfirmed: %s", leg, res.Reason))
 		case res.Status == "REJECTED":
 			r.sbRejectLocked(leg+" completion", res.Reason)
-		case res.Filled < lot:
-			r.event("COMPLETE", "%s completion lot not filled at %.2f (IOC cancelled) -- retrying next cycle", leg, lim)
+		case res.Filled < qty:
+			r.event("COMPLETE", "%s completion filled %d of %d at %.2f (IOC rest cancelled) -- the rest next cycle", leg, res.Filled, qty, lim)
 		}
 		r.busy = false
 		r.lastTranche = time.Now()

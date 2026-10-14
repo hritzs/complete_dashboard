@@ -165,3 +165,35 @@ func TestSBStopRuleNoMoreEntries(t *testing.T) {
 		t.Fatalf("handed-off rule: err %v noEntries %v phase %s", err, r.noEntries, r.phase)
 	}
 }
+
+// The lagging leg's limit gets more marketable each attempt (L5, best -1 %,
+// best -3 %), never above the L5 bid, on the 0.05 tick.
+func TestSBCompletionLimitEscalates(t *testing.T) {
+	if got := sbCompletionLimit(0, 140.10, 141.00); got != 140.10 {
+		t.Fatalf("attempt 1 = L5: %v", got)
+	}
+	if got := sbCompletionLimit(1, 140.10, 141.00); got != 139.55 { // 141 x 0.99 = 139.59 -> 139.55
+		t.Fatalf("attempt 2: %v", got)
+	}
+	if got := sbCompletionLimit(2, 140.10, 141.00); got != 136.75 { // 141 x 0.97 = 136.77 -> 136.75
+		t.Fatalf("attempt 3: %v", got)
+	}
+	if got := sbCompletionLimit(2, 0, 0); got != 0.05 {
+		t.Fatalf("floor: %v", got)
+	}
+}
+
+// Completion sells enough lots to bring the net delta near zero in one go
+// (the 13:08 build sat at +999 delta while completing one lot per cycle).
+func TestSBCompletionLotsCoversTheImbalance(t *testing.T) {
+	// +999 delta, a CE lot cuts 0.5 x 65 = 32.5 -> 31 lots
+	if got := sbCompletionLots(999, 32.5, 10010, 65); got != 31 {
+		t.Fatalf("lots %d", got)
+	}
+	if got := sbCompletionLots(999, 32.5, 650, 65); got != 10 { // capped at what is left
+		t.Fatalf("cap %d", got)
+	}
+	if got := sbCompletionLots(5, 32.5, 10010, 65); got != 1 {
+		t.Fatalf("min 1: %d", got)
+	}
+}
