@@ -1,0 +1,2312 @@
+Let me check the file and whether anything in the app reads it from its current location before moving.
+
+
+
+Bash Inspect parquet file, git tracking, and code references
+IN
+ls -la NIFTY.parquet; echo "--- git status ---"; git ls-files --error-unmatch NIFTY.parquet 2>&1 | head -1; git check-ignore -v NIFTY.parquet; echo "--- code references ---"; grep -rn --include=*.py -E "NIFTY\.parquet|\.parquet" . 2>/dev/null | grep -v -E "(before_|\.bak|_20[0-9]{6}|Copy|_REVIEW|ref_material|sell_atm_release|\.venv|/venv/)" | head; echo "--- existing research dirs ---"; ls -d research* Research* 2>/dev/null
+
+OUT
+Exit code 2
+-rw-r--r-- 1 Administrator 197121 266293943 Jan 29  2026 NIFTY.parquet
+--- git status ---
+error: pathspec 'NIFTY.parquet' did not match any file(s) known to git
+--- code references ---
+./tests/test_lut_factors.py:53:    # values read from \\172.16.1.85\Shared\TickDataIV\<day>\NIFTY.parquet
+--- existing research dirs ---
+11:58 AM
+It's untracked, 254 MB, and the only code mention is a comment pointing at a network share, so nothing in the app depends on it. Moving it.
+
+
+
+Bash Create research folder and move the parquet file
+IN
+mkdir -p research/tick_data && [ ! -e research/tick_data/NIFTY.parquet ] && mv NIFTY.parquet research/tick_data/NIFTY.parquet && ls -la research/tick_data/ && ls NIFTY.parquet 2>&1 | head -1
+
+OUT
+total 260056
+drwxr-xr-x 1 Administrator 197121         0 Oct 13 11:58 .
+drwxr-xr-x 1 Administrator 197121         0 Oct 13 11:58 ..
+-rw-r--r-- 1 Administrator 197121 266293943 Jan 29  2026 NIFTY.parquet
+ls: cannot access 'NIFTY.parquet': No such file or directory
+11:58 AM
+The file is now at research/tick_data/NIFTY.parquet (254 MB, the same file, moved rather than copied). Nothing in the app referenced the old path.
+
+I read "in this context only" as keeping the research in its own folder inside this project, separate from the live trading code. If you meant something else, such as a different drive or keeping it out of git, tell me and I'll adjust.
+
+Notes:
+
+Git: research/ will show up as untracked. If you don't want it to appear in git status, I can add it to .gitignore.
+Python: I can't read the parquet yet. This machine has no working Python (the .venv points at a Python 3.12 install that's gone, and the python on PATH is only the Microsoft Store stub). To work with it I need an interpreter with pandas and pyarrow (or polars).
+Next step: tell me where a working Python lives, or I can help you install one. Then my first step is read-only: the schema, row count, time range, and a few sample rows.
+Research question: once I can read it, tell me what you want to study (for example straddle behaviour, IV vs. entry time, or slippage around entry). I'll write the scripts under research/ and won't touch the trading code.
+
+
+okay great now i have multiple every day files like this so what i want is basicaly we ran our backtest on these files ed
+"C:\Users\Administrator\Desktop\api_v2_main_29_07_wings_new\research\GammaShort_Backtest_Final.py"
+first explain this code then we will what else we can perform oin this also cant we keep this folders complete context to the new /research code?
+make sure u send complete codebase knowledge too to the research folder
+Show more
+12:15 PM
+Let me read the backtest script first.
+
+
+
+Bash List research folder and script length
+IN
+cd /c/Users/Administrator/Desktop/api_v2_main_29_07_wings_new/research && ls -la . tick_data | head -30; wc -l GammaShort_Backtest_Final.py
+
+OUT
+.:
+total 328
+drwxr-xr-x 1 Administrator 197121     0 Oct 13 12:14 .
+drwxr-xr-x 1 Administrator 197121     0 Oct 13 11:58 ..
+-rw-r--r-- 1 Administrator 197121 69903 Oct 12 17:52 GammaShort_Backtest_Final.py
+drwxr-xr-x 1 Administrator 197121     0 Oct 13 11:58 tick_data
+
+tick_data:
+total 260056
+drwxr-xr-x 1 Administrator 197121         0 Oct 13 11:58 .
+drwxr-xr-x 1 Administrator 197121         0 Oct 13 12:14 ..
+-rw-r--r-- 1 Administrator 197121 266293943 Jan 29  2026 NIFTY.parquet
+1449 GammaShort_Backtest_Final.py
+Read C:\Users\Administrator\Desktop\api_v2_main_29_07_wings_new\research\GammaShort_Backtest_Final.py
+Read C:\Users\Administrator\Desktop\api_v2_main_29_07_wings_new\research\GammaShort_Backtest_Final.py (lines 501-1020)
+Read C:\Users\Administrator\Desktop\api_v2_main_29_07_wings_new\research\GammaShort_Backtest_Final.py (lines 1020-1454)
+12:16 PM
+I've read the whole script. For the "complete codebase knowledge" part I need an accurate map of the live system, so let me survey it and read the memory rules.
+
+
+
+Bash Survey live codebase layout and sizes
+IN
+cd /c/Users/Administrator/Desktop/api_v2_main_29_07_wings_new && echo "=== top-level py (live, non-backup) ==="; ls *.py 2>/dev/null | grep -v -E "(before_|_20[0-9]{6}|Copy|\.bak)" | while read f; do printf "%-38s %7s lines\n" "$f" "$(wc -l < "$f")"; done; echo; for d in trading trading/monitors core api background market_data models utils database; do echo "=== $d ==="; ls $d/*.py 2>/dev/null | grep -v -E "(before_|_20[0-9]{6}|Copy|\.bak)" | while read f; do printf "%-52s %6s\n" "$f" "$(wc -l < "$f")"; done; done; echo "=== other dirs ==="; ls -d */ | head -50; echo "=== docs/md ==="; ls *.md docs 2>/dev/null | head -20
+
+OUT
+=== top-level py (live, non-backup) ===
+Connect.py                                 827 lines
+Exception.py                                81 lines
+MarketDataSocketClient.py                  309 lines
+apply_build_live_atm_wings_patch.py        690 lines
+apply_building_all_monitors_actions_patch.py     393 lines
+apply_building_hedge_monitor_patch.py      322 lines
+apply_dynamic_config_reload.py             108 lines
+apply_fast_exit_priority_patch.py          934 lines
+apply_fast_exit_priority_patch_FIXED.py     970 lines
+apply_fast_exit_priority_patch_SAFE.py     826 lines
+apply_fast_exit_priority_patch_SAFE10.py     431 lines
+apply_fast_exit_priority_patch_SAFE11.py     436 lines
+apply_fast_exit_priority_patch_SAFE12.py     436 lines
+apply_fast_exit_priority_patch_SAFE13.py     435 lines
+apply_fast_exit_priority_patch_SAFE14.py     470 lines
+apply_fast_exit_priority_patch_SAFE15.py     471 lines
+apply_fast_exit_priority_patch_SAFE3.py     834 lines
+apply_fast_exit_priority_patch_SAFE4.py     855 lines
+apply_fast_exit_priority_patch_SAFE5.py     855 lines
+apply_fast_exit_priority_patch_SAFE6.py     292 lines
+apply_fast_exit_priority_patch_SAFE7.py     303 lines
+apply_fast_exit_priority_patch_SAFE8.py     338 lines
+apply_fast_exit_priority_patch_SAFE9.py     410 lines
+apply_fast_exit_ui_SAFE10.py               116 lines
+apply_fast_exit_ui_SAFE11.py               128 lines
+apply_fast_exit_ui_SAFE9.py                140 lines
+apply_fast_exit_ui_patch_SAFE2.py          272 lines
+apply_fast_exit_ui_patch_SAFE3.py          276 lines
+apply_fast_exit_ui_patch_SAFE4.py          276 lines
+apply_fast_exit_ui_repair_SAFE5.py          90 lines
+apply_fast_exit_ui_repair_SAFE6.py          93 lines
+apply_fast_exit_ui_repair_SAFE7.py         102 lines
+apply_fast_exit_ui_repair_SAFE8.py          91 lines
+apply_snapshot_dashboard_proxy_SAFE15.py     121 lines
+audit_dev_depth.py                          46 lines
+audit_live_wings_datatypes_SAFE24C.py     1025 lines
+audit_nifty_expiry.py                       70 lines
+audit_special_final.py                     312 lines
+cancel_config_trade.py                     101 lines
+check_dev_depth.py                          53 lines
+check_full_parity.py                        76 lines
+check_lut_buckets.py                        20 lines
+check_parity.py                             61 lines
+compare_luts.py                             48 lines
+config.py                                  190 lines
+cred.py                                     23 lines
+data_client.py                             212 lines
+diagnose_fast_exit_hot_path.py              33 lines
+diagnose_fast_exit_snapshot_routes_SAFE13.py      91 lines
+diagnose_fast_exit_snapshot_routes_SAFE14.py      92 lines
+diagnose_fast_exit_ui_final_live.py        132 lines
+diagnose_fast_exit_ui_live.py              142 lines
+diagnose_fast_exit_ui_node_SAFE12.py       182 lines
+diagnose_partial_sqf_execution_loop.py      59 lines
+diagnose_square_off_partial_path.py         77 lines
+diagnose_trade_manager_structure.py         63 lines
+diagnose_trade_manager_structure_BOM_SAFE.py      91 lines
+find_tokens.py                             309 lines
+fix_SAFE29_exit_route_validator.py         124 lines
+fix_SAFE29_exit_validator.py               311 lines
+fix_SAFE29_validator.py                    159 lines
+fix_SAFE29_validator_path.py                81 lines
+fix_SAFE29_validator_scope.py               79 lines
+fix_config_builder_dt.py                    85 lines
+fix_partial_sqf_direct_execution.py        382 lines
+fix_tp_sync_timing.py                      221 lines
+fix_trade_details_refresh_visible.py        84 lines
+hoadley.py                                 257 lines
+inspect_db_parity.py                       331 lines
+inspect_trade.py                            93 lines
+main.py                                    639 lines
+make_fix.py                                145 lines
+manual_db_entry.py                          53 lines
+marketdata_service.py                     1787 lines
+mock_algo.py                               177 lines
+mock_test.py                               177 lines
+only_sell.py                               295 lines
+order_book_fetcher.py                      172 lines
+order_book_service.py                      222 lines
+order_reconciler.py                        491 lines
+patch_SAFE26B_RECOVERY.py                  693 lines
+patch_SAFE26C.py                          1005 lines
+patch_SAFE26D.py                           766 lines
+patch_SAFE26E_UI.py                        380 lines
+patch_SAFE26_END_TO_END.py                 721 lines
+patch_SAFE27.py                            644 lines
+patch_SAFE27B.py                           124 lines
+patch_SAFE28_UI.py                         746 lines
+patch_SAFE29_FAST_SEPARATION.py           3464 lines
+patch_SAFE29_FINALIZE.py                  1364 lines
+patch_SAFE29_REPAIR.py                    1089 lines
+patch_active_monitors.py                    96 lines
+patch_architectural.py                     131 lines
+patch_chain_atm_log.py                      49 lines
+patch_data_client_SAFE25.py                226 lines
+patch_db_payload.py                         72 lines
+patch_depth_preserve_safe.py               257 lines
+patch_entry_monitor.py                      99 lines
+patch_exit_at_straddle_partial_SAFE22E.py     445 lines
+patch_exit_straddle_partial_SAFE22B.py     495 lines
+patch_exit_straddle_partial_SAFE22C.py     490 lines
+patch_exit_straddle_partial_SAFE22F.py     381 lines
+patch_exit_straddle_partial_SAFE22G.py     394 lines
+patch_exit_straddle_partial_SAFE22H.py     472 lines
+patch_exit_straddle_partial_SAFE22I.py     514 lines
+patch_exit_straddle_partial_SAFE22J.py     551 lines
+patch_exit_straddle_partial_SAFE22K.py     717 lines
+patch_exit_straddle_partial_SAFE22L.py     836 lines
+patch_fast_exit_percentage_chunks_SAFE22T.py     430 lines
+patch_fast_exit_ui_final_SAFE22.py         396 lines
+patch_fast_exit_ui_final_SAFE22A.py        409 lines
+patch_final_dn_rounding_buffer_02.py       172 lines
+patch_force_monitors.py                     45 lines
+patch_force_prints.py                       25 lines
+patch_greeks_atm.py                         61 lines
+patch_hook_safeguards.py                    30 lines
+patch_inject_loops.py                       30 lines
+patch_monitor.py                            95 lines
+patch_next_week_expiry_safe.py            1054 lines
+patch_preserve_full_depth.py               153 lines
+patch_snapshot_await.py                     29 lines
+patch_state_pending_entry.py                26 lines
+patch_tp_monitor.py                         35 lines
+patch_trace.py                             122 lines
+patch_ui_encoding_SAFE22M.py               193 lines
+patch_ui_encoding_SAFE22N.py               193 lines
+patch_ui_encoding_SAFE22O.py               207 lines
+patch_ui_rupee_refresh_SAFE_UI25.py        262 lines
+patch_ui_spot_atm_parse_SAFE22P.py         129 lines
+patch_ui_spot_atm_parse_SAFE22Q.py         128 lines
+patch_ui_tokens.py                          48 lines
+patch_xts_v2_apporderid_dev.py             171 lines
+remove_straddle_stop_loss_pct.py           450 lines
+repair_SAFE29_exit_validator.py            289 lines
+repair_tasks.py                             26 lines
+repair_unattributed_orders.py              114 lines
+restore_portfolio_trade_details_header.py     210 lines
+restore_portfolio_trade_details_refresh.py     200 lines
+restore_trade_details_refresh.py           267 lines
+restore_trade_details_refresh_safe.py      228 lines
+run_dev.py                                  85 lines
+selector_test.py                            43 lines
+setup.py                                   155 lines
+snapshot_service.py                       1635 lines
+standalone_parity_check.py                 238 lines
+start_all.py                               334 lines
+tail_all.py                                 36 lines
+tasks.py                                   288 lines
+test.py                                      2 lines
+test_bsecm_feed.py                         134 lines
+test_lut_selector.py                        19 lines
+test_option_depth_standalone.py            289 lines
+test_rest_get_quote.py                     157 lines
+test_safety_and_exits.py                    66 lines
+test_session_changes.py                    886 lines
+test_websocket_feed.py                      97 lines
+update_roll_divisor.py                      94 lines
+verifier_service.py                        272 lines
+verify.py                                   69 lines
+verify_fast_exit_final.py                  279 lines
+
+=== trading ===
+trading/__init__.py                                       0
+trading/build_planner.py                                308
+trading/build_result_utils.py                            21
+trading/builder.py                                     5621
+trading/builder_atm_recovery.py                         469
+trading/builder_fill_utils.py                           194
+trading/builder_retry_reconciliation.py                 490
+trading/builder_wings.py                                468
+trading/chain_provider.py                              1689
+trading/config_builder.py                              1736
+trading/data_client.py                                  461
+trading/delta_neutral_utils.py                          316
+trading/depth_authorization.py                         1262
+trading/depth_aware_fast_mtm.py                        2139
+trading/entry_at_straddle_engine.py                     335
+trading/entry_straddle_monitor.py                         0
+trading/event_bus.py                                    259
+trading/exit_delta_neutral.py                            47
+trading/exit_priority.py                                 13
+trading/expiry_context.py                                41
+trading/fast_exit_monitor.py                            538
+trading/fast_partial_square_off.py                     2468
+trading/fast_position_reconciler.py                      65
+trading/hedger.py                                      3209
+trading/lot_build.py                                    586
+trading/lut_basket.py                                   207
+trading/lut_factors.py                                  743
+trading/manual_entry_monitor.py                           0
+trading/monitors.py                                     458
+trading/order_batching_utils.py                         263
+trading/order_executor.py                              1822
+trading/order_manager.py                                 21
+trading/pnl_calculator.py                               219
+trading/position_role_classifier.py                     122
+trading/positions.py                                     67
+trading/roller.py                                      1133
+trading/special_engine_state.py                         257
+trading/special_oms.py                                 1669
+trading/special_oms_db.py                               874
+trading/special_pms.py                                   63
+trading/square_off.py                                  5322
+trading/square_off_analysis.py                          420
+trading/square_off_guards.py                            261
+trading/square_off_inventory.py                        1079
+trading/square_off_lock.py                               83
+trading/straddle_price_guard.py                         108
+trading/straddle_price_guard_runtime.py                  65
+trading/trade_closeout.py                               132
+trading/trade_manager.py                               1575
+trading/trade_process.py                                579
+trading/verification_utils.py                            52
+=== trading/monitors ===
+trading/monitors/__init__.py                              2
+trading/monitors/base_monitor.py                         44
+trading/monitors/entry_straddle_monitor.py              428
+trading/monitors/hedge_monitor.py                       125
+trading/monitors/roll_monitor.py                        187
+trading/monitors/sl_monitor.py                          158
+trading/monitors/square_off_monitor.py                   67
+trading/monitors/straddle_price_monitor.py              550
+trading/monitors/tp_monitor.py                          234
+=== core ===
+core/__init__.py                                          0
+core/resilient_task.py                                   25
+core/shared_memory.py                                   199
+core/state.py                                            60
+core/tick_engine.py                                     115
+core/zmq_bus.py                                          83
+=== api ===
+api/__init__.py                                          12
+api/routes.py                                          3134
+api/websocket.py                                        128
+=== background ===
+background/__init__.py                                   31
+background/tasks.py                                     686
+=== market_data ===
+market_data/__init__.py                                   9
+market_data/data_client.py                              595
+market_data/socket_callbacks.py                         428
+market_data/socket_client.py                            340
+market_data/tasks.py                                   2246
+=== models ===
+models/__init__.py                                       13
+models/schemas.py                                       602
+models/state.py                                         957
+=== utils ===
+utils/__init__.py                                        31
+utils/code_version.py                                    60
+utils/exchange_segment.py                                43
+utils/greeks.py                                         319
+utils/helpers.py                                        165
+utils/logger.py                                          62
+utils/shared_data.py                                    117
+utils/synthetic_future.py                               111
+=== database ===
+database/__init__.py                                      8
+database/db_manager.py                                 1931
+database/manual_roll_trigger.py                          92
+=== other dirs ===
+Greek RestAPI Documents/
+_ACTIVE_SOURCE_REVIEW/
+_ATM_TAB_REVIEW/
+_BUILD_DEPTH_AUTH_FIX_BACKUP_20260929_140250/
+_BUILD_DEPTH_AUTH_FIX_BACKUP_20260929_140508/
+_BUILD_DEPTH_AUTH_FIX_BACKUP_20260929_141530/
+_BUILD_DEPTH_AUTH_FIX_BACKUP_20260929_141708/
+_BUILD_HEDGE_DEPTH_SQF_FIX_BACKUP_20261001_150529/
+_BUILD_HEDGE_DEPTH_SQF_FIX_INLINE_V8_BACKUP_20261001_161817/
+_BUILD_HEDGE_DEPTH_SQF_FIX_INLINE_V9_BACKUP_20261001_170939/
+_BUILD_HEDGE_DEPTH_SQF_FIX_V10_BACKUP_20261001_172043/
+_BUILD_HEDGE_DEPTH_SQF_FIX_V3_BACKUP_20261001_150842/
+_BUILD_HEDGE_DEPTH_SQF_FIX_V4_BACKUP_20261001_151049/
+_BUILD_HEDGE_DEPTH_SQF_FIX_V5_BACKUP_20261001_151311/
+_BUILD_HEDGE_DEPTH_SQF_FIX_V6_BACKUP_20261001_152948/
+_BUILD_HEDGE_SQF_FIX_BACKUP_20261001_145558/
+_CURRENT_SOURCE_REVIEW/
+_ENTRY_AT_STRADDLE_BACKUP_20260925_165256/
+_FAST_MTM_CHECKPOINT_DEPTH_FIX_BACKUP_20260929_151006/
+_FAST_MTM_CHECKPOINT_DEPTH_FIX_BACKUP_20260929_151336/
+_FAST_MTM_CHECKPOINT_DEPTH_FIX_BACKUP_20260929_151614/
+_FAST_MTM_FINAL_GATE_BACKUP_20260925_164925/
+_FAST_MTM_TIME_FIX_BACKUP_20260929_143513/
+_MTM_BUILD_EXPIRY_FIX_BACKUP_20260928_173513/
+_PORTFOLIO_UI_FIX_BACKUP_20260929_144341/
+_PORTFOLIO_UI_FIX_BACKUP_20260929_144643/
+_PORTFOLIO_UI_FIX_BACKUP_20260929_144814/
+_PORTFOLIO_UI_FIX_BACKUP_20260929_145109/
+_PORTFOLIO_UI_FIX_BACKUP_20260929_145234/
+_PORTFOLIO_UI_MOJIBAKE_CLEANUP_BACKUP_20260929_145355/
+__pycache__/
+_depth_auth_backup_20260918_123253/
+_dn_depth_atomic_backup_20260923_131116/
+_dn_depth_patch_backup_20260918_130710/
+_dn_depth_patch_retry_20260918_130943/
+_dn_repair_backup_20260923_133105/
+_entry_straddle_final_patch_backup_20260925_172424/
+_entry_straddle_final_patch_backup_20260925_172736/
+_entry_straddle_final_patch_backup_20260925_172941/
+_exit_size_oms_ui_backup_20260921_103816/
+_expiry_isolation_backup_20260928_170730/
+_expiry_isolation_backup_20260928_170902/
+_final_dn_entry_backup_20260921_102843/
+_live_repair_backup_20260921_110240/
+_mtm_build_fix_backup_20260928_165745/
+_mtm_build_fix_backup_20260928_170723/
+_qty_neutral_backup_20260918_125620/
+_strict_mtm_dbidx_backup_20260921_102440/
+_trade_manager_test_fix_backup_20260923_134808/
+_trade_manager_test_fix_backup_20260923_142113/
+=== docs/md ===
+CHANGELOG.md
+README - Copy.md
+README.md
+TODO - Copy.md
+TODO.md
+
+docs:
+session_history_20260926_20260928_redacted.jsonl
+Bash Read all saved memory files
+IN
+cd /c/Users/Administrator/.claude/projects/c--Users-Administrator-Desktop-api-v2-main-29-07-wings-new/memory && for f in *.md; do echo "##### $f"; cat "$f"; echo; done
+
+OUT
+##### MEMORY.md
+- [roller-py-off-limits](roller-py-off-limits.md) — trading/roller.py must never be edited, even to fix confirmed live bugs, without first asking…
+- [never-place-large-single-orders](never-place-large-single-orders.md) — In this trading system, no code path may submit a single order carrying a…
+- [depth-gated-sizing-must-shrink-not-block](depth-gated-sizing-must-shrink-not-block.md) — Depth-gated execution in this trading system must size…
+- [order-executor-off-limits](order-executor-off-limits.md) — Don't change trading/order_executor.py; build new execution on its existing methods (lot_build.py does)
+
+##### depth-gated-sizing-must-shrink-not-block.md
+---
+name: depth-gated-sizing-must-shrink-not-block
+description: "Depth-gated execution in this trading system must size down to whatever quantity the current book guarantees, never block waiting for the full originally-requested quantity"
+metadata: 
+  node_type: memory
+  pinned: false
+  originSessionId: 0ab9f42d-753c-4f64-bb5c-65a8aaa6a415
+  modified: 2026-09-18T09:18:54.067Z
+---
+
+In this trading system (NIFTY/SENSEX straddle execution, `api_v2_main_29_07_wings_new`), any depth-gated execution path — entry sizing, exit sizing, wing sizing, or any future feature that walks the order book before submitting — must always search for the largest quantity the *current* L1-L5 book can fully guarantee at a price strictly better than the configured target, and submit that reduced size, rather than blocking indefinitely for the full originally-requested quantity to become executable.
+
+This came up when a depth-authorization entry gate was built strictly all-or-nothing (reject the whole request if the complete requested quantity couldn't clear the target price), matching a test file's literal contract. In production this caused an entry to loop forever: a first-pass capacity check found the book could momentarily hold 100 lots, froze that size, and a later price-based check then demanded exactly 100 lots clear the target on every retry — but the book only ever supported a smaller size at any given instant, so the fixed 100-lot request could never clear and the trade never executed. The user's correction was explicit: "u have to fill till whatever depth is available not complete depth" — i.e., find and take the largest size that genuinely clears the target (never a blind "take whatever's available regardless of price"), rather than treating a smaller available size as a reason to reject and wait forever.
+
+The reconciled design: an inner primitive stays strictly all-or-nothing for a *specific* requested quantity (useful for validating an already-decided size, e.g. right before broker submission), but a separate outer search layer binary-searches over lot counts against that same strict primitive to find the largest size that actually clears, and that reduced-but-proven size is what gets authorized and submitted. Any future depth-gated feature in this codebase should follow that same two-layer shape rather than only implementing the strict all-or-nothing check.
+
+##### mtm-exit-fires-above-target.md
+---
+name: mtm-exit-fires-above-target
+description: "exit_at_mtm / partial_sqf_at_mtm always mean \"exit when MTM is at or above the target\", including negative targets -- never a loss limit"
+metadata:
+  node_type: memory
+  pinned: false
+  originSessionId: 0ab9f42d-753c-4f64-bb5c-65a8aaa6a415
+  modified: 2026-09-30T10:01:49.969Z
+---
+
+In this trading system the MTM exit targets (`exit_at_mtm`, `partial_sqf_at_mtm`) always fire when the trade's MTM is **at or above** the target value (`MTM >= target`). This holds for negative targets too: a target of -85000 means "exit once MTM has recovered to -85000 or better", not a stop-loss that fires when MTM falls below -85000. Only 0 / unset disables the rule.
+
+The user corrected this forcefully after I reinterpreted a negative target as a loss limit (MTM <= target) because the value was negative and had been moved further from zero. Do not infer direction from the sign or from how the value was changed; if the direction ever seems ambiguous, ask before changing exit logic on a live trading system.
+
+##### never-place-large-single-orders.md
+---
+name: never-place-large-single-orders
+description: "In this trading system, no code path may submit a single order carrying a large outstanding quantity -- always split into small, capped, lot-aligned orders"
+metadata: 
+  node_type: memory
+  pinned: false
+  originSessionId: 0ab9f42d-753c-4f64-bb5c-65a8aaa6a415
+  modified: 2026-09-18T10:00:00.236Z
+---
+
+In this trading system (`api_v2_main_29_07_wings_new`), any code path that places a live order must never submit one large physical order carrying a big outstanding/remainder quantity, even when that full quantity has already been proven fillable (e.g. by a depth-authorization guarantee). Orders must be split into several small, capped, lot-aligned pieces instead.
+
+This was found as a live bug: `trading/builder_retry_reconciliation.py`'s chunk-retry reconciliation logic computed an outstanding remainder (e.g. 5525 contracts still owed toward a 6500-contract target) and placed it as a *single* SELL order per leg. That single 5525-contract order was rejected by the broker/exchange (very likely NSE's per-order freeze-quantity limit, though the rejection reason was separately being logged as "Unknown" due to a wrong field name). The user's correction was explicit: "too big of a size to maintain the delta" — a large single order is unsafe both because it risks exceeding an exchange's per-order quantity limit and because, even if accepted, it commits a large slice of premium to one fill price with no opportunity to check in between, which is bad for delta-neutral maintenance at that trade size. The user's stated safe range was roughly 65–645 contracts per order (with `lot_size=65`, that's about 1–10 lots).
+
+The fix pattern used: introduce a per-order cap distinctly *smaller* than the broker's own general `max_order_qty` safety limit (which already exists to avoid outright exchange rejection but was still large enough, e.g. 1800, to allow an oversized single order through this particular code path), and split any outstanding quantity into multiple capped, lot-aligned pieces before generating replacement/child orders — never place the full remainder as one ticket. Any future order-generation or reconciliation code added to this codebase should follow the same pattern: compute a small per-order ceiling (on the order of 1–10 lots, not the broker's raw max), and split rather than submit large single orders.
+
+##### order-executor-off-limits.md
+---
+name: order-executor-off-limits
+description: Do not change trading/order_executor.py (the normal order executor); build new execution features on top of its existing methods
+metadata:
+  node_type: memory
+  type: feedback
+  originSessionId: 0ab9f42d-753c-4f64-bb5c-65a8aaa6a415
+  modified: 2026-10-06T11:48:25.180Z
+---
+
+While the lot-by-lot depth-gated build was being implemented (2026-10-06), the user interrupted with "dont change the normal order executor". `trading/order_executor.py` (OrderExecutor: `execute_batch`, `verify_orders_bulk`, `place_single_order`, `cancel_all_open_orders_for_trade`) must stay as it is.
+
+**Why:** it is the shared live-money path for every build, hedge, roll and square-off, not just entry_at_straddle builds; the user wants new behaviour added around it, not inside it.
+
+**How to apply:** new execution logic composes the existing executor entry points. `trading/lot_build.py` does this: `execute_batch(..., max_retries=0)` per round, `verify_orders_bulk` (which already cancels resting orders), and the broker's `xt_i.cancel_order` called directly through the executor's thread pool. IOC is emulated (place a marketable DAY limit, cancel what did not fill) because `Connect.py` only defines `VALIDITY_DAY`. If a change really needs the executor, ask first, same gate as [[roller-py-off-limits]]. Related rules: [[never-place-large-single-orders]], [[depth-gated-sizing-must-shrink-not-block]].
+
+##### roller-py-off-limits.md
+---
+name: roller-py-off-limits
+description: "trading/roller.py must never be edited, even to fix confirmed live bugs, without first asking the user"
+metadata: 
+  node_type: memory
+  pinned: false
+  originSessionId: 0ab9f42d-753c-4f64-bb5c-65a8aaa6a415
+  modified: 2026-09-18T10:26:55.802Z
+---
+
+The user has explicitly instructed, more than once in the same project, that `trading/roller.py` (the position-roll execution module in `api_v2_main_29_07_wings_new`) must not be edited directly. This was reaffirmed even after a confirmed, live-money-risk bug was found in it: `execute_roll()` resolves the new roll leg's CE/PE tokens from `state.option_chains.get(symbol)`, a symbol-only cache with no expiry filter, with no validation against the trade's actual expiry — the same bug class already fixed elsewhere in the codebase (`trading/builder.py`, `trading/hedger.py`, `trading/monitors/roll_monitor.py`). When asked directly whether to make a narrow, one-line exception to fix just this bug using the same already-proven validation pattern, the user still said no and to leave the file untouched.
+
+The correct behavior going forward is to always find and clearly report bugs in `trading/roller.py` — including their severity and exact mechanism — but never modify the file itself, and never assume a later request to "fix this everywhere" or "sweep the whole codebase" implicitly includes this file. Always ask explicitly before touching `trading/roller.py`, even when a fix looks safe, narrow, or urgent, and expect the answer may still be no. In a later session the user did explicitly say yes ("go ahead and fix it ASAP") to a specific, already-reported finding — so this is a real per-instance gate, not a permanent blanket refusal; once given, proceed with the same care as any other live-money edit.
+
+Separately, this codebase's own tooling enforces a related restriction at the harness level: any Bash/PowerShell command whose arguments reference `trading/roller.py` by path — including a read-only syntax check like `py_compile` — is blocked by the auto-mode permission classifier ("Modify Shared Resources"), independent of whether the user has approved the edit. This is not something to work around; after editing this file, verify correctness by re-reading the changed sections with the Read tool (structure, indentation, logic) rather than attempting `python -m py_compile`/`pytest` against it, and say so plainly to the user rather than silently skipping verification.
+Shell cwd was reset to c:\Users\Administrator\Desktop\api_v2_main_29_07_wings_new
+12:16 PM
+Let me read the README/CHANGELOG and the live LUT code, since that's what the backtest has to match.
+
+
+
+Bash Read README
+IN
+wc -l README.md CHANGELOG.md TODO.md; echo "=== README ==="; sed -n 1,140p README.md
+
+OUT
+  69 README.md
+  68 CHANGELOG.md
+  44 TODO.md
+ 181 total
+=== README ===
+# Live Straddle Trading Dashboard
+
+This is a real-time, event-driven options trading system built with Python, FastAPI, and ZeroMQ. It is designed for automated straddle trading, delta-neutral hedging, and provides a live dashboard for monitoring.
+
+## Architecture
+
+The system is composed of several microservices that communicate via ZeroMQ for high performance and low latency:
+
+-   **Main Application (`main.py`)**: The central hub, providing the REST API, WebSocket endpoint for the UI, and managing trade lifecycle events.
+-   **Market Data Service (`marketdata_service.py`)**: Connects to the broker's market data feed (XTS), processes ticks, calculates option chains with Greeks, and broadcasts data via ZMQ.
+-   **Order Reconciler (`order_reconciler.py`)**: A dedicated process to poll the broker's order book, reconcile order statuses, and manage verification jobs.
+-   **Snapshot Service (`snapshot_service.py`)**: Computes and broadcasts detailed, real-time PnL, Greeks, and other metrics for each active trade.
+-   **Order Book Service (`order_book_service.py`)**: Caches and serves the broker's order book to other services.
+
+## Features
+
+-   **Microservice Architecture**: Decoupled services for scalability and resilience.
+-   **Real-time Data**: WebSocket and ZeroMQ for low-latency data flow from market to UI.
+-   **Event-Driven Trading**: An event bus manages trading logic (hedging, stop-loss, square-off) in a prioritized manner.
+-   **Delta-Neutral Hedging**: Automated synthetic future hedging to manage position delta.
+-   **Configurable Automation**: Trade parameters and monitor settings are configurable per-trade.
+-   **Persistent State**: SQLite database for storing trades and orders.
+-   **Shared Memory**: High-speed inter-process communication for price and order data.
+
+## Setup
+
+1.  **Clone the repository:**
+    ```bash
+    git clone <your-repository-url>
+    cd <repository-directory>
+    ```
+
+2.  **Install dependencies:**
+    It's recommended to use a virtual environment.
+    ```bash
+    python -m venv venv
+    source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
+    pip install -r requirements.txt
+    ```
+
+3.  **Configure Credentials:**
+    Copy `cred.py.example` to `cred.py` and fill in your broker API keys and secrets.
+    ```python
+    # cred.py
+    API_KEY_I = "YOUR_INTERACTIVE_API_KEY"
+    API_SECRET_I = "YOUR_INTERACTIVE_API_SECRET"
+    API_KEY_M = "YOUR_MARKETDATA_API_KEY"
+    API_SECRET_M = "YOUR_MARKETDATA_API_SECRET"
+    clientID = "YOUR_CLIENT_ID"
+    ```
+
+4.  **Configure Settings:**
+    Review `config.py` and `config.ini` for port settings and other parameters.
+
+## Running the System
+
+Use the provided launcher script to start all services in the correct order with health checks.
+
+```bash
+python start_all.py
+```
+
+This will start all microservices and the main application. You can then access the dashboard at `http://localhost:5000`.
+
+To view live logs for each service, run:
+```bash
+python tail_all.py
+```
+
+To stop all services, press `Ctrl+C` in the terminal where `start_all.py` is running.
+Bash Read CHANGELOG, TODO and start_all heads
+IN
+sed -n 1,60p CHANGELOG.md | cut -c1-220; echo "=== TODO ==="; sed -n 1,50p TODO.md | cut -c1-220; echo "=== start_all ==="; sed -n 1,80p start_all.py | cut -c1-200
+
+OUT
+# Changelog
+
+## 2026-09-26 -- 2026-09-28 session
+
+### Fixed
+- **`marketdata_service.py`**: NIFTY/SENSEX cash-index spot tokens (26000/seg1,
+  26065/seg11) were never subscribed on the live websocket feed -- only
+  option CE/PE legs of active trades get subscribed via
+  `subscribe_tokens()`/`_execute_subscribe()`, and the spot index isn't part
+  of any straddle's legs. This forced a REST round trip for spot price on
+  every single chain-refresh cycle, forever, regardless of whether a trade
+  was active (confirmed: 71 REST fallbacks in one ~6-minute session, never
+  stopping). Fixed by subscribing both cash-index tokens once, permanently,
+  at service startup, over the same 1512 LTP feed every option token already
+  uses (`marketdata_service.py` around `main()`, right after the socket
+  connects).
+
+### Cleaned up
+- Removed 254 stray duplicate `... - Copy` files and folders scattered
+  across the project (every top-level folder had a same-named `- Copy`
+  sibling, including `.git - Copy`, `trading - Copy`, etc.) -- confirmed
+  stale/non-live before removal (older content, and directory names with
+  spaces/hyphens can never be valid Python packages).
+- Added `.gitignore` entries for the stray nested Claude Code session/memory
+  folder (`c--Users-Administrator-Desktop-api-v2-main-29-07-wings-new/`)
+  that had ended up inside the project directory -- contains full
+  conversation transcripts, never belongs in this repo.
+
+### Verified (read/trace only, no code changes)
+- **Depth-gated delta-neutral build** (`trading/depth_authorization.py`,
+  `capture_largest_guaranteed_authorization()`): traced against a real
+  production log (`ny260926170400a`) and confirmed it correctly anchors,
+  lot-floors, derives the delta-neutral companion leg, caps by the
+  companion's own depth capacity, walks real bid depth to a weighted
+  execution price, and only authorizes when that price strictly clears
+  target. Correctly shrinks tranche size under thin depth rather than
+  forcing a bad fill, and correctly refuses (returns `None`) entirely when
+  no lot-aligned pair can clear target -- verified live, pre-market
+  (08:36 IST, empty order book), against the real unmodified function.
+- **MTM booking / close-out** (`trading/trade_closeout.py`,
+  `finalize_closed_trade()`): confirmed it computes realized PnL from
+  actually-reconciled broker fills (not live LTP), corrects any drift from a
+  naively stored value, and verifies the position is fully flat with no
+  dangling orders/OMS tranches before committing. Confirmed clean in the
+  traced trade (`realized_pnl=-5,655.00`, `flat=True`, `open_orders_left=0`).
+- **Exit-at-MTM** (`trading/depth_aware_fast_mtm.py`,
+  `build_fast_mtm_orders()`): confirmed it mirrors the entry-side design --
+  fresh depth, fresh deltas of the *actual* physical position, delta-neutral
+  tranche search in both anchor directions, and a strict double gate
+  (`projected_mtm > target` and `total_cost < shared_buffer`, both strict)
+  before executing. Traced trade had `exit_at_mtm=1000000000` (effectively
+  disabled) and correctly never fired; exited via scheduled time-based
+  square-off instead.
+- **Live order placement**: placed and confirmed real orders against the
+  broker sandbox (Open->Replace, Cancel, Fill, broker-side Reject-on-bad-lot-
+  size), then a full 2-leg ATM straddle sell + buyback, all independently
+  re-confirmed via a fresh broker query.
+
+### Known gaps / things NOT yet re-verified live
+- `_try_tail_fallback()` in `trading/builder.py` (~line 1248) unconditionally
+=== TODO ===
+# TODO
+
+## Pending verification
+- [ ] Re-run the live build-authorization test *after* market open (09:15 IST)
+      to confirm the positive case: a real depth-gated delta-neutral pair
+      actually gets authorized and filled against a live (non-empty) book.
+      The pre-market run only proved the negative case (correctly refuses
+      when the book is empty).
+- [ ] Decide whether `_try_tail_fallback()` (`trading/builder.py` ~line 1248,
+      currently unconditional `return None`) should implement controlled
+      one-lot TAIL completion, or stay disabled intentionally.
+- [x] Resolve the `fast_exit_monitor.py` `WAIT` vs `PASS`/`BLOCK` log-wording
+      mismatch. RESOLVED: `WAIT` is the pre-2026-09-03 format
+      (`FAST RULE <rule> | TRIGGER/WAIT`); the current file logs
+      `FAST <rule> CHECK | ... | PASS/BLOCK`. A log showing `WAIT` came from
+      a process started on the old code. `fast_exit_monitor.py` is now in
+      `utils/code_version.py` TRACKED_FILES so the startup
+      `[CODE VERSION]` line shows which version is running.
+- [ ] Run a full end-to-end live test through the actual dashboard/builder
+      pipeline (`python start_all.py` + a real trade via the API), not just
+      standalone scripts -- this needs to be run manually; automated
+      process-launch is blocked by the coding assistant's own safety
+      classifier.
+
+## Housekeeping
+- [ ] ~640 untracked one-off scratch files (`patch_*`, `apply_*`,
+      `diagnose_*`, `fix_*`, `repair_*`, `.before_*` timestamped backups)
+      were committed as-is per an explicit "commit everything unfiltered"
+      decision. Consider a follow-up pass to prune genuinely dead scratch
+      files out of the repo once it's clear nothing still depends on them.
+- [ ] `trading/square_off.py` alone has 70+ `.before_*` backup siblings in
+      the same directory -- same pattern as the `- Copy` folders that were
+      already cleaned up, just not "- Copy" named so the earlier sweep
+      didn't catch them.
+
+## Multi-machine workflow
+- This repo is now the shared source of truth across machines. On whichever
+  PC you're about to work from: `git pull` first, `git push` when done.
+  Don't run Claude Code editing the same files on two machines at once
+  without a pull/push in between -- that's what actually causes divergent
+  changes, independent of which Claude client (VS Code, browser, terminal)
+  either machine uses.
+- `cred.py` is gitignored on purpose and must be created locally on every
+  machine from `cred.py.example` -- it never travels via git.
+=== start_all ===
+"""
+start_all.py — Sequential service launcher with health-check gating + per-service log files.
+Usage: python start_all.py
+"""
+import subprocess
+import sys
+import time
+import signal
+import os
+import zmq
+import json
+import threading
+import urllib.request
+import urllib.error
+import io
+from datetime import datetime
+
+import config
+
+# ── Force UTF-8 for this process and all children ────────────────────────────
+os.environ['PYTHONIOENCODING'] = 'utf-8'
+
+# ── Reconfigure stdout/stderr to UTF-8 if on Windows ────────────────────────
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
+# ── ANSI colors ─────────────────────────────────────────────────────────── 
+COLORS = {
+    "marketdata" : "\033[94m",   # blue
+    "verifier"   : "\033[95m",   # magenta
+    "main"       : "\033[92m",   # green
+    "snapshot"   : "\033[96m",   # cyan
+    "SYSTEM"     : "\033[90m",   # grey
+}
+RESET = "\033[0m"
+BOLD  = "\033[1m"
+RED   = "\033[91m"
+
+# ── Enable ANSI + UTF-8 on Windows terminal ───────────────────────────────────
+if sys.platform == "win32":
+    os.system("chcp 65001 > nul")
+    import ctypes
+    kernel32 = ctypes.windll.kernel32
+    kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+
+# ── Log directory ───────────────────────────────────────────────────────────
+LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "services")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+# ── Service definitions (ORDER MATTERS) ───────────────────────────────────────
+SERVICES = [
+    {
+        "name"         : "marketdata",
+        "cmd"          : [sys.executable, "marketdata_service.py"],
+        "health_url"   : None,
+        "zmq_port"     : config.ZMQ_MARKETDATA_REQ_PORT,
+        "startup_wait" : 20,
+        "color"        : COLORS["marketdata"],
+    },
+    {
+        "name"         : "main",
+        "cmd"          : [sys.executable, "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5000"],
+        "health_url"   : "http://localhost:5000/health",
+        "startup_wait" : 15,
+        "color"        : COLORS["main"],
+    },
+    {
+        "name"         : "reconciler",
+        "cmd"          : [sys.executable, "order_reconciler.py"],
+        "health_url"   : None,
+        "zmq_port"     : config.ZMQ_RECONCILER_REQ_PORT,
+        "startup_wait" : 10,
+        "color"        : COLORS["verifier"],
+    },
+    {
+        "name"         : "snapshot",
+        "cmd"          : [sys.executable, "snapshot_service.py"],
+        "health_url"   : "http://localhost:8003/health",
+        "startup_wait" : 5,
+Bash Read live LUT factor module header and function list
+IN
+sed -n 1,120p trading/lut_factors.py | cut -c1-200; echo; grep -n -E "^def |^class |^async def " trading/lut_factors.py | head -50
+
+OUT
+"""
+LUT factor maths for the Profilers LUTs (\\\\172.16.1.85\\Shared\\Hardik\\Profilers\\LUT_09xx.csv),
+ported 1:1 from the script that evaluates them:
+
+    \\\\172.16.1.85\\Shared\\Hardik\\Project_Codes\\Index Short TBT\\7DOptimizerVMonotonicCustom5StageProfilerInput.py
+
+A live bucket only means something if it is computed exactly the way the
+LUT was trained, so every constant and formula here mirrors that script:
+
+  Yesterday_IV  = Adj_IV of the daily row
+  weighted_idv  = 0.2*IDV_Pure + 0.5*IDV_With_Prev + 0.3*Yesterday_IV
+  gap           = (PrevDate - Prev2Date) > 1 day
+  Target_Chg    = Adj_IV_Chg if gap else IV_Chg
+  Target_Base   = Prev2_Adj_IV if gap else Prev2_IV
+  Adj_IV_Chg    = Target_Chg * 0.1 / Target_Base   (buckets at -0.008 / 0.004)
+  raw_dte       = the TickDataIV DTE clock: (expiry - today).days + 1, held until
+                  09:25, then minus 1 per 22500 s (a 6h15m trading day)
+  trading_dte   = raw_dte - 1 if the window to expiry crosses a weekend
+  adj_factor    = sqrt(raw_dte / trading_dte)
+  DTE bucket    = clip(ceil(trading_dte) - 1, 0, 6) + 1
+  OTM IV        = Black-Scholes IV (r=0, T=raw_dte/365, bisection) of the OTM leg
+                  at K = round(S/step)*step, S = synthetic: CE if S < K else PE;
+                  LTP <= 0.1 or IV outside 0.01-2.0 -> last good value
+  Build_IV      = OTM IV * adj_factor
+  IV_Ratio      = Build_IV / weighted_idv
+  Straddle_Ratio= prev-day Straddle / BS straddle at K priced with the OTM IV
+  Norm_OG_Gap   = ((synthetic@09:16 - prev Future)/prev Future*100) * 0.19/Yesterday_IV
+
+Buckets use np.searchsorted(thresholds, x, side="right") with the
+optimizer's thresholds, so boundary values land where they did in training
+(the LUT's '<=-0.008' label is cosmetic: exactly -0.008 is the middle bucket).
+Labels are the Profilers LUT's own strings, matched exactly on lookup.
+The generator only evaluated 09:16-13:30, skipped before 09:18 on event
+dates, and stopped DTE-1 days after 09:59 -- outside that the LUT has no
+data, so eligible_now() says no.
+"""
+
+import json
+import math
+import os
+from datetime import date, datetime, time, timedelta
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
+
+import numpy as np
+import pandas as pd
+
+WEIGHTS = (0.2, 0.5, 0.3)  # (IDV_Pure, IDV_With_Prev, Target_Base)
+WKND_ADJ = 1.0
+ADJ_LOWER = -0.008
+ADJ_HIGHER = 0.004
+EXPIRY_TIME = time(15, 30)
+
+IV_THRESHOLDS = [0.6501, 0.8001, 0.9001, 0.9501, 1.0001, 1.0501, 1.1001, 1.2001, 1.3001]
+STR_THRESHOLDS = [0.9501, 1.0001, 1.0501, 1.1001, 1.1501, 1.2001, 1.3001, 1.5001, 1.7501, 2.0001]
+BLD_THRESHOLDS = [0.0801, 0.1201, 0.1601, 0.2001]
+OG_THRESHOLDS = [-0.7501, 0.7501]
+ADJ_THRESHOLDS = [ADJ_LOWER, ADJ_HIGHER]
+
+IV_LABELS = ['<=0.65', '0.66-0.80', '0.81-0.90', '0.91-0.95', '0.96-1.00', '1.01-1.05',
+             '1.06-1.10', '1.11-1.20', '1.21-1.30', '>1.30']
+STR_LABELS = ['<=0.95', '0.96-1.00', '1.01-1.05', '1.06-1.10', '1.11-1.15', '1.16-1.20',
+              '1.21-1.30', '1.31-1.50', '1.51-1.75', '1.76-2.00', '>2.00']
+BLD_LABELS = ['<0.08', '0.08-0.12', '0.12-0.16', '0.16-0.20', '>=0.20']
+OG_LABELS = ['<-0.7501%', '-0.7501% to 0.7501%', '>0.7501%']
+ADJ_LABELS = ['<=-0.008', '-0.008 to 0.004', '>=0.004']
+
+SCAN_START = time(9, 16)
+SCAN_END = time(13, 30)
+EVENT_FIRST = time(9, 18)
+DTE1_LAST = time(9, 59)
+
+EVENT_DATES_FILE = os.getenv("LUT_EVENT_DATES_FILE", r"\\172.16.1.85\Shared\EventDates.xlsx")
+OG_REF_DIR = Path(__file__).resolve().parents[1] / "runtime" / "og_reference"
+
+
+def bucket(thresholds, labels, value) -> str:
+    return labels[int(np.searchsorted(thresholds, float(value), side="right"))]
+
+
+def _f(row, key, default=0.0) -> float:
+    try:
+        v = float(row.get(key))
+        return default if math.isnan(v) else v
+    except (TypeError, ValueError):
+        return default
+
+
+# ---------------------------------------------------------------- daily inputs
+def load_daily_row(csv_path: str, today: date) -> Dict[str, Any]:
+    """Row for `today`, else the latest row up to 30 days back (generator rule)."""
+    df = pd.read_csv(csv_path)
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.normalize()
+    check = pd.Timestamp(today)
+    for _ in range(30):
+        m = df[df["Date"] == check]
+        if not m.empty:
+            return m.iloc[-1].to_dict()
+        check -= pd.Timedelta(days=1)
+    raise ValueError(f"No daily row within 30 days of {today}")
+
+
+def daily_inputs(row: Dict[str, Any], manual_idv_with_prev=None, manual_prev_straddle=None) -> Dict[str, Any]:
+    prev_date = pd.to_datetime(row.get("PrevDate"), errors="coerce")
+    prev2_date = pd.to_datetime(row.get("Prev2Date"), errors="coerce")
+    gap = bool(
+        pd.notna(prev_date) and pd.notna(prev2_date) and (prev_date - prev2_date).days > 1
+    )
+    target_chg = _f(row, "Adj_IV_Chg") if gap else _f(row, "IV_Chg")
+    target_base = _f(row, "Prev2_Adj_IV") if gap else _f(row, "Prev2_IV")
+    adj_iv_chg = (target_chg * 0.1) / target_base if target_base > 0 else float("nan")
+
+    idv_pure = _f(row, "IDV_Pure")
+    idv_with_prev = _f(row, "IDV_With_Prev")
+    if manual_idv_with_prev not in (None, "") and float(manual_idv_with_prev) > 0:
+        idv_with_prev = float(manual_idv_with_prev)
+
+    prev_straddle = _f(row, "Straddle")
+    if manual_prev_straddle not in (None, "") and float(manual_prev_straddle) > 0:
+        prev_straddle = float(manual_prev_straddle)
+
+77:def bucket(thresholds, labels, value) -> str:
+81:def _f(row, key, default=0.0) -> float:
+90:def load_daily_row(csv_path: str, today: date) -> Dict[str, Any]:
+103:def daily_inputs(row: Dict[str, Any], manual_idv_with_prev=None, manual_prev_straddle=None) -> Dict[str, Any]:
+147:def tick_dte(expiry_date: date, now: datetime) -> float:
+154:def dte_terms(expiry_date: date, now: datetime) -> Dict[str, Any]:
+178:def _ncdf(x: float) -> float:
+182:def bs_price(is_call: bool, S: float, K: float, T: float, sig: float) -> float:
+191:def implied_vol(is_call: bool, price: float, S: float, K: float, T: float) -> float:
+210:def strike_step(symbol: str, strikes) -> float:
+219:def otm_reference(symbol: str, chain_rows, spot: float, raw_dte: float,
+253:def og_ref_path(day: date) -> Path:
+257:def save_og_reference(symbol: str, price: float, captured_at: datetime,
+282:def synthetic_future(chain: Optional[Dict[str, Any]]) -> float:
+299:def chain_time(chain: Optional[Dict[str, Any]], tz=None) -> Optional[datetime]:
+319:def capture_og_if_due(symbol: str, chain: Optional[Dict[str, Any]], now: datetime) -> Optional[Dict[str, Any]]:
+338:def resolve_og_price(symbol: str, now: datetime, chain: Optional[Dict[str, Any]],
+360:def load_og_reference(symbol: str, day: date) -> Optional[Dict[str, Any]]:
+368:def norm_og_gap(price_0916: float, prev_future: float, yesterday_iv: float) -> float:
+379:def event_dates(today: date) -> set:
+392:def eligible_now(now: datetime, dte_bucket: int, is_event: bool) -> Optional[str]:
+404:def window_closed(now: datetime, dte_bucket: int) -> Optional[str]:
+414:def stage_name(now: datetime) -> str:
+424:def scan_log_path(trade_uid: str) -> Path:
+428:def load_scan_log(trade_uid: str) -> Optional[Dict[str, Any]]:
+435:def latest_scan_log(day: date) -> Optional[Dict[str, Any]]:
+450:def annotate_scan(trade_uid: str, **fields) -> None:
+466:def record_scan(trade_uid: str, symbol: str, minute: datetime, payload: Dict[str, Any],
+510:def compute_buckets(*, build_iv_raw: float, live_straddle: float, dte: Dict[str, Any],
+538:def lut_yes_set(lut_path: str) -> set:
+553:def _coord(b: Dict[str, Any]) -> tuple:
+557:def _range_of(thresholds, labels, label):
+564:def what_if(yes: set, *, buckets: Dict[str, Any], values: Dict[str, Any], dte: Dict[str, Any],
+694:def _nearest_compact(wi: Optional[Dict[str, Any]]) -> Optional[str]:
+708:def _nearest_text(wi: Optional[Dict[str, Any]]) -> Optional[str]:
+732:def no_reason(decision: str, row: Optional[str], buckets: Optional[Dict[str, Any]], lut_name: Optional[str],
+12:16 PM
+Important: the live lut_factors.py thresholds differ from the backtest's (ADJ band, straddle and Build-IV bins). Let me check which one the live entry path actually uses before I document parity.
+
+
+
+Bash Find which LUT logic live entry actually uses
+IN
+echo "=== who imports lut_factors ==="; grep -rn --include=*.py -E "lut_factors|from trading import lut|lut_basket" . 2>/dev/null | grep -v -E "(before_|\.bak|_20[0-9]{6}|Copy|_REVIEW|_BACKUP|_backup|ref_material|sell_atm_release|tests/|research/)" | head -20; echo "=== thresholds in config_builder ==="; grep -n -E "THRESHOLD|ADJ_LOWER|ADJ_HIGHER|WEIGHTS|LUT_DIR|LUT_.*csv|\.csv|VETO|IV_FLOOR|score_check|LUT decision|get_lut|lut_path" trading/config_builder.py | head -50
+
+OUT
+=== who imports lut_factors ===
+./api/routes.py:847:    from trading import lut_factors as lf
+./api/routes.py:855:        from trading import lut_basket
+./api/routes.py:856:        data = dict(data, running=bool(lut_basket.running().get(data.get("trade_uid"))))
+./api/routes.py:867:    from trading import lut_basket
+./api/routes.py:870:        run_id, started = lut_basket.start(
+./api/routes.py:896:    from trading import lut_basket
+./api/routes.py:898:    run_id = lut_basket.stop(request.symbol)
+./api/routes.py:909:    from trading import lut_basket
+./api/routes.py:911:    return {"success": True, "running": lut_basket.running()}
+./background/tasks.py:174:    or after 09:16) -- once per day, and persists it (lut_factors) so every
+./background/tasks.py:180:    from trading import lut_factors as lf
+./trading/config_builder.py:45:# Profilers LUTs -- bucket labels/maths in trading/lut_factors.py must match these files.
+./trading/config_builder.py:308:        from trading import lut_factors as lf
+./trading/config_builder.py:317:        from trading import lut_factors as lf
+./trading/config_builder.py:489:    from trading import lut_factors as _lf
+./trading/config_builder.py:509:    # (7DOptimizer...ProfilerInput.py) computed it -- see trading/lut_factors.py.
+./trading/config_builder.py:519:        from trading import lut_factors as lf
+./trading/config_builder.py:808:        "lut_factors": lut_params,
+./trading/config_builder.py:898:        # The LUT basket is a separate engine (trading/lut_basket.py,
+./trading/lut_basket.py:26:from trading import lut_factors as lf
+=== thresholds in config_builder ===
+44:WINDOWS_GAMMA_DATA_FILE = r"\\172.16.1.85\Shared\Hardik\Project_Codes\GammaShortDailyProcess\GammaShortDailydata.csv"
+46:WINDOWS_LUT_0916 = r"\\172.16.1.85\Shared\Hardik\Profilers\LUT_0916.csv"
+47:WINDOWS_LUT_0917 = r"\\172.16.1.85\Shared\Hardik\Profilers\LUT_0917.csv"
+48:WINDOWS_LUT_0918 = r"\\172.16.1.85\Shared\Hardik\Profilers\LUT_0918.csv"
+49:WINDOWS_LUT_0919 = r"\\172.16.1.85\Shared\Hardik\Profilers\LUT_0919.csv"
+50:WINDOWS_LUT_0920 = r"\\172.16.1.85\Shared\Hardik\Profilers\LUT_0920_Onwards.csv"
+65:score_check_cutoff_time = time(18, 30, 0)
+169:    from the consolidated GammaShortDailydata.csv file.
+259:def _get_lut_day_bucket() -> int:
+267:def _get_lut_iv_ratio_bucket(value: float) -> str:
+280:def _get_lut_straddle_ratio_bucket(value: float) -> str:
+294:def _get_lut_build_iv_bucket(value: float) -> str:
+312:        return f"LUT decision {decision} ({exc})"
+330:    lut_path, silent_logs: bool = True,
+336:    if not lut_path:
+337:        raise FileNotFoundError(f"LUT file not found: {lut_path}")
+339:    df = pd.read_csv(lut_path)
+348:                f"{col} label {label!r} not in {os.path.basename(lut_path)} "
+580:            "adj_iv_chg_bucket": lf.bucket(lf.ADJ_THRESHOLDS, lf.ADJ_LABELS, daily["adj_iv_chg"])
+656:            lut_path=lut_file,
+717:        warnings.append(f"LUT decision error: {str(e)}")
+823:        "rule": "Sell only if LUT decision is YES",
+863:        build only if LUT decision is YES
+970:            cutoff_dt = dt.datetime.combine(today_date, score_check_cutoff_time, tzinfo=now_dt.tzinfo)
+1142:            # if now_time > score_check_cutoff_time:
+1144:            #         f"Score-check cutoff time {score_check_cutoff_time.strftime('%H:%M:%S')} crossed. "
+1562:            # five-stage LUT decision logic.
+1568:                "LUT decision is informational only. "
+1582:            # cutoff_dt = dt.datetime.combine(today, score_check_cutoff_time, tzinfo=now_dt.tzinfo)
+1624:        # Adjust trade size based on the LUT decision multiplier
+Bash Gather ports, DB tables, statuses, event handlers
+IN
+echo "=== config.py (ports/limits) ==="; grep -n -E "PORT|MAX_|LOT|FREEZE|BUFFER|EXCHANGE|SYMBOL|SQUARE|TIME" config.py | cut -c1-160 | head -45; echo "=== DB tables ==="; grep -n -E "CREATE TABLE" database/db_manager.py | cut -c1-140; echo "=== statuses seen ==="; grep -rhoE "status[^\n]{0,12}['\"](PENDING_ENTRY|BUILDING|ACTIVE|PARTIAL|PARTIAL-SQF|HEDGING|ROLLING|SQUARING-OFF|CLOSED_[A-Z_]+|CANCELLED|FAILED_[A-Z_]+)['\"]" --include=*.py trading api database 2>/dev/null | grep -oE "(PENDING_ENTRY|BUILDING|ACTIVE|PARTIAL-SQF|PARTIAL|HEDGING|ROLLING|SQUARING-OFF|CLOSED_[A-Z_]+|CANCELLED|FAILED_[A-Z_]+)" | sort | uniq -c | sort -rn | head -25; echo "=== event bus events ==="; grep -n -E "register_handler|subscribe\(" main.py | cut -c1-140 | head -20
+
+OUT
+=== config.py (ports/limits) ===
+12:MARKET_CLOSE_TIME: Final = "15:40:00"
+13:DEFAULT_EXIT_TIME: Final = "15:37:00"
+19:EXCHANGE_NSEFO: Final = 2
+20:EXSEG: Final = EXCHANGE_NSEFO  # For backward compatibility
+26:PORT: Final = 5000
+30:MARKET_DATA_PORT: Final = 8001
+31:ORDER_SERVICE_PORT: Final = 8002
+32:SNAPSHOT_SERVICE_PORT: Final = 8003
+33:VERIFIER_SERVICE_PORT: Final = 8004
+37:ZMQ_MARKETDATA_REQ_PORT: Final = 5560   # REQ/REP  — queries (md_service)
+38:ZMQ_MARKETDATA_PUB_PORT: Final = 5561   # PUB/SUB  — price broadcasts (md_service)
+39:ZMQ_MARKETDATA_SUB_PORT: Final = 5562   # PUSH/PULL — subscription commands (md_service)
+40:ZMQ_TICK_PUB_PORT: Final = 5563         # PUB/SUB  — tick signals → run_dev (md_service)
+41:ZMQ_FILLS_PUB_PORT: Final = 5564        # PUB/SUB  — fills → run_dev (reconciler)
+42:ZMQ_VERIFIER_PULL_PORT: Final = 5565    # PULL     — job submission → reconciler (reconciler)
+43:ZMQ_SNAPSHOT_PULL_PORT: Final = 5566      # PULL - verification completion -> snapshot_service
+44:ZMQ_SNAPSHOT_FORCE_PULL_PORT: Final = 5567 # PULL - force snapshot -> snapshot_service
+45:ZMQ_ORDERBOOK_REQ_PORT  = 5569
+57:DEFAULT_LOTS: Final = 1
+61:MAX_ORDER_QTY: Final = 1800
+65:# behaviour. Lot-by-lot execution is for the MTM cut only (FAST_MTM_MAX_LOTS_PER_ORDER).
+66:EXECUTION_MAX_LOTS_PER_ORDER: Final = 0
+70:FAST_MTM_MAX_LOTS_PER_ORDER: Final = 1
+113:BUILD_MAX_TOTAL_QTY: Final = 3000
+121:BUILD_LOT_MODE: Final = True
+126:BUILD_FIRST_TRANCHE_LOTS: Final = 1
+144:BUILD_TOPUP_MAX_WAIT_SECONDS: Final = 0
+150:PRICE_FEED_TOKEN_MAX_AGE: Final = 60.0
+151:DEPTH_FEED_TOKEN_MAX_AGE: Final = 30.0
+164:ZMQ_RECONCILER_REQ_PORT = 5568
+169:PORT = 5000
+173:MARKET_DATA_PORT = 8001
+174:SNAPSHOT_SERVICE_PORT = 8003
+175:VERIFIER_SERVICE_PORT = 8004 # Assuming reconciler has an HTTP endpoint for status/debug
+178:ZMQ_MARKETDATA_REQ_PORT = 5560
+179:ZMQ_MARKETDATA_PUB_PORT = 5561
+180:ZMQ_MARKETDATA_PULL_PORT = 5562 # For market data service to pull requests
+181:ZMQ_TICK_PUB_PORT = 5563 # For market data service to publish ticks
+183:ZMQ_FILLS_PUB_PORT = 5564 # Order Reconciler publishes order fills/updates (subscribed by main app)
+184:ZMQ_VERIFIER_PULL_PORT = 5565 # Order Reconciler pulls verification jobs from main app
+185:ZMQ_SNAPSHOT_PULL_PORT = 5566 # Snapshot Service pulls verification completion notifications from main app
+186:ZMQ_SNAPSHOT_FORCE_PULL_PORT = 5567 # Snapshot Service pulls force snapshot requests from main app
+=== DB tables ===
+83:                CREATE TABLE IF NOT EXISTS orders (
+118:                CREATE TABLE IF NOT EXISTS straddles (
+682:                CREATE TABLE IF NOT EXISTS fast_exit_state (
+=== statuses seen ===
+    445 ACTIVE
+    251 PENDING_ENTRY
+    151 SQUARING-OFF
+    101 BUILDING
+     75 CLOSED_SQF
+     48 PARTIAL
+     46 CLOSED_SL_BUILD
+     24 FAILED_FILTER
+     14 PARTIAL-SQF
+      6 CANCELLED
+      2 ROLLING
+=== event bus events ===
+Bash Read trade manager structure and config_builder functions
+IN
+sed -n 1,60p trading/trade_manager.py | cut -c1-180; echo ......; grep -n -E "^class |^    async def |^    def " trading/trade_manager.py | head -50; echo "=== config_builder entry funcs ==="; grep -n -E "^def |^async def " trading/config_builder.py | head -30
+
+OUT
+import time
+import re
+"""
+Trade Manager - Manages the lifecycle and monitoring of a single trade.
+"""
+import asyncio
+import httpx
+from typing import Dict, Optional, Literal
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from utils.helpers import get_ist_now
+from utils.logger import logger
+from models.state import state
+import config
+from trading.monitors.sl_monitor import SLMonitor
+from trading.monitors.hedge_monitor import HedgeMonitor
+from trading.monitors.roll_monitor import RollMonitor
+from trading.monitors.square_off_monitor import SquareOffMonitor
+from trading.monitors.entry_straddle_monitor import EntryStraddleMonitor
+from trading.monitors.straddle_price_monitor import StraddlePriceMonitor
+from trading.monitors.tp_monitor import TPMonitor
+from trading.fast_exit_monitor import FastExitMonitor
+
+
+# Global registry for trade managers (per-process)
+_trade_managers: Dict[str, 'TradeManager'] = {}
+
+@dataclass
+class ConditionTask:
+    """A generic task for the condition engine to check periodically."""
+    uid: str
+    task_type: Literal[
+        "ENTRY_STRADDLE",
+        "EXIT_STRADDLE",
+        "LUT_SCORE",
+        "TIME_EXIT",
+        "STOP_LOSS",
+        "TAKE_PROFIT",
+        "HEDGE",
+        "ROLL",
+    ]
+    enabled: bool
+    trade_uid: str
+    next_check: datetime
+    interval_seconds: int
+    config: dict
+
+
+class TradeManager:
+    """Manages all monitoring aspects for a single trade."""
+
+    def __init__(self, trade_uid: str, trade_data: Dict):
+        self.trade_uid = trade_uid
+        self.trade_data = trade_data or {}
+        self.config = self.trade_data.get('config', {}) or {}
+        self.db = state.db
+        self._fast_exit_worker_task = None
+        self.is_running = False
+
+        # ------------------------------------------------------------------
+......
+29:class ConditionTask:
+49:class TradeManager:
+52:    def __init__(self, trade_uid: str, trade_data: Dict):
+75:    def _initialize_monitors(self):
+89:    async def start_monitoring(self):
+198:    async def stop_monitoring(self):
+242:    async def restore_and_start_monitoring(self):
+246:    async def _minute_end_monitor_loop(self):
+492:    def _ensure_minute_end_monitor_loop(self):
+519:    async def run_condition_tasks(self):
+898:    async def _check_entry_straddle(self, task: ConditionTask):
+902:    async def _check_exit_straddle(self, task: ConditionTask):
+907:    async def _check_lut_score(self, task: ConditionTask):
+912:    async def _check_time_exit(self, task: ConditionTask):
+917:    async def _check_stop_loss(self, task: ConditionTask):
+922:    async def _check_take_profit(self, task: ConditionTask):
+927:    def _cancel_fast_exit_worker(self):
+942:    async def _run_fast_exit_worker(self):
+1025:    def _start_fast_exit_worker(self):
+1050:    async def update_configuration(self, new_config: dict):
+=== config_builder entry funcs ===
+67:def _is_lut_stage_mode(config) -> bool:
+87:def _normalize_symbol(symbol: str) -> str:
+90:def _safe_int(value, default: int = 0) -> int:
+103:def _find_first_matching_column(df: pd.DataFrame, candidates) -> Optional[str]:
+112:def _pick_symbol_row(df: pd.DataFrame, symbol: str) -> Optional[pd.Series]:
+140:def _resolve_data_file_path(raw_path: str) -> str:
+161:def _try_existing_file(raw_path: str) -> Optional[str]:
+166:def _load_gamma_data(symbol: str) -> Dict[str, float]:
+201:def _parse_expiry_date(expiry_value) -> Optional[date]:
+225:def _compute_rounded_dte(today: date, expiry_date: date) -> int:
+234:def _get_expiry_and_dte(chain_data: Dict[str, Any]) -> Tuple[Optional[str], Optional[int]]:
+259:def _get_lut_day_bucket() -> int:
+267:def _get_lut_iv_ratio_bucket(value: float) -> str:
+280:def _get_lut_straddle_ratio_bucket(value: float) -> str:
+294:def _get_lut_build_iv_bucket(value: float) -> str:
+306:def _lut_no_reason(decision, lut_params, buckets, selected_lut, eligibility_reason, warnings):
+315:def _lut_yes_at(what_if):
+323:def _get_trade_decision_from_lut(
+412:def _get_current_lut_file(now=None):
+432:def _calculate_adj_iv(live_iv: float, dte: int) -> float:
+447:def _compute_score_payload(
+858:async def build_with_config(config: Dict, trade_uid: str = None) -> Optional[str]:
+12:17 PM
+Quick check on whether the script's inputs exist on this machine, since that decides what we can actually run.
+
+
+
+Bash Check backtest input paths exist locally
+IN
+for p in "/d/GammaShort" "/d/NIFTY_TickData" "/d/NIFTY_NextTickData" "//172.16.1.85/Shared/TickDataIV" "//172.16.1.85/Shared/EventDates.xlsx"; do if [ -e "$p" ]; then echo "EXISTS  $p"; else echo "missing $p"; fi; done; cd /c/Users/Administrator/Desktop/api_v2_main_29_07_wings_new && ls research research/tick_data
+
+OUT
+missing /d/GammaShort
+missing /d/NIFTY_TickData
+missing /d/NIFTY_NextTickData
+EXISTS  //172.16.1.85/Shared/TickDataIV
+EXISTS  //172.16.1.85/Shared/EventDates.xlsx
+research:
+GammaShort_Backtest_Final.py
+tick_data
+
+research/tick_data:
+NIFTY.parquet
+12:17 PM
+The share is reachable. A read-only listing will show the real layout the script expects.
+
+
+
+Bash List share tick-data layout and input files (read-only)
+IN
+S="//172.16.1.85/Shared"; echo "days in TickDataIV: $(ls $S/TickDataIV 2>/dev/null | wc -l)"; ls $S/TickDataIV 2>/dev/null | head -3; echo ...; ls $S/TickDataIV 2>/dev/null | tail -3; last=$(ls $S/TickDataIV | tail -1); echo "--- $last ---"; ls -la "$S/TickDataIV/$last" | head; echo "--- Hardik dir ---"; ls "$S/Hardik" 2>/dev/null | head -20; echo "--- Profilers ---"; ls "$S/Hardik/Profilers" 2>/dev/null | head -12; echo "--- daily csv ---"; ls -la "$S/Hardik/Project_Codes/GammaShortDailyProcess/GammaShortDailydata.csv" 2>&1 | head -2
+
+OUT
+days in TickDataIV: 1724
+01012020
+01012021
+01012024
+...
+31122021
+31122024
+31122025
+--- 31122025 ---
+total 444029
+drwxr-xr-x 1 Administrator 197121         0 May 19 21:39 .
+drwxr-xr-x 1 Administrator 197121         0 Oct 13  2026 ..
+-rw-r--r-- 1 Administrator 197121 114491418 Jan  7  2026 BANKNIFTY.parquet
+-rw-r--r-- 1 Administrator 197121   8640629 Jan  7  2026 FINNIFTY.parquet
+-rw-r--r-- 1 Administrator 197121  35703494 Jan  7  2026 MIDCPNIFTY.parquet
+-rw-r--r-- 1 Administrator 197121 298247019 Jan  7  2026 NIFTY.parquet
+-rw-r--r-- 1 Administrator 197121   3081359 May 19 21:39 NIFTY_first_10000_rows.csv
+--- Hardik dir ---
+19022026_Trade.csv
+19Sep2025.jpg
+57indexdf09122025.xlsx
+ALLYEAR.xlsx
+ALL_DATA
+ANURAS.xlsx
+Algo
+Alldata.parquet
+AutomateGS
+BANKNIFTY.xlsx
+BRH
+BSE BHAV LINKS.xlsm
+Bhavcopy
+Bonus Data File.xlsx
+Bonus Stocks.xlsx
+Books
+BorrowLend.xlsx
+Budget
+C120L_PnLDetail_24102025.txt
+C120L_PnLDetail_29072026.txt
+--- Profilers ---
+12102026
+LUT_0916.csv
+LUT_0917.csv
+LUT_0918.csv
+LUT_0919.csv
+LUT_0920_Onwards.csv
+LUT_Merged_0916_to_0920Onwards.csv
+--- daily csv ---
+-rw-r--r-- 1 Administrator 197121 528230 Oct 13  2026 //172.16.1.85/Shared/Hardik/Project_Codes/GammaShortDailyProcess/GammaShortDailydata.csv
+Bash Search share for the backtest LUT set
+IN
+S="//172.16.1.85/Shared"; ls $S | head -30; echo ---; ls $S/Hardik | grep -i -E "gamma|lut|r46|backtest" | head; echo ---; ls "$S/Hardik/Project_Codes" 2>/dev/null | grep -i -E "gamma|index|short" | head; echo "--- find r46 (depth<=3) ---"; find $S -maxdepth 3 -iname "*r46*" 2>/dev/null | head -5
+
+OUT
+Command did not complete within its 90s timeout and was moved to the background (ID: bxww65pky). Output is being written to: C:\Users\ADMINI~1\AppData\Local\Temp\claude\c--Users-Administrator-Desktop-api-v2-main-29-07-wings-new\39622a12-4c13-4665-8454-a8e5a3abf1d8\tasks\bxww65pky.output. You will be notified when it completes. To check interim output, use Read on that file path.
+12:19 PM
+While that share search runs in the background, I'll write the context files into research/.
+
+
+
+Write C:\Users\Administrator\Desktop\api_v2_main_29_07_wings_new\research\CODEBASE_CONTEXT.md
+277 lines
+# Codebase & research context
+
+Snapshot written 2026-10-13. Everything here was read from the repo / share;
+items marked **(unverified)** were inferred and not confirmed.
+
+Repo root (parent of this folder): `C:\Users\Administrator\Desktop\api_v2_main_29_07_wings_new`
+This folder (`research/`) is for offline research on tick files. It must not
+change live behaviour.
+
+---------------------------------------------------------------------------
+
+## 1. What the repo is
+
+A live NIFTY/SENSEX **short-straddle trading dashboard** with delta-neutral
+hedging, protective wings, SL/TP/MTM exits, rolling and a FastAPI UI.
+Python, FastAPI, ZeroMQ, SQLite, shared memory, XTS broker API. Windows host.
+
+### Processes (started by `start_all.py`, order matters)
+
+| Service | File | Port(s) | Job |
+|---|---|---|---|
+| marketdata | `marketdata_service.py` | ZMQ REQ 5560, PUB 5561, SUB/PULL 5562, tick PUB 5563 | XTS feed, option chains + greeks, chain SHM, publishes prices |
+| main | `main.py` (uvicorn `main:app`) | HTTP 5000 | REST API, WS to UI, event bus, trade lifecycle, per-trade child processes |
+| reconciler | `order_reconciler.py` | PUB 5564, PULL 5565, health 5568 | polls broker order book, verifies fills, order SHM |
+| snapshot | `snapshot_service.py` | HTTP/WS 8003, PULL 5566 / 5567 | per-trade PnL, greeks, IV, SL/hedge/roll metrics for the UI |
+
+Also: `order_book_service.py` (order book cache, 5569), `verifier_service.py`.
+Shared state: shared memory (prices array for 50,000 instruments, option-chain
+SHM per symbol, order SHM) plus `models/state.py` (`state` singleton).
+
+Dashboard: `http://localhost:5000`. Logs: `logs/trading_YYYYMMDD.log`,
+`logs/services/<svc>_YYYYMMDD.log`, per-trade `logs/trade_<uid>.log`.
+DB: `straddle_trades.db` (SQLite; tables `orders`, `straddles`,
+`fast_exit_state`; accessed through `database/db_manager.py`).
+
+### Instruments
+NIFTY lot size 65 (seen in live logs), strike step 50, NFO segment 2.
+SENSEX on segment 12. Cash-index spot tokens: NIFTY 26000 (seg 1), SENSEX
+26065 (seg 11). Market close 15:40, default exit 15:37 (`config.py`).
+
+---------------------------------------------------------------------------
+
+## 2. Trade lifecycle
+
+Trade UID looks like `ny121026144500` = NIFTY, 12-10-26, entry 14:45:00.
+A trailing letter (`...a`) is a duplicate for the same minute.
+
+Statuses seen in code: `PENDING_ENTRY` -> `BUILDING` -> `ACTIVE`, then
+`HEDGING` / `ROLLING` / `PARTIAL-SQF` / `SQUARING-OFF`, ending in `CLOSED_SQF`,
+`CLOSED_SL`, `CLOSED_SL_BUILD`, `CLOSED_ROLL`, `PARTIAL`, `CANCELLED`,
+`FAILED_FILTER`, `FAILED_BUILD`. `get_open_straddles` excludes terminal ones.
+
+**Entry paths**
+- `trading/config_builder.py` `build_with_config()` - "config build" /
+  portfolio pending config. Runs as an asyncio task **in the main process**
+  (not a child process). Waits for entry time (or LUT-stage windows), then
+  calls `trading/builder.py` `build_straddle`. In NORMAL CONFIG MODE the LUT
+  decision is **informational only** - it builds at entry time.
+- `trading/monitors/entry_straddle_monitor.py` - price-threshold
+  `entry_at_straddle` entry, runs in a dedicated per-trade child process.
+- `trading/lut_basket.py` - separate LUT-basket engine (`/api/lut/*`); a
+  config build never runs LUT-basket logic.
+
+**Build** (`trading/builder.py`, ~5.6k lines): delta-neutral PE/CE sizing,
+lot-by-lot depth-gated tranches (`lot_build.py`, `depth_authorization.py`),
+chunking, retry reconciliation (`builder_retry_reconciliation.py`), protective
+wings (`builder_wings.py`, wing % from config; wing legs are classed
+`PROTECTIVE_WING` and excluded from PnL/greeks risk scope), ATM recovery.
+
+**Monitors per live trade** (`trading/trade_manager.py`,
+`trading/monitors/*`): SL, hedge, roll, square-off, TP, straddle-price,
+`fast_exit_monitor.py` (1 s FAST_TP / FAST_ATM / FAST_MTM checks) and the
+minute-end loop. Event priority: HEDGE(1) > SL(2) > SQF(3) > ROLL(4) > MON(5)
+(`trading/event_bus.py`).
+
+**Exits**: `trading/square_off.py` (~5.3k lines, full + partial),
+`fast_partial_square_off.py`, `depth_aware_fast_mtm.py` (exit-at-MTM),
+`trade_closeout.py` (`finalize_closed_trade`: realized PnL from reconciled
+fills, flat check).
+
+**Order path**: `trading/order_executor.py` `OrderExecutor` is the single
+live-money executor (`execute_batch`, `verify_orders_bulk`,
+`place_single_order`, `cancel_all_open_orders_for_trade`).
+`Connect.py` is the XTS wrapper (only `VALIDITY_DAY`).
+
+### Cancel semantics (changed 2026-10-13)
+`POST /api/straddle/cancel-action/{uid}` sets an **in-memory** flag in
+`state.cancellation_flags` (lost on restart; reset in `main.py`) **and now**
+calls `db.cancel_pending_entry()`, an atomic
+`UPDATE ... SET status='CANCELLED' WHERE status IN ('PENDING','PENDING_ENTRY')`.
+`build_with_config` does the same when it sees the flag. Reason: startup
+recovery (`trading/trade_process.py` `restore_pending_entry_workers`)
+re-queues every `PENDING_ENTRY` row, so a cancel that was only a flag was
+undone by a restart and the trade built. Cancel never cancels broker orders;
+it only stops further placement at the next checkpoint.
+
+---------------------------------------------------------------------------
+
+## 3. Hard rules for any work in this project
+
+These come from the user's saved instructions; they apply to research that
+proposes code changes too.
+
+1. **`trading/roller.py` is off-limits.** Report bugs, never edit it without
+   asking first, even for a confirmed live bug.
+2. **`trading/order_executor.py` is off-limits.** Build new execution on its
+   existing methods (as `trading/lot_build.py` does). Ask before changing it.
+3. **Never place a single large order.** Split into small, capped,
+   lot-aligned orders (about 1-10 lots, 65-645 contracts for NIFTY). The
+   per-order cap must be below the broker's `MAX_ORDER_QTY` (1800).
+4. **Depth-gated sizing must shrink, not block.** Find the largest quantity
+   the current L1-L5 book can guarantee at a price strictly better than the
+   target and submit that; never wait forever for the full size. Keep the
+   strict all-or-nothing primitive for a specific qty and add an outer search
+   layer over lot counts.
+5. **MTM exits fire at or above target.** `exit_at_mtm` /
+   `partial_sqf_at_mtm`: `MTM >= target`, including negative targets. Not a
+   loss limit. 0 / unset disables. If direction is ambiguous, ask.
+6. Do not infer intent from sign or from how a value was changed; ask first
+   on live-trading exit logic.
+7. Research output stays in `research/`. Do not write to the tick share.
+
+---------------------------------------------------------------------------
+
+## 4. Repo hygiene - what to ignore when reading
+
+The tree is full of scratch artifacts. Ignore for understanding live behaviour:
+`*_BACKUP_*`, `_*_backup_*`, `_*_REVIEW`, `*.before_*`, `*- Copy*`,
+`*.bak*`, `sell_atm_release/`, `ref_material/`, and top-level `patch_*`,
+`apply_*`, `fix_*`, `diagnose_*`, `repair_*`, `restore_*` scripts. The live
+code is under `trading/`, `api/`, `core/`, `market_data/`, `background/`,
+`models/`, `database/`, `utils/`, `static/` plus the top-level services.
+When grepping, exclude those patterns or you will see dozens of stale copies.
+`README.md`, `CHANGELOG.md`, `TODO.md` exist but are short and partly dated.
+
+---------------------------------------------------------------------------
+
+## 5. Data available for research
+
+### Tick files (share, read-only)
+`\\172.16.1.85\Shared\TickDataIV\<DDMMYYYY>\NIFTY.parquet` (also
+`BANKNIFTY`, `FINNIFTY`, `MIDCPNIFTY`). 1,724 day folders found on
+2026-10-13 (2020 onward; some folders are non-trading days). ~300 MB per
+NIFTY day. One file holds **every expiry** for the day.
+
+Columns the backtest reads: `Time_dt`/`Time`, `Strike`/`StrikePrice`,
+`Type` (CE/PE/FUT), `LTP`, `Bid`, `Ask`, `DTE`, `Expiry`, `UnderlyingLTP`,
+`UnderlyingBid`, `UnderlyingAsk`. `DTE` is the TickDataIV clock (see
+`trading/lut_factors.py` `tick_dte`). Each expiry carries its own underlying
+(synthetic forward). FUT rows are dropped.
+
+`research/tick_data/NIFTY.parquet` is one local day (254 MB, date not yet
+identified - the script takes the date from the folder name, so a local copy
+must live in `<dir>/<DDMMYYYY>/NIFTY.parquet` to be picked up).
+
+### Day-level inputs
+- `\\172.16.1.85\Shared\Hardik\Project_Codes\GammaShortDailyProcess\GammaShortDailydata.csv`
+  (one row/day: Straddle, Adj_IV, IDV_Pure, IDV_With_Prev, Future, IV chg...)
+- `\\172.16.1.85\Shared\EventDates.xlsx`
+- LUTs: live dashboard uses `\\172.16.1.85\Shared\Hardik\Profilers\LUT_09xx.csv`.
+  The backtest defaults to `D:\GammaShort\LUTS_r46V2_cwnw_adj007_005_T13_5_2_2_6`
+  which **does not exist on this machine** (no D: drive content). Whether that
+  folder exists on the share is not yet confirmed.
+
+---------------------------------------------------------------------------
+
+## 6. `GammaShort_Backtest_Final.py` - what it does
+
+One script, one pass over per-day tick files, simulating the full "GammaShort"
+book: at most **one current-week (CW) trade per day**, plus an optional
+**next-week (NW)** trade on DTE1/DTE2 days. Results are in "normalised Rs" =
+index points x 25000 / entry underlying.
+
+Per day:
+1. **Load** the day's CW expiry rows (nearest expiry >= trade date; NW =
+   next expiry). Build a **1-second grid**: underlying = first print per
+   second, seconds without an underlying are dropped.
+2. **Per-strike arrays**: LTP / bid / ask forward-filled; IV solved by
+   Black-Scholes (r=0, T=DTE/365) from the OTM leg's LTP, only in seconds
+   where that leg printed (`IV_MODE="tick"`), then held. 30-second forward
+   average of bid/ask is the option fill price; 3-second for futures.
+3. **Signal** each minute 09:16-13:30 (expiry day to 09:59), using the last
+   second at/before hh:mm:00: Build IV (weekend-adjusted), IV ratio
+   (= Build IV / blended IDV 0.2/0.5/0.3), straddle ratio (yesterday straddle
+   / today's ATM LTP straddle), normalised opening gap, ADJ band, DTE bucket.
+4. **Filters**: straddle veto per DTE, Build-IV floor on DTE1/DTE2, event
+   days (no entry before 09:18, size 1/3). Five stage LUTs (09:16, :17, :18,
+   :19, 09:20+); first hit wins.
+5. **Execution**: sell the ATM straddle at the 30-s average bid; **strike held
+   all day, no roll**. Second-by-second synthetic-future hedge: minute-start
+   trigger (75 % re-hedge) and intra-minute trigger (1.2x, fully neutral);
+   DTE1/DTE2 use a |net delta| trigger instead of points-out.
+6. **Exits (checked each minute)**: SL (16 bps expiry, else 14 bps), TP ramp
+   by Build IV and DTE, TV, TV4, 14:57 IV-drop (DTE <= 1), else end of grid.
+   Exit at the 30-s average ask.
+7. **Costs**: fixed entry slippage per DTE + bps of hedge notional.
+8. **NW leg** (DTE1/DTE2 only): one check at 09:21 if no CW trade by 09:20;
+   09:16 snapshot features -> `NW_LUT.csv`; sell at 09:21, SL 15 bps on mid,
+   re-hedge at |net delta| > 0.10, exit 15:15.
+9. **Fixed-entry comparison**: also simulates entries at 09:16/09:17/09:18
+   ignoring the LUT, recording what production would have said (LUT_ON /
+   LUT_OFF / VETO / FLOOR / EVENT_PRE_0918).
+
+Outputs (in `OUTPUT_BASE/run_<config-hash>/`): `days/*.pkl` (resumable),
+`daily_log.csv`, `trades.csv`, `entry_time_pnl.csv`, `backtest_summary.xlsx`,
+`config.json`. Changing any rule/table changes the hash and starts a clean run.
+
+Header reference result (1,379 days 2021-01-01..2026-08-24, `backtest_files`
+inputs): NW "live" 10,640.5 / MDD 144.4 / CW 713 + NW 71; NW off
+10,216.7 / MDD 120.6 / CW 720.
+
+CLI: `python GammaShort_Backtest_Final.py [--only YYYY-MM-DD,...] [--summary]`.
+Env overrides: `GS_TICK_DIR`, `GS_LUT_DIR`, `GS_OUTPUT_DIR`, `GS_START`,
+`GS_END`, `GS_WORKERS`, `GS_DAY_INPUTS`, `GS_NW_ENABLED`, `GS_NW_CHECK_MODE`,
+`GS_FIXED_ENTRIES`, ...
+Needs: Python 3 with `numpy`, `pandas`, `pyarrow`, `numba`, `openpyxl`.
+
+### Code map
+- Sec. 1-2 constants / rule set (everything uppercase is in the config hash)
+- Sec. 3 numba kernels: `compute_iv_array`, `opt_delta_gamma_arr`,
+  `hedge_walk`, `futures_pnl`, `apply_exits`
+- Sec. 4 loaders: LUTs, event dates, day inputs, expiry-filtered parquet reads
+- Sec. 5 `strike_arrays`, `simulate_cw`
+- Sec. 6 `nw_day`, `nw_decision`
+- Sec. 7 `process_day` (the per-day worker; `decide()` is the CW/NW ordering)
+- Sec. 8 `summarise`, `main` (process pool, resume)
+
+---------------------------------------------------------------------------
+
+## 7. Backtest vs the live dashboard - NOT the same rule set
+
+Read from `trading/lut_factors.py` (live LUT maths) vs the backtest constants:
+
+| Item | Live dashboard (`lut_factors.py`) | Backtest |
+|---|---|---|
+| ADJ band | -0.008 / +0.004 | -0.007 / +0.005 |
+| Straddle-ratio bins | 10 edges (..1.3001, 1.5001, 1.7501, 2.0001) | 11 edges (adds 1.4001) |
+| Build-IV bins | 4 edges (0.0801, 0.1201, 0.1601, 0.2001) | 6 edges (adds 0.0901, 0.1001) |
+| LUT files | `Hardik\Profilers\LUT_09xx.csv`, label-matched | `LUTS_r46V2_...` boolean 6-D arrays |
+| Reference straddle | prev straddle / **BS straddle priced with OTM IV** | prev straddle / **real CE+PE LTP** (round 52) |
+| Same in both | weights 0.2/0.5/0.3, norm-OG x 0.19/Yesterday IV, 5 stages, 09:16-13:30, event 09:18, DTE1 stop 09:59, weekend adj, DTE bucket rule |
+| Strike | rolls (roller.py) | held all day |
+| Veto / IV floor / event 1/3 sizing / NW leg | not found in `lut_factors.py`; `config_builder` has a size multiplier (unverified) | present |
+
+The backtest header calls its live counterpart `apply_strategy.py`, which is
+**not in this repo** (it lives on the share / a separate project). So the
+backtest models a GammaShort production process, not necessarily the
+behaviour of this dashboard. Do not assume parity; compare numbers first.
+
+## 8. Candidate issues spotted in the backtest (not yet measured)
+
+1. **Back-fill look-ahead.** `strike_arrays` does `ffill().bfill()` on prices
+   and IV. Seconds before a strike's first print take the first *later*
+   value. Mostly harmless at 09:16+ for ATM, but can leak future IV/price into
+   the 09:16 snapshot when the OTM leg has not printed yet.
+2. **Forward-looking fills.** Option fill = mean of the next 30 s
+   (`rolling(30).mean().shift(-29)`), futures next 3 s. This is by design
+   (execution over 30 s) but means PnL assumes full fill at that average.
+3. **Minute-grid exits.** SL/TP/TV tested once per minute on the second-grid
+   sample, so intra-minute spikes are not stopped out as live fast monitors
+   would.
+4. **Event-day entry cost not scaled.** `gross` and hedge notional are divided
+   by 3 on event days but `ENTRY_SLIP` is charged in full (conservative).
+5. **Hard-coded step 50** (`ATMRef = round(U/50)*50`) - NIFTY only.
+6. **Daily CSV lookups** swallow exceptions per row (`except: continue`), so a
+   malformed day silently becomes "no_day_inputs".
+7. **Underlying definition**: first print of the second of `UnderlyingLTP`
+   for that expiry's synthetic forward, not spot.
+
+## 9. Environment notes
+- This machine has **no working Python**: `python` is the Microsoft Store
+  stub, `.venv` points at a missing 3.12 install. Install Python 3.12 + the
+  packages above before running anything.
+- Share `\\172.16.1.85\Shared` is reachable from this machine. `D:\GammaShort`
+  and `D:\NIFTY_TickData` are not present.
+- Directory scans of the share are slow; avoid recursive `find` on it.
+Write C:\Users\Administrator\Desktop\api_v2_main_29_07_wings_new\research\CLAUDE.md
+36 lines
+# research/ - instructions for Claude sessions
+
+This folder is for offline research on NIFTY tick files and the GammaShort
+backtest. The live trading system is the parent directory.
+
+**Read `CODEBASE_CONTEXT.md` in this folder first.** It has the architecture,
+trade lifecycle, data locations, the backtest explained, and where the
+backtest differs from the live dashboard.
+
+## Rules
+- Treat everything outside `research/` as **read-only**. Do not edit live
+  code (`trading/`, `api/`, `database/`, ...) from a research task. If research
+  suggests a code change, write it up and ask first.
+- `trading/roller.py` and `trading/order_executor.py` must never be edited
+  without explicitly asking the user, even for a confirmed bug.
+- Anything that would place orders must use small, capped, lot-aligned
+  orders and depth-gated sizing that shrinks to what the book guarantees
+  (never one large order, never wait forever for full size).
+- MTM exit targets fire at `MTM >= target`, including negative targets.
+- Never write to `\\172.16.1.85\Shared`. Tick data there is source data.
+  Put outputs in `research/output/`.
+- Do not run recursive scans of the share (very slow). List one level.
+- Never print or copy credentials (`cred.py`).
+- When grepping the repo, exclude backup/scratch files (see section 4 of
+  `CODEBASE_CONTEXT.md`) or results will be dominated by stale copies.
+
+## Practical
+- No working Python on this machine yet; install 3.12 with numpy, pandas,
+  pyarrow, numba, openpyxl before running scripts.
+- Backtest defaults point at `D:\GammaShort\...` which is missing here; use the
+  `GS_*` environment overrides documented in `CODEBASE_CONTEXT.md`.
+- Today's tick day layout: `<TICK_DIR>\<DDMMYYYY>\NIFTY.parquet`.
+- The user's memory notes live under `~/.claude/projects/<project-path>/`
+  and are keyed by the project path, so a session started inside `research/`
+  will not see them; the rules above are the copy that travels.
+Bash Read background share search output
+IN
+cat "C:/Users/ADMINI~1/AppData/Local/Temp/claude/c--Users-Administrator-Desktop-api-v2-main-29-07-wings-new/39622a12-4c13-4665-8454-a8e5a3abf1d8/tasks/bxww65pky.output" 2>/dev/null | head -60
+
+OUT
+02072024.txt
+09Jan2026_trade_file.csv
+1.18 Backup
+143_0803MESSAGELIST.csv
+15may.xlsx
+160.P326_06_Offline_Unofficial_V1 1.7z
+25042022.zip
+30-09-2021,.txt
+505_0530MESSAGELIST.csv
+513_0118MESSAGELIST.csv
+513_0614MESSAGELIST.csv
+5SeriesChartSetting.png
+5_ema_pnl.csv
+718 Cleaning.xlsx
+735_1014MESSAGELIST.csv
+735_1117MESSAGELIST.csv
+7series
+A153F620
+AAVAS.xlsx
+ABSLAMC.xlsx
+ACI.xlsx
+ADVENZYMES.xlsx
+AEROFLEX.xlsx
+AETHER.xlsx
+AFFLE.xlsx
+AGSTRA.xlsx
+ALKEM.xlsx
+ALTF.ahk
+ALTF.exe
+AMBER.xlsx
+---
+GAMMA SHEET
+Gamma
+Gamma Short Algo
+Gamma_Short_Flow_Chart.jpg
+Gamma_Short_Flow_Chart.png
+Gamma_Strategy_Input_Nifty.csv
+Gamma_Strategy_Scenarios.md
+Gamma_Strategy_Scenarios.txt
+LUTS_r48_noroll_CANDIDATE_L0100H0060_T13_7_2_3_11
+LUT_Merged_0916_to_0920Onwards.csv
+---
+BSETickIVIndex.py
+GammaShortDailyProcess
+Index Rolls
+Index Short
+Index Short BSE TBT
+Index Short TBT
+Index Stock Correlation
+IndexDivergence
+OvernightGammaShort.py
+OvernightGammaShortSummary.py
+--- find r46 (depth<=3) ---
+12:20 PM
+Found related material on the share (a newer r48 LUT candidate and a strategy scenarios doc). Quick read-only look.
+
+
+
+Bash List LUT folders and peek at strategy scenarios doc
+IN
+H="//172.16.1.85/Shared/Hardik"; ls -d $H/LUTS* 2>/dev/null; echo "--- Gamma Short Algo ---"; ls "$H/Gamma Short Algo" 2>/dev/null | head -15; echo "--- scenarios md (head) ---"; wc -c "$H/Gamma_Strategy_Scenarios.md"; head -c 3500 "$H/Gamma_Strategy_Scenarios.md"
+
+OUT
+//172.16.1.85/Shared/Hardik/LUTS_r48_noroll_CANDIDATE_L0100H0060_T13_7_2_3_11
+--- Gamma Short Algo ---
+Algo Daily Summary.xlsx
+GammaShortProcess.txt
+Gamma_Strategy_Input_D1_VGS.csv
+GreekExcel
+HedgeRollCount.xlsx
+MultilegVGS_Input.csv
+MultilegVGS_Input_New280726.csv
+Order Book
+OvernightStraddleStats.xlsx
+Position Files
+Trade Files
+Vikabh_Gamma_Strategy_Input_202.csv
+Vikabh_Gamma_Strategy_Input_220.csv
+--- scenarios md (head) ---
+1684 //172.16.1.85/Shared/Hardik/Gamma_Strategy_Scenarios.md
+Scenario 1:
+
+**Time Stamp		ATM		Future		Things to be done**
+
+**Entry\_StartTime**		25000		25010		Start Building The **Delta Neutral Position** At ATM as **Single\_Strike\_Flag is TRUE**
+
+**End\_StartTime**		25000		25025		Build The **Delta Neutral Position** At ATM from StartTime to EndTime
+
+**Roll Criteria Meet**	25100		25102		Square Off the Existing Position at 25000 and Build the New **Delta Neutral Position** at updated ATM 25100 keeping the No. 							of lots as asked in **Lot\_Straddle**
+
+
+
+Scenario 2:
+
+**Time Stamp		ATM		Future		Things to be done**
+
+**Entry\_StartTime**		25000/25050	25025		Start Building The **Delta Neutral Position** At ATM as **Single\_Strike\_Flag is FALSE**
+
+**End\_StartTime**		25000/25050	25025		Build The Delta Neutral Position At ATM from StartTime to EndTime
+
+**Roll Criteria Meet**	25100		25102		Square Off the Existing Position at 25000 and Build the New Delta Neutral Position at updated ATM 25100 keeping the No. 							of lots as asked in Lot\_Straddle
+
+
+
+
+
+
+
+
+
+**PS:**
+
+**Single\_Strike\_Flag** : While Building the Position in TimeFrame (Entry\_StartTime to End\_StartTime) 
+
+&nbsp;			if **Single\_Strike\_Flag** = True then build the position on ATM strike at Entry\_StartTime,
+
+&nbsp;			elif **Single\_Strike\_Flag** = False Then build the position on ATM Strike as Market Moves
+
+**Delta Neutral Position** : if (Delta > Lot\_Size) Neutralize the Delta With the ATM Synthetic Long/Short, else do the single option short hedging
+
+**Roll Criteria Meet** : if distance between the (BaseATM and Synthetic Future) is greater than (ATM Straddle/InputRollNumber) then roll to the Current ATM Strike
+Edit C:\Users\Administrator\Desktop\api_v2_main_29_07_wings_new\research\CODEBASE_CONTEXT.md
+Added 8 lines
+Write C:\Users\Administrator\.claude\projects\c--Users-Administrator-Desktop-api-v2-main-29-07-wings-new\memory\research-folder-context.md
+13 lines
+---
+name: research-folder-context
+description: research/ holds the GammaShort tick backtest plus CLAUDE.md and CODEBASE_CONTEXT.md; research work is read-only with respect to live code and the tick share
+metadata:
+  type: project
+---
+
+On 2026-10-13 the user started offline research on daily NIFTY tick files. `research/` (inside `api_v2_main_29_07_wings_new`) holds `GammaShort_Backtest_Final.py`, `tick_data/NIFTY.parquet` (one local day), `CLAUDE.md` and `CODEBASE_CONTEXT.md`. The tick source is the share `\\172.16.1.85\Shared\TickDataIV\<DDMMYYYY>\NIFTY.parquet` (1,724 day folders).
+
+**Why:** the user wants research sessions to carry the full codebase context and the live-trading rules without re-deriving them; memory notes are keyed by project path, so `research/CLAUDE.md` is the copy that travels.
+
+**How to apply:** read `research/CODEBASE_CONTEXT.md` before research work. Keep research output in `research/`, never write to the share, never edit live code from a research task. The backtest rule set differs from the live dashboard's `lut_factors.py` (see section 7 of the context file), so don't assume parity. Related rules: [[roller-py-off-limits]], [[order-executor-off-limits]], [[mtm-exit-fires-above-target]].
+Bash Add missing index entries to MEMORY.md
+IN
+cd "/c/Users/Administrator/.claude/projects/c--Users-Administrator-Desktop-api-v2-main-29-07-wings-new/memory" && printf '%s\n' "- [mtm-exit-fires-above-target](mtm-exit-fires-above-target.md) — exit_at_mtm / partial_sqf_at_mtm fire at MTM >= target, even for negative targets" "- [research-folder-context](research-folder-context.md) — research/ has the GammaShort tick backtest + CLAUDE.md/CODEBASE_CONTEXT.md; read-only vs live code and the share" >> MEMORY.md && cat MEMORY.md
+
+OUT
+- [roller-py-off-limits](roller-py-off-limits.md) — trading/roller.py must never be edited, even to fix confirmed live bugs, without first asking…
+- [never-place-large-single-orders](never-place-large-single-orders.md) — In this trading system, no code path may submit a single order carrying a…
+- [depth-gated-sizing-must-shrink-not-block](depth-gated-sizing-must-shrink-not-block.md) — Depth-gated execution in this trading system must size…
+- [order-executor-off-limits](order-executor-off-limits.md) — Don't change trading/order_executor.py; build new execution on its existing methods (lot_build.py does)
+- [mtm-exit-fires-above-target](mtm-exit-fires-above-target.md) — exit_at_mtm / partial_sqf_at_mtm fire at MTM >= target, even for negative targets
+- [research-folder-context](research-folder-context.md) — research/ has the GammaShort tick backtest + CLAUDE.md/CODEBASE_CONTEXT.md; read-only vs live code and the share
+Shell cwd was reset to c:\Users\Administrator\Desktop\api_v2_main_29_07_wings_new
+12:20 PM
+Written for: you, as the person who owns this strategy and will decide what to research next.
+
+I read all 1,449 lines of the script. Nothing has been run, because this machine has no working Python.
+
+What the backtest does
+It replays the full GammaShort book, one pass over the daily tick files. Each day gets at most one current-week trade, plus an optional next-week trade on days with 1–2 days to expiry. P&L is in "normalised Rs" (index points × 25000 / entry underlying).
+
+1. Prepare the day.
+
+It reads that day's parquet, takes the nearest expiry on or after the date as current-week, and the next expiry as next-week.
+It builds a 1-second grid where the underlying is the first print of each second. Seconds with no underlying are dropped.
+Per strike it forward-fills LTP, bid and ask, and solves IV from the out-of-the-money leg only in seconds where that leg actually traded.
+2. Decide entry. Each minute from 09:16 to 13:30 (to 09:59 on expiry day):
+
+It computes Build IV (weekend-adjusted), IV ratio against blended IDV (0.2/0.5/0.3), straddle ratio (yesterday's straddle ÷ today's ATM LTP straddle), opening gap, the ADJ band and the DTE bucket.
+It applies filters: a straddle-ratio veto per DTE, a Build-IV floor on DTE1/DTE2, and event days (no entry before 09:18, size ÷3).
+It looks up five stage tables (09:16, :17, :18, :19, 09:20+). The first hit wins.
+3. Execute.
+
+It sells the ATM straddle at the 30-second average bid, and the strike is held all day with no roll.
+It hedges every second in the synthetic future, either on points-out or on |net delta| (DTE1/DTE2).
+4. Exit. Checked once per minute:
+
+SL: 16 bps on expiry day, otherwise 14 bps.
+TP: a ramp by Build IV and DTE.
+TV and TV4 (thin option value).
+A 14:57 IV-drop (DTE ≤ 1).
+Otherwise end of grid.
+Exit is at the 30-second average ask.
+5. Costs. Fixed entry slippage by DTE, plus basis points of hedge notional.
+
+6. Next-week leg.
+
+A single check at 09:21 if there was no current-week trade by 09:20, using 09:16 snapshot features against NW_LUT.
+Sells at 09:21, stops at 15 bps on mid, re-hedges at |delta| > 0.10, exits at 15:15.
+7. Side output. Entries at 09:16/09:17/09:18 are also simulated with the LUT ignored, next to what production would have said (LUT_ON, VETO, FLOOR and so on). It writes resumable per-day results and a summary workbook.
+
+Things worth knowing before trusting the numbers
+It isn't the dashboard's rule set. The live trading/lut_factors.py differs in several ways:
+ADJ band: -0.008/+0.004 live vs -0.007/+0.005 in the backtest.
+Straddle bins: 10 edges live vs 11.
+Build-IV bins: 4 edges live vs 6.
+Reference straddle: a Black-Scholes-priced straddle live vs real LTP in the backtest.
+The backtest header cites an apply_strategy.py that isn't in this repo.
+Possible look-ahead. strike_arrays uses ffill().bfill(), so seconds before a strike's first print take its first later IV or price. This could leak into the 09:16 snapshot.
+Exits are minute-grid only. Intra-minute spikes don't stop the trade out the way the live 1-second fast monitors would.
+Event days. Gross and hedge notional are divided by 3, but entry slippage is charged in full. That is conservative, and may or may not be intended.
+Missing LUT folder. The default LUT folder D:\GammaShort\LUTS_r46V2_... doesn't exist here, and I didn't find it on the share. I did find Hardik\LUTS_r48_noroll_CANDIDATE_... on the share.
+What else we could do
+Run it across the share's days and reproduce the header numbers first (10,640 / MDD 144).
+Quantify look-ahead item 2 by re-running with it removed.
+Re-run with the dashboard's thresholds and LUTs to see how much live differs from the backtest.
+Add intra-minute exit checks to measure how much SL/TP timing matters.
+Slice by DTE, stage, exit reason, event day and entry time. The fixed-entry output makes this cheap.
+Sweep SL/TP/hedge triggers and costs, with the config-hash folders keeping runs separate.
+Add a wings and roll variant, since the live system buys protective wings and the backtest has none.
+Check fill realism: 30-second average bid against depth at entry size.
+What I wrote for the research folder
+research/CODEBASE_CONTEXT.md: the system map and the backtest explained, plus the parity table, the candidate issues above, data locations and environment notes.
+research/CLAUDE.md: working rules, including that live code, roller.py and order_executor.py are off-limits, the share is read-only, and outputs go to research/output/.
+Two memory changes: a research-folder-context note, and an index line for mtm-exit-fires-above-target, which existed but wasn't listed.
+Data findings
+The share has 1,724 day folders under TickDataIV, each with NIFTY.parquet (about 300 MB), BANKNIFTY, FINNIFTY and MIDCPNIFTY.
+The daily CSV and EventDates.xlsx are reachable. The script's default tick directory already points at that share.
+To run anything, we need Python 3.12 with numpy, pandas, pyarrow, numba and openpyxl, and a decision on which LUT set the "final" numbers came from.
+Which would you like first: setting up Python and reproducing the reference run, or checking the look-ahead and the live-vs-backtest differences?
+
+
+
+12:27 PM
+The background share search has finished; let me check whether it found the r46 folder after my earlier partial read.
+
+
+
+Bash Read tail of completed share search output
+IN
+tail -n 8 "C:/Users/ADMINI~1/AppData/Local/Temp/claude/c--Users-Administrator-Desktop-api-v2-main-29-07-wings-new/39622a12-4c13-4665-8454-a8e5a3abf1d8/tasks/bxww65pky.output"
+
+OUT
+--- find r46 (depth<=3) ---
+//172.16.1.85/Shared/GammaShortData/GammaShort/LUTS_r46V2_cwnw_adj007_005_T13_5_2_2_6
+//172.16.1.85/Shared/GammaShortData/GammaShort/LUTS_r46_cwnw_combined_exp_bld012
+//172.16.1.85/Shared/GammaShortData/GammaShort/LUTS_r46_ps1_mct1mono_adj009_005_T13_9_0_0_7
+//172.16.1.85/Shared/GammaShortData/GammaShort/LUTS_r46B_ps1_mct1mono_adj008_006_T13_5_0_4_5
+//172.16.1.85/Shared/TickDataClean/22012019/ZEEL19MAR460CE.NFO.parquet
+
+[exited with code 0]
+12:27 PM
+The search did find it, which corrects what I told you earlier. Verifying the folder has the files the script needs.
+
+
+
+Bash List r46V2 LUT folder and GammaShort inputs
+IN
+G="//172.16.1.85/Shared/GammaShortData/GammaShort"; echo "--- r46V2 folder ---"; ls "$G/LUTS_r46V2_cwnw_adj007_005_T13_5_2_2_6"; echo "--- GammaShort parent (files only, non-LUT) ---"; ls "$G" | grep -v -E "^LUTS_" | head -40
+
+OUT
+--- r46V2 folder ---
+LUT_0916.csv
+LUT_0917.csv
+LUT_0918.csv
+LUT_0919.csv
+LUT_0920_Onwards.csv
+NW_LUT.csv
+README.txt
+--- GammaShort parent (files only, non-LUT) ---
+7DOptimizerVMonotonic.py
+ALL_INTRA_12x_ITERATIONS.csv
+EventDates.xlsx
+FILTERED_5YEAR_GATE.csv
+FILTERED_GRID_GATE.csv
+FILTERED_ROUND30.csv
+FILTERED_ROUND33.csv
+FINAL_PARAMS.py
+HEDGING_V2.md
+INTRAMINUTE_RESULTS.md
+LUTS
+NiftyPrevStrIV.xlsx
+README_RUN_ORDER.md
+RISK_HEDGE.md
+ROUND9.md
+ROUND9_RESULTS.md
+WHATS_LEFT.md
+__pycache__
+_dbg
+_vix_synthetic.csv
+_yearly_dd_parts
+add_yearly_dd.py
+alive.log
+analyse_adj_grid.py
+analyse_adj_sweep.py
+analyse_config.py
+analyse_continuation.py
+analyse_control_exclusion.py
+analyse_frontier.py
+analyse_mdd_frontier.py
+analyse_nw_shift.py
+analyse_round12.py
+analyse_round34.py
+analyse_round9.py
+analyse_sl_by_dte.py
+analyse_tax_floor.py
+analyse_vix_axis.py
+apply_fixed_lut.py
+apply_strategy.py
+batch_yearly_dd.py
+12:27 PM
+Found it on the share, and it's the whole research tree, including apply_strategy.py. Correcting the context file.
+
+
+
+Edit C:\Users\Administrator\Desktop\api_v2_main_29_07_wings_new\research\CODEBASE_CONTEXT.md
+Added 12 lines
+Edit C:\Users\Administrator\Desktop\api_v2_main_29_07_wings_new\research\CODEBASE_CONTEXT.md
+Added 1 line
+Edit C:\Users\Administrator\Desktop\api_v2_main_29_07_wings_new\research\CODEBASE_CONTEXT.md
+Added 3 lines
+12:27 PM
+The r46V2 LUT set exists on the share, so what I said earlier about it is wrong and I've corrected research/CODEBASE_CONTEXT.md. I told you the search found no r46 folder, but I had only read the output while the search was still running.
+
+LUTs. \\172.16.1.85\Shared\GammaShortData\GammaShort\LUTS_r46V2_cwnw_adj007_005_T13_5_2_2_6 has the five stage files, NW_LUT.csv and a README.txt. That is the exact folder the script's default points to on D:.
+
+Point GS_LUT_DIR at it to run.
+Three other r46 variants sit next to it, and the r48 "no roll" candidate under Hardik\ is a newer set.
+Which set produced the reference numbers in the script header is still unconfirmed.
+The original research tree is on the share. \\172.16.1.85\Shared\GammaShortData\GammaShort\ contains apply_strategy.py (the engine the backtest header calls "live"), FINAL_PARAMS.py, README_RUN_ORDER.md, HEDGING_V2.md, RISK_HEDGE.md, WHATS_LEFT.md, INTRAMINUTE_RESULTS.md, many analyse_*.py, NiftyPrevStrIV.xlsx and EventDates.xlsx. I haven't read these yet. They are the best source for the intent behind each rule and for what the earlier rounds already tested.
+
+Still missing. nifty_idv_history.csv and NiftyPrevStrIV_NW.csv, which GS_DAY_INPUTS=backtest_files needs to reproduce the header numbers exactly, were not found. The default daily_csv mode uses GammaShortDailydata.csv, which is reachable.
+
+Since the answers to most of the open questions (live vs backtest parity, which LUT set, what's left to test) are probably in README_RUN_ORDER.md, WHATS_LEFT.md and apply_strategy.py, I'd read those next. I'll do that unless you'd rather start on Python setup first.
+
+
+
+okay and what about the changes we can perform in this backtesting?
+12:52 PM
+To avoid suggesting things already tested in earlier rounds, let me read the share's own notes first.
+
+
+
+Bash Read share research notes on what's left and run order
+IN
+G="//172.16.1.85/Shared/GammaShortData/GammaShort"; for f in WHATS_LEFT.md README_RUN_ORDER.md; do echo "################ $f ($(wc -c < "$G/$f") bytes)"; head -c 9000 "$G/$f"; echo; done
+
+OUT
+################ WHATS_LEFT.md (4315 bytes)
+# What's left to try
+
+Current best: `adj_tight` + ps11, 823 candidates meeting
+FY23-24 ≥ 1200, FY25-26 ≥ 1700, FY26-27 ≥ 600, per-year DD < 175.
+**FY26-27 caps at 644**, so a 650 floor is currently out of reach.
+
+Ruled out already:
+
+- **Wider tax range** — tested `-12..13`. Unconstrained FY26-27 ceiling rises
+  644 → 686, but no new candidates, and T18 stays at -5. Not a grid artifact.
+- **Exit/hedge params** — 12 configurations, no effect on which regime a day
+  belongs to. Cannot resolve FY-vs-FY conflicts.
+- **MDD limit** — never the binding constraint; 112,992 combos cleared it.
+
+---
+
+## Tier 1 — cheap, Phase 2 only, no tick re-run
+
+### 1a. `adj_tight` × all 12 param sets  ← best value
+
+`adj_tight` only ever ran against ps11, ps10 and ps2. The winning *signal* has
+never been paired with SL 11/12/13 or HFRAC 0.70/0.85. Since the signal is what
+broke the FY23-24/FY25-26 conflict, and exits control *how much* each day earns,
+this cross is the most likely place a higher FY26-27 hides.
+
+~4 min on 30 cores. `run_round4.bat` does this.
+
+### 1b. `adj_tight` neighbourhood
+
+Only ±0.005 was tried. The band need not be symmetric, and the optimum may not
+be at exactly half:
+
+    +/-0.003, +/-0.004, +/-0.006, +/-0.007
+    asymmetric: (-0.004, +0.008), (-0.008, +0.004), (-0.003, +0.010)
+
+Asymmetry is worth real attention — there is no reason a vol-up day and a
+vol-down day should be equally far from "neutral".
+
+### 1c. `MIN_TRADES_TO_ANCHOR`
+
+Fixed at 1 for every run so far. Raising it to 2/3/5 suppresses LUT cells
+backed by only one or two observations. This both changes the LUT *and*
+directly attacks overfitting — cells with a single lucky trade currently get
+the same standing as cells with forty.
+
+    python phase2_optimize.py --ps 11 --signal signal_configs\adj_tight.json --min-trades 3
+
+### 1d. Minimal min-cut instead of networkx's
+
+We showed the min-cut is non-unique: networkx returns a 363-cell source side
+where the minimal valid one is 74, at identical cut value. That means ~289
+cells trade on a solver tie-break rather than evidence. The minimal cut is a
+strictly more conservative LUT family and has never been evaluated.
+`test_scipy_mincut.py` already has the implementation.
+
+---
+
+## Tier 2 — needs a Phase 1 re-run (~30-40 min), grid is cheap
+
+### 2a. Exit thresholds `tv` / `tv4` / `iv_drop`  ← genuinely untouched
+
+Every param set in every round used **identical** values:
+
+    tv=0.00015, tv4=0.0006, iv_drop=0.1
+
+These are applied in `apply_exits_fast_precomp`, the same stage as SL, so they
+are nearly free to vary — a dense grid costs almost nothing beyond the hedge
+builds. This is the largest completely unexplored dimension left.
+
+FY26-27 is only 71 trading days, so its total is dominated by a handful of
+outcomes; a different time-value or IV-drop exit could plausibly move it more
+than anything in Tier 1.
+
+### 2b. TP band reshaping
+
+`TP_HIGH_ARR` / `TP_LOW_ARR` have only ever been scaled uniformly by
+`tp_scale`. The per-DTE *shape* has never been altered. Short-DTE and long-DTE
+days may want different profit-taking.
+
+### 2c. `WKND_ADJ`
+
+Baked into Phase 1 (it feeds `dte_idx`, which selects the TP band). Never
+varied from 1.0.
+
+---
+
+## Tier 3 — structural
+
+If Tiers 1 and 2 fail, the ceiling is the single static LUT itself:
+
+- **Regime-conditional LUTs** — separate LUT per volatility regime rather than
+  one table spanning 2021-2026. This directly addresses the finding that one
+  LUT cannot serve FY23-24 and FY25-26 simultaneously.
+- **An extra conditioning dimension** — e.g. trailing realised vol, or a
+  VIX-like level, added as a 7th LUT axis.
+
+Both are real code changes, not parameter sweeps.
+
+---
+
+## The thing worth doing regardless
+
+We have searched roughly **12 million configurations in-sample**. The candidate
+margins are ~4%. At that search volume, a 4% margin is not evidence of an edge —
+it is the expected result of looking that many times.
+
+Before committing capital to any candidate, split the data: train the LUT on
+FY21-22 through FY24-25, then measure FY25-26 and FY26-27 without refitting.
+The cache already supports this; it is one Phase 2 change. If the candidates
+hold up out-of-sample, that is worth more than another million-configuration
+sweep. If they collapse, everything above is moot.
+
+################ README_RUN_ORDER.md (19346 bytes)
+# GammaShort Optimiser — Restructured
+
+---
+
+# ROUND 3 RESULTS — PnL targets reachable, MDD still not
+
+The signal sweep **broke the FY23-24 / FY25-26 conflict** that round 2 found
+insurmountable. 2 of 20 signal configs produced combos meeting all three PnL
+targets:
+
+| config | change | all-3 combos | lowest MDD |
+|--------|--------|--------------|------------|
+| `adj_tight` | ADJ band ±0.010 → **±0.005** | 174 | **188.9** |
+| `w_prev_heavy` | WEIGHTS → (0.10, 0.70, 0.20) | 295 | 197.0 |
+| other 18 | — | 0 | — |
+
+So round 2's "the conflict may be structural" was too pessimistic. Narrowing
+the adjusted-IV-change neutral band lets the LUT separate the two regimes.
+
+### Best configuration found
+
+Only ONE parameter differs from your original production settings:
+
+```
+Signal  : ADJ_LOWER=-0.005, ADJ_HIGHER=0.005    <- the only change (was +/-0.010)
+Exits   : SL_BPS=14.0, tp_scale=1.0              (original)
+Hedge   : HEDGE_DIV=57, HEDGE_FRAC=1.0, STR_D=4  (original)
+V-curve : T16=11 T17=-5 T18=-5 T19=0 T20=10
+
+  FY23-24  1230   (target 1200)   OK
+  FY25-26  1757   (target 1750)   OK
+  FY26-27   611   (target  600)   OK
+  MDD      188.9  (limit   165)   FAIL - needs +14%
+  Total    9840 over 1071 trades
+```
+
+Full list: `results/best_all3_ps11_4ae90876.csv`. Reproduce with:
+
+```bat
+python extract_best.py --signal signal_configs\adj_tight.json --ps 11
+```
+
+### Read this before acting on it
+
+Four reasons to treat that configuration with suspicion:
+
+1. **The margins are razor thin.** FY25-26 clears by 0.4%, FY26-27 by 1.8%,
+   FY23-24 by 2.5%. Nothing here has room to degrade.
+
+2. **Search volume makes thin margins meaningless.** Across rounds 2 and 3 this
+   searched roughly **11.5 million configurations** (1.9M exit/hedge +
+   9.6M signal × V-curve). Finding something that clears a target by 0.4% in a
+   space that large is close to guaranteed by chance, whether or not the edge
+   is real.
+
+3. **The solution sits on the boundary of the search grid.** T17 and T18 are
+   both -5, the minimum of `TAX_RANGE`. Optima at a grid edge usually mean the
+   unconstrained optimum lies outside it, and corner solutions are fragile.
+
+4. **Everything is in-sample.** You chose no holdout, so these numbers are
+   fitted values with no predictive evidence behind them.
+
+The cache supports a proper holdout at no extra cost. Given a result this
+marginal, splitting train/test is the single most informative next step — it
+would take one Phase 2 re-run and would tell you whether `adj_tight` found
+signal or noise.
+
+---
+
+# ROUND 2 RESULTS — the targets are not jointly attainable
+
+Exhaustive check over **every** V-curve in all 12 param sets — 1,912,008
+configurations, no sampling:
+
+```
+TOTAL combos examined      : 1,912,008
+  FY23-24 & FY25-26 both   :         0     <- never co-occur
+  FY23-24 & FY26-27 both   :       388
+  FY25-26 & FY26-27 both   :       268
+  all three PnL targets    :         0
+  MDD < 165                :   112,992     <- abundant
+  FULLY FEASIBLE           :         0
+```
+
+### The binding constraint is not MDD
+
+112,992 combos satisfy MDD < 165 comfortably. What is impossible is
+**FY23-24 > 1200 together with FY25-26 > 1750** — zero occurrences in 1.9M
+configurations. A single static LUT cannot serve both regimes; the tax curve
+that lifts one suppresses the other.
+
+### Best achievable point
+
+`ps11` (SL=14, HFRAC=1.0 — your original production settings),
+T=(8,3,-4,-1,0): **FY23-24 1161, FY25-26 1706, FY26-27 587, MDD 180.8.**
+That is 96.8% of the worst-hit target. The frontier saturates there — relaxing
+MDD beyond ~185 buys nothing at all.
+
+| MDD cap | best ratio | FY23-24 | FY25-26 | FY26-27 |
+|---------|-----------|---------|---------|---------|
+| 165 | 0.862 | 1042 | 1626 | 517 |
+| 175 | 0.909 | 1095 | 1590 | 618 |
+| 185 | 0.968 | 1161 | 1706 | 587 |
+| none | 0.968 | 1161 | 1706 | 587 |
+
+### Two diagnoses I got wrong
+
+Recorded so the reasoning trail is honest:
+
+1. **Round 1: "MDD is the blocker."** Wrong — MDD is the *easiest* constraint
+   to satisfy. I read per-FY ceilings from `summary.txt` without checking they
+   came from different V-curves and therefore never co-occur.
+2. **Round 2 prediction: "MDD is governed almost entirely by SL_BPS."** Wrong —
+   at HFRAC 0.70, MDD runs 182 → 163 → 165 → 177 as SL goes 11 → 14.
+   Non-monotonic, and SL=11 is the worst. I generalised from four SL=14 points
+   plus one SL=11 point.
+
+Both errors came from reasoning over aggregates instead of individual combos.
+`verify_exhaustive.py` now checks the real thing.
+
+### Round 3 — the one lever left
+
+Exit/hedge params rescale PnL but cannot change **which regime a day is
+assigned to**, so they cannot resolve an FY-vs-FY conflict. The signal layer
+decides the bucketing — whether the LUT can distinguish the two years at all.
+That makes it the right next lever, and it needs no Phase 1 re-run.
+
+```bat
+run_round3.bat
+```
+
+19 signal configs × 3 param sets, run in parallel. If the sweep still returns
+`FY23-24 & FY25-26 = 0` everywhere, the conflict is structural: the strategy
+needs a **regime-aware LUT** (e.g. a separate LUT per volatility regime, or a
+DTE/VIX conditioning dimension) rather than any further parameter tuning.
+
+### Worth reconsidering: where did the targets come from?
+
+Your targets sit just beyond reach almost everywhere (96.8%). Two bugs we
+fixed both inflated PnL in the original: `pe_bid` filled with the call
+theoretical, overstating entry credit; and the `fastmath` NaN crash silently
+dropping whole days. If 1200/1750/600 were set from pre-fix output, the
+corrected code may never reproduce them — and the targets, not the strategy,
+are what should move.
+
+---
+
+# ROUND 1 RESULTS
+
+**No parameter combination met your targets.** 159,334 V-curves × 5 param sets
+were searched. Here is why, and what to do next.
+
+| ps | SL | TP | HDIV | HFRAC | min MDD | FY23-24 | FY25-26 | FY26-27 |
+|----|----|----|------|-------|---------|---------|---------|---------|
+| 0 | 14 | 1.0 | 57 | 1.0 | 178 | 1269 | 1760 | 664 |
+| 1 | **11** | 1.0 | 57 | 1.0 | **154** | 1135 | 1668 | 655 |
+| 3 | 14 | 0.8 | 57 | 1.0 | 178 | 1224 | 1535 | 702 |
+| 5 | 14 | 1.0 | 45 | 1.0 | 184 | 1255 | 1687 | 660 |
+| 7 | 14 | 1.0 | 57 | **0.7** | 177 | 1212 | **1906** | 623 |
+
+Targets: FY23-24 > 1200, FY25-26 > 1750, FY26-27 > 600, MDD < 165.
+Values shown are the *maximum achievable for that FY across all V-curves* —
+they do not co-occur in a single combo, so treat them as ceilings.
+
+### Findings
+
+1. **MDD is governed almost entirely by `SL_BPS`.** Every SL=14 variant landed
+   at min-MDD 177–184 regardless of TP, HDIV or HFRAC. Only cutting SL to 11
+   moved it, to 154. Tax/V-curve tuning cannot fix MDD — tax only selects
+   *which* trades fire, it cannot shrink the losses themselves.
+
+2. **The MDD and PnL targets pull in opposite directions.** At SL=14 the PnL
+   targets are (just) reachable but MDD floors at 178. At SL=11 MDD passes but
+   FY23-24 and FY25-26 fall short. Neither end satisfies all four.
+
+3. **`hedge_frac=0.7` is the strongest PnL lever found** — FY25-26 ceiling rose
+   from 1760 to 1906. But it was only ever tested at SL=14, where MDD fails.
+
+4. **The untested region is LOW SL × HFRAC 0.7.** That is the only place the
+   constraints could jointly hold. Round 2 targets exactly this.
+
+### Round 2 — what to run
+
+`PARAM_SETS` in `phase1_extract.py` is now a 12-set grid:
+SL ∈ {11,12,13,14} × HFRAC ∈ {0.70, 0.85, 1.00}. Because hedge results cache
+per `(hedge_div, hedge_frac, str_d)`, this uses **3** distinct hedge configs vs
+round 1's 4 — so it is *cheaper* than the run you already did, despite 50% more
+param sets.
+
+```bat
+cd C:\Users\Administrator\Desktop\GammaShort
+
+:: 1. MANDATORY - shards hold the OLD param PnLs.
+::    phase1 will refuse to run until this is gone.
+rmdir /s /q cache\shards
+
+:: 2. Cap workers to fit RAM - see the memory note below
+set GAMMA_WORKERS=12
+
+:: 3. Rebuild the cache  (~25-40 min)
+python phase1_extract.py
+
+:: 4. All 12 param sets concurrently
+python run_phase2_parallel.py
+```
+
+### Memory — this is what crashed your machine
+
+Round 1 ran 30 workers, each holding a full day file. Measured:
+
+| | per worker | × 30 workers |
+|---|---|---|
+| Round 1 (all 28 columns) | 992 MB | **29.7 GB** |
+| Now (11 columns actually used) | 438 MB | **13.1 GB** |
+
+Phase 1 now reads only the 11 columns the code touches — 56% less memory and
+63% faster, values verified identical on every kept column. But 13 GB is still
+a lot, so set `GAMMA_WORKERS` to match your RAM:
+
+| RAM | `set GAMMA_WORKERS=` |
+|-----|----------------------|
+| 16 GB | 8 |
+| 32 GB | 16 |
+| 64 GB+ | 30 (leave unset) |
+
+Because Phase 1 now checkpoints per day, a crash costs only the days in flight —
+just re-run and it resumes.
+
+### Guard against mixing param grids
+
+Shards store PnL *per param-set id*. If `PARAM_SETS` changes, resuming would
+silently blend old and new parameters into one cache, producing numbers
+corresponding to no real configur
+12:52 PM
+Short version: change the simulator first, then the rules. I read the share's own notes (WHATS_LEFT.md, README_RUN_ORDER.md) so I don't suggest things already tried.
+
+Caveat: those notes are from rounds 3–4 and the script is at round 52. Some "untouched" items below may have been explored since. INTRAMINUTE_RESULTS.md, ROUND9*.md and apply_strategy.py would settle that, and I haven't read them yet.
+
+1. Fix the simulator before optimising
+Change	Why	Effort
+Remove bfill() in strike_arrays (price and IV)	Possible look-ahead into the 09:16 snapshot	Small, then re-run to measure the delta
+Second-grid exit test (EXIT_GRID="second")	SL/TP are only checked once a minute, but live fast monitors check every second	Medium
+Scale entry slippage on event days	Gross and hedge notional are ÷3 but entry cost is not	Trivial
+Fill-model sensitivity: ±slippage, 10 s / 30 s / 60 s averaging	Shows how much PnL depends on the fill assumption	Small
+Live-parity switch for ADJ band, straddle and Build-IV bins, reference straddle	The dashboard's lut_factors.py differs from the backtest. Run both and compare	Medium
+Report MAE/MFE and the equity path per trade	Needed to judge SL/TP shape and tail risk	Small
+2. Out-of-sample discipline
+The notes say about 12M configurations were searched in-sample, with margins around 4% and the best solution on a grid edge (T17 and T18 at -5). I'd make this the second step:
+
+Train the LUT on FY21–FY24, then test FY25–FY27 with no refit, and report it as walk-forward.
+Add bootstrap confidence intervals on per-trade and per-FY PnL.
+Add MIN_TRADES_TO_ANCHOR ≥ 3, because a cell backed by one lucky trade currently counts the same as one backed by forty.
+Use the minimal min-cut instead of networkx's (74 cells vs 363 at the same cut value).
+3. Strategy-rule experiments
+Noted as untouched in the share notes (round 3–4; may have changed since):
+
+Exit thresholds TV_THRESH, TV4_THRESH, IV_DROP_THRESH, which were identical in every round.
+TP band shape per DTE, which has only been scaled uniformly, and WKND_ADJ.
+Asymmetric ADJ bands, for example (-0.008, +0.004) against the current (-0.007, +0.005).
+Structural:
+
+Regime-conditional LUTs, or a 7th axis such as realised vol or VIX (_vix_synthetic.csv exists on the share). This is the notes' own answer to one LUT not serving FY23-24 and FY25-26.
+Re-entry after an SL or TP, instead of one trade a day.
+Roll vs hold (there's an r48_noroll LUT, so this was explored).
+Protective wings. The live system buys 2% wings and the backtest has none, so this changes tail loss, cost and margin.
+Sizing by conviction (for example by IV ratio) instead of flat 1.
+Exit time: the grid ends at 15:27, live default is 15:37, NW exits at 15:15.
+Hedge: trigger sensitivity, and cost as a function of hedge size.
+4. Infrastructure
+This "Final" script is a single pass with no cache layer, which is slow for sweeps. The original research tree has a phase 1 / phase 2 split: extract features and per-parameter PnL once, then optimise cheaply on the cache. For anything that changes only the signal or LUT (section 2 and the band changes), reuse that split rather than re-reading 300 MB parquets per run.
+
+Suggested order
+Install Python, run on the share, and reproduce the header (10,640 / MDD 144).
+Apply the section 1 fixes one at a time and record the delta of each.
+Run the live-parity variant.
+Set up the train/test split.
+Only then try the section 3 experiments.
+Steps 2–3 tell us how much of the reported edge survives realism, which decides whether steps 4–5 are worth doing.
+
+Should I start on step 1 (Python setup and reproduction), or first read apply_strategy.py and the later-round notes so the experiment list is accurate?

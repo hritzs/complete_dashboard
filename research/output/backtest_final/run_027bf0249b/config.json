@@ -1,0 +1,230 @@
+{
+ "TICK_LAYOUT": "combined",
+ "TICK_DIR": "/mnt/shared/TickDataIV",
+ "NW_TICK_DIR": "D:\\NIFTY_NextTickData",
+ "LUT_DIR": "/mnt/shared/GammaShortData/GammaShort/LUTS_r46V2_cwnw_adj007_005_T13_5_2_2_6",
+ "EVENT_PATH": "/mnt/shared/EventDates.xlsx",
+ "EVENT_PATH_FALLBACK": "D:\\GammaShort\\EventDates.xlsx",
+ "OUTPUT_BASE": "/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/output/backtest_final",
+ "DAY_INPUTS": "daily_csv",
+ "DAILY_CSV": "/mnt/shared/Hardik/Project_Codes/GammaShortDailyProcess/GammaShortDailydata.csv",
+ "IDV_PATH": "D:\\GammaShort\\nifty_idv_history.csv",
+ "PREV_STR_PATH": "D:\\GammaShort\\NiftyPrevStrIV.xlsx",
+ "NW_PREV_PATH": "D:\\GammaShort\\NiftyPrevStrIV_NW.csv",
+ "START_DATE": "2021-01-01 00:00:00",
+ "END_DATE": "2100-01-01 00:00:00",
+ "SKIP_DATES": "{Timestamp('2024-04-18 00:00:00')}",
+ "WORKERS": 20,
+ "GRID_END_EARLY": [
+  15,
+  27,
+  0
+ ],
+ "GRID_END_LATE": [
+  15,
+  37,
+  0
+ ],
+ "GRID_END_SWITCH": "2026-06-03 00:00:00",
+ "IV_MODE": "tick",
+ "CHECK_FALLBACK": "prev",
+ "N_OPT_SECONDS": 30,
+ "N_FUT_SECONDS": 3,
+ "WKND_ADJ": 1.0,
+ "WEIGHTS": [
+  0.2,
+  0.5,
+  0.3
+ ],
+ "ADJ_LOWER": -0.007,
+ "ADJ_HIGHER": 0.005,
+ "IV_THRESHOLDS": [
+  0.6501,
+  0.8001,
+  0.9001,
+  0.9501,
+  1.0001,
+  1.0501,
+  1.1001,
+  1.2001,
+  1.3001
+ ],
+ "STR_THRESHOLDS": [
+  0.9501,
+  1.0001,
+  1.0501,
+  1.1001,
+  1.1501,
+  1.2001,
+  1.3001,
+  1.4001,
+  1.5001,
+  1.7501,
+  2.0001
+ ],
+ "BLD_THRESHOLDS": [
+  0.0801,
+  0.0901,
+  0.1001,
+  0.1201,
+  0.1601,
+  0.2001
+ ],
+ "OG_THRESHOLDS": [
+  -0.7501,
+  0.7501
+ ],
+ "DIMS": [
+  7,
+  10,
+  12,
+  7,
+  3,
+  3
+ ],
+ "STAGE_FILES": [
+  "LUT_0916.csv",
+  "LUT_0917.csv",
+  "LUT_0918.csv",
+  "LUT_0919.csv",
+  "LUT_0920_Onwards.csv"
+ ],
+ "EXPECTED_ON": {
+  "LUT_0916.csv": 1298,
+  "LUT_0917.csv": 3309,
+  "LUT_0918.csv": 4534,
+  "LUT_0919.csv": 3828,
+  "LUT_0920_Onwards.csv": 2441
+ },
+ "STAGE_NAMES": [
+  "09:16",
+  "09:17",
+  "09:18",
+  "09:19",
+  "09:20+"
+ ],
+ "ENTRY_FIRST_HHMM": 916,
+ "ENTRY_LAST_HHMM": 1330,
+ "EXPIRY_ENTRY_CUTOFF": 959,
+ "EVENT_FIRST_HHMM": 918,
+ "EVENT_SIZE": 0.3333333333333333,
+ "VETO_STR": {
+  "0": 1.7,
+  "1": 1.275,
+  "2": 1.225,
+  "3": 1.175,
+  "4": 1.15,
+  "5": 1.125
+ },
+ "IV_FLOOR": {
+  "0": 0.12,
+  "1": 0.12
+ },
+ "SL_BPS_DEFAULT": 14.0,
+ "SL_BPS_BY_DTE": {
+  "0": 16.0
+ },
+ "TP_HIGH": [
+  30.0,
+  25.0,
+  25.0,
+  20.0,
+  15.0,
+  15.0,
+  15.0
+ ],
+ "TP_LOW": [
+  16.0,
+  13.0,
+  13.0,
+  10.0,
+  8.0,
+  8.0,
+  8.0
+ ],
+ "TP_SCALE": 1.0,
+ "TV_THRESH": 0.00015,
+ "TV4_THRESH": 0.0006,
+ "IV_DROP_THRESH": 0.1,
+ "HEDGE_DIV": 57,
+ "STR_D": 4,
+ "PTS_FLOOR": 0.0008,
+ "HEDGE_FRAC": 0.75,
+ "INTRA_MULT": 1.2,
+ "INTRA_FRAC": 1.0,
+ "DELTA_MAP": {
+  "0": 0.25,
+  "1": 0.2
+ },
+ "ENTRY_SLIP": {
+  "0": 1.0,
+  "1": 0.5
+ },
+ "ENTRY_SLIP_DEF": 0.25,
+ "HEDGE_SLIP_BPS": {
+  "0": 0.4,
+  "1": 0.3
+ },
+ "HEDGE_SLIP_DEF": 0.2,
+ "NW_ENABLED": true,
+ "NW_CHECK_MODE": "live",
+ "NW_AFTER_HHMM": 920,
+ "NW_ENTRY_T": 921,
+ "NW_EXIT_T": 1515,
+ "NW_SL_BPS": 15.0,
+ "NW_HEDGE_THR": 0.1,
+ "NW_HEDGE_COST_BPS": 0.2,
+ "NW_RAT_EDGES": [
+  1.0,
+  1.2,
+  1.35
+ ],
+ "NW_LVL_EDGES": [
+  0.12,
+  0.14,
+  0.17
+ ],
+ "NW_OG_EDGES": [
+  -0.75,
+  0.7501
+ ],
+ "NW_EXPECTED_ON": 23,
+ "EXIT_REASONS": {
+  "0": "EOD",
+  "1": "SL",
+  "2": "TP",
+  "3": "TV",
+  "4": "TV4",
+  "5": "IV_DROP"
+ },
+ "FIXED_ENTRIES": [
+  916,
+  917,
+  918
+ ],
+ "CW_COLS": [
+  "Time_dt",
+  "Time",
+  "Strike",
+  "StrikePrice",
+  "Type",
+  "LTP",
+  "Bid",
+  "Ask",
+  "DTE",
+  "Expiry",
+  "UnderlyingLTP",
+  "UnderlyingBid",
+  "UnderlyingAsk"
+ ],
+ "NW_COLS": [
+  "Time_dt",
+  "Strike",
+  "Type",
+  "LTP",
+  "Bid",
+  "Ask",
+  "DTE",
+  "UnderlyingLTP"
+ ]
+}
