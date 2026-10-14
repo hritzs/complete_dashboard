@@ -85,6 +85,7 @@ type LUTBuildRun struct {
 	SimDriven        bool    `json:"sim_driven,omitempty"`
 	SimPointsAllowed float64 `json:"sim_points_allowed,omitempty"`
 	SimMinOneLot     bool    `json:"sim_min_one_lot,omitempty"`
+	SimHedgeRule     string  `json:"sim_hedge_rule,omitempty"` // "" = the driving set's rule
 }
 
 func lutBuildDefaults(c LUTBuildConfig) LUTBuildConfig {
@@ -294,6 +295,8 @@ type lutTestOpts struct {
 	// AtMinute: fire like the real build -- on the next recorded minute, at
 	// that minute's strike (ATM at its open) and TP -- instead of now.
 	AtMinute bool `json:"at_minute"`
+	// HedgeRule: "old" / "new" hedge for this test ("" = the driving set's).
+	HedgeRule string `json:"hedge_rule"`
 }
 
 func (s *Service) lutTestFireLocked(o lutTestOpts) (*LUTBuildRun, error) {
@@ -342,7 +345,7 @@ func (s *Service) lutTestFireLocked(o lutTestOpts) (*LUTBuildRun, error) {
 	if o.AtMinute {
 		run := &LUTBuildRun{Test: true, Status: "WAITING", Minute: "next minute (test)", Expiry: expiry, Lots: c.Lots,
 			ExitTime: c.ExitTime, Account: c.BrokerName + "/" + c.AccountID,
-			SimDriven: o.SimDrive, SimPointsAllowed: o.PointsAllowed, SimMinOneLot: o.MinOneLot}
+			SimDriven: o.SimDrive, SimPointsAllowed: o.PointsAllowed, SimMinOneLot: o.MinOneLot, SimHedgeRule: lutTestRule(o.HedgeRule)}
 		e.tests = append(e.tests, run)
 		e.pendingTest = run
 		e.saveDayLocked(e.day)
@@ -352,13 +355,20 @@ func (s *Service) lutTestFireLocked(o lutTestOpts) (*LUTBuildRun, error) {
 	run := &LUTBuildRun{Test: true, Status: "FIRING", Minute: now.Format("15:04") + " (test)", FiredAt: now.Format("15:04:05.000"),
 		Expiry: expiry, Strike: ev.Strike, Lots: c.Lots, SLBps: risk.SlBps, TPBps: risk.TpBps, ExitTime: c.ExitTime,
 		Account:   c.BrokerName + "/" + c.AccountID,
-		SimDriven: o.SimDrive, SimPointsAllowed: o.PointsAllowed, SimMinOneLot: o.MinOneLot}
+		SimDriven: o.SimDrive, SimPointsAllowed: o.PointsAllowed, SimMinOneLot: o.MinOneLot, SimHedgeRule: lutTestRule(o.HedgeRule)}
 	e.tests = append(e.tests, run)
 	e.saveDayLocked(e.day)
 	log.Printf("[LUT-BUILD] 🧪 TEST FIRE (user) -> REAL ORDERS %s %s %.0f straddle %d lot(s), delta-neutral, SL %.2f bps TP %.2f bps exit %s, %s, account %s",
 		lutSymbol, expiry, ev.Strike, c.Lots, risk.SlBps, risk.TpBps, c.ExitTime, lutWingsText(c.WingPct), run.Account)
 	s.lutSendBuild(run, lutBuildRequest(c, expiry, ev.Strike, risk))
 	return run, nil
+}
+
+func lutTestRule(r string) string {
+	if r == "old" || r == "new" {
+		return r
+	}
+	return ""
 }
 
 // lutFirePendingTestLocked fires a test waiting for the minute, on the

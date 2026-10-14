@@ -300,7 +300,7 @@ func (s *Service) simDriveHedge(d *simDriver, tr StoredTrade, run LUTBuildRun, h
 	frac, how := hedgeIntraFrac, "complete live delta"
 	if snap, ok := s.Store.LoadSnapshot(tr.TradeUID); ok {
 		a.Delta = snap.NetDelta
-		if rule := lutDrivingRule(); h.Kind != "INTRA_MINUTE" && rule.LeaveBand > 0 { // new: live points out -> 25 % of live allowed
+		if rule := simRunRule(run, lutDrivingRule().Key); h.Kind != "INTRA_MINUTE" && rule.LeaveBand > 0 { // new: live points out -> 25 % of live allowed
 			eff := math.Max(snap.PointsAllowed, snap.Underlying*resolveHedgeMinThresholdBps(tr.Config.HedgeMinThresholdBps)/10000)
 			if run.SimPointsAllowed > 0 {
 				eff = run.SimPointsAllowed // test band, as in its simulation
@@ -373,7 +373,15 @@ func simDriveConfigOf(run LUTBuildRun, strike float64, tables string) PaperSimCo
 	}
 	return PaperSimConfig{ID: "LIVE-" + run.TradeUID, Source: "drives " + run.TradeUID, Entry: strings.TrimSuffix(run.Minute, " (test)"),
 		Lots: 1, HedgeMode: "synthetic", ExitTime: exit, SLBps: run.SLBps, TPBps: run.TPBps, PointsAllowed: run.SimPointsAllowed, Strike: strike,
-		HedgeRule: tables}
+		HedgeRule: simRunRule(run, tables).Key}
+}
+
+// simRunRule: a test's own hedge rule, else the driving set's.
+func simRunRule(run LUTBuildRun, tables string) hedgeRule {
+	if run.SimHedgeRule != "" {
+		return hedgeRuleFor(run.SimHedgeRule)
+	}
+	return hedgeRuleFor(tables)
 }
 
 // simDrivenRun finds the LUT run (real build or sim-driven test) that made
