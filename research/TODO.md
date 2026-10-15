@@ -2,7 +2,17 @@
 
 Research is isolated under `research/`. Do not translate a research result into `services/` or `ui/` without the owner's explicit direction.
 
-## Latest request: prioritize DD and mandatory cuts on dicey days
+## Latest request: trade comparison and modest strong-edge boosts
+
+The owner requested a trade-by-trade comparison and modest boosts when estimated edge is strong. `CONVICTION_SIZING_SPEC.md` fixed the gate/profiles before evaluating the new policy. Reuse the frozen DD-risk inputs/flags: CW S1 upper tercile + S2 at least CW median, estimated loss probability <= book median, and no dicey flag. There are 166 strong-estimate entries, of which 134 are blocked by the 09:16 no-boost rule and 32 can be boosted. NW has no equivalent two-score conviction label.
+
+The gentle profile (strong 1.05–1.10, ordinary <= 1.05) cannot meet mean 1 under the 201 mandatory dicey cuts: total upper budget 792.35 <799 required. It was reported infeasible without weakening rules. The modest-priority profile is feasible: eligible strong 1.10–1.15, ordinary <= 1.10, dicey 0.75–0.85, 09:16 <= 1, average 1. Strong entries never size below ordinary entries. Other boosts are budget redistribution, not evidence of strong conviction.
+
+Selected lowest-DD qualifying policy: net 10,938.10 / DD 108.63 / ratio 100.69 / worst day -56.25, versus previous DD-first 10,749.08 /105.41 /101.97 /-56.16 and flat 10,522.04 /144.37 /72.88 /-61.28. It adds 189.02 net versus previous DD-first at 3.22 greater DD. All 799 entries remain:251 cut,142 unchanged,406 boosted; only 32 boosts carry the high-conviction label, while 374 are ordinary budget reallocations. Average high-conviction size 1.1406; average dicey size 0.8250; whole mean 1.
+
+Artifacts: `output/conviction_sizing/conviction_trade_comparison.xlsx`, all 799 rows in `trade_comparison.csv`, chronological examples, summary, coefficients and input hashes. Twelve tests pass across conviction/risk/normalization; independent checks reproduce gates, budgets, daily sizes/PnL, DD, counts and attribution. Full-history fitting/normalization remains in sample and does not validate future edge. Live behavior is unchanged.
+
+## Previous request: prioritize DD and mandatory cuts on dicey days
 
 The owner wants reduced exposure on uncertain/risky days, not just better aggregate profit. `DRAWDOWN_SIZING_SPEC.md` fixed this experiment before evaluation. `sizing_drawdown_risk.py` defines dicey entries using fitted loss probability, expected downside, pre-entry instability, and missing CW features; it then enforces ceilings 0.90/0.85/0.75 before bounded mean-one normalization. The risk model excludes the outcome-fitted S1/S2 scores. All entries stay within 0.75–1.15; 09:16 CW is never boosted. LUT tax T=(13,5,2,2,6) and selected trade set remain unchanged.
 

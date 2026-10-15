@@ -1,0 +1,34 @@
+{
+  "Input_sha256": {
+    "/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/sizing_conviction_comparison.py": "0ab1f2a0c4d4c12cd0857ee047abc01d47145049b8c0363725c99ce751e192d5",
+    "/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/CONVICTION_SIZING_SPEC.md": "2d2802d8748ffd6643ebdf7b3452a74b9cf5afb624059f539c35e115af779848",
+    "/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/sizing_drawdown_risk.py": "d93c381d41cf2df94739be73e86c0d937fa98611cb7f65686de7e61e8ac9e017",
+    "/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/sizing_normalized_optimization.py": "9ac511dfa02133e6039436cf7c40529663f2d8d245f02ff61991cd38a78072cb",
+    "/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/output/drawdown_risk_sizing/drawdown_risk_sizing.xlsx": "551763bad899fdf76d19f881556a684f213cb74d8477a67d83f4d175d82de6d7",
+    "/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/output/drawdown_risk_sizing/coefficients.csv": "bc16c165e7c8800f9041094d87c3a0148ff98848011170639a428db89ae9b9dc",
+    "/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/output/drawdown_risk_sizing/manifest.json": "57f16f373038688bb9e583cbe90ab6c1002556ca4b7be36335e2c2d052e2c23e"
+  },
+  "Daily_pickles_sha256": "a5d86cd774749405cb5841c7f6c7754c430d90da32c48fa12afe32972a57eeb7",
+  "Profiles": {
+    "Gentle": [
+      1.05,
+      1.1,
+      1.05
+    ],
+    "Modest priority": [
+      1.1,
+      1.15,
+      1.1
+    ]
+  },
+  "Thresholds": {
+    "S1_top_tercile": 0.34480967792798717,
+    "S2_median": -0.2238011521055447,
+    "Loss_probability_median": 0.2862765814562388
+  },
+  "Selected_policy": "Modest priority: Maximum ratio",
+  "Evaluations": 10254,
+  "Strong_entries": 166,
+  "Boost_eligible": 32,
+  "Blocked_0916": 134
+}

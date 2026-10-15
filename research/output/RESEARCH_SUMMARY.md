@@ -2,7 +2,21 @@
 
 Updated 2026-10-15. This is offline research; it contains no authorization to change live trading behavior.
 
-## Latest: drawdown-first optimization with mandatory dicey-day cuts
+## Latest: trade comparison and modest conviction boosts
+
+The same 799 entries now have a complete flat/previous-DD/new-policy trade comparison. The predeclared strong-edge gate is CW S1 upper tercile + S2 >=CW median + low estimated loss probability + no dicey flag. Of 166 strong estimates,134 are at 09:16 and remain blocked;32 qualify for a modest boost. The feasible profile enforces strong 1.10–1.15, ordinary <= 1.10, dicey 0.75–0.85, 09:16 <= 1, and exact mean 1. Its high-conviction size averages 1.1406. The gentler profile cannot fund mandatory cuts while restoring mean 1 and is explicitly infeasible (maximum budget 792.35 vs 799 required).
+
+| Policy | Net | MDD | Net/MDD | Worst day |
+|---|---:|---:|---:|---:|
+| Flat |10,522.04|144.37|72.88|-61.28|
+| Previous DD-first |10,749.08|105.41|101.97|-56.16|
+| New conviction policy |10,938.10|108.63|100.69|-56.25|
+
+Tradeoff: new policy adds 189.02 PnL versus previous DD-first but DD is 3.22 higher. It cuts 251 entries, leaves 142 unchanged, boosts 406. Thirty-two boosts are strong-conviction allocations;374 are ordinary budget redistribution, capped 1.10. All 201 dicey entries remain below full size, averaging 0.8250. No score label guarantees profit: the first chronological boosted example (2021-01-05) loses 10.68 flat vs 12.29 sized; the next (2021-02-03) gains 54.11 flat vs 62.23 sized.
+
+`conviction_sizing/trade_comparison.csv` contains all 799 dates, leg/stage, available strike/expiry, entry/exit, flags/reasons and flat/previous/new quantities/PnL. `conviction_sizing/conviction_trade_comparison.xlsx` adds action/group/year/leg attribution, model coefficients, feasibility checks and charts. Specification: `../CONVICTION_SIZING_SPEC.md`. Twelve tests plus independent artifact checks pass. Full-history scores, thresholds, optimization and normalization are in sample; no causal live edge or deployment is established.
+
+## Previous: drawdown-first optimization with mandatory dicey-day cuts
 
 `../DRAWDOWN_SIZING_SPEC.md` was written before this experiment. `../sizing_drawdown_risk.py` fits estimated loss risk/downside from entry inputs, excludes fullfit S1/S2 from those risk models, and combines them with pre-entry instability to flag risky entries. Missing CW entry-window readings also flag a day. Of 799 entries, 201 are flagged. Normalization cannot undo their hard size ceiling.
 

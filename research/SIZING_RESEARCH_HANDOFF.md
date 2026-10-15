@@ -3,7 +3,7 @@
 Updated 2026-10-15. The sizing studies through v6 and the preregistered
 relaxed-entry rerun are complete. The derived-strategy simulator remains a
 scaffold (see sections 4.9, 4.10, and 7). The latest owner request is the
-drawdown-first full-history optimization in section 4.13, which uses no
+conviction-aware full-history optimization in section 4.14, which uses no
 60/20/20 split and enforces mean trade size 1. Sections 4.11 and 4.12 preserve
 the preceding unnormalized and normalized studies without mandatory risk cuts.
 
@@ -14,7 +14,7 @@ on high-opportunity days and falls on poor ones, plus a daily
 **opportunity tracker** that shows the reading behind that size.
 
 The owner's conditions for the original split-based studies (the current
-drawdown-first full-history analysis in section 4.13 supersedes the split):
+conviction-aware full-history analysis in section 4.14 supersedes the split):
 
 - **60 / 20 / 20 chronological split.** TRAIN is the first 60 % of days,
   VALIDATION the next 20 %, TEST the last 20 %. Every number is fitted on
@@ -477,6 +477,47 @@ The "pre-entry stability" inputs and the early-exit rules in v2 use these.
   prior-entry stress timing, qualification constraints, DD, year/leg totals,
   and risk/sizing model replay.
 
+### 4.14 Trade comparisons and modest conviction boosts
+
+- Owner requested trade comparisons and modest size boosts on strong estimated
+  edge. `CONVICTION_SIZING_SPEC.md` fixed the gates/profiles before evaluating
+  the new candidates. `sizing_conviction_comparison.py` reuses the frozen risk
+  model/flags and 38 inputs from 4.13 rather than refitting those estimates.
+- Strong estimate: CW S1 >=its upper-tercile threshold, S2 >=CW median, loss
+  probability <=book median, and no dicey flag.166 entries qualify for this
+  label;134 occur at 09:16 and cannot be boosted.32 are boost eligible. NW
+  does not have the equivalent two-score confirmation and is not labeled
+  high conviction. Risk always overrides estimated edge.
+- Gentle profile: strong 1.05–1.10, ordinary <= 1.05. Maximum total-size budget
+ 792.35 cannot reach the required 799 while respecting 201 dicey caps and
+  the 09:16 constraint. Reported infeasible; constraints were not relaxed.
+- Modest-priority profile: strong 1.10–1.15, ordinary <= 1.10, dicey 0.75–0.85,
+  09:16 <= 1, floor 0.75, exact book mean 1. Strong eligible entries are never
+  sized below ordinary entries. Bounded normalization preserves both strong
+  lower bounds and risk upper bounds. Three search objectives qualify against
+  flat profit/DD/worst-day constraints.
+- Selected by lowest qualifying DD, then higher PnL: new net **10,938.10**,
+  DD **108.63**, ratio **100.69**, worst day**-56.25**. Previous DD-first was
+  **10,749.08 /105.41 /101.97 /-56.16**. The new policy gains **189.02** net
+  but has **3.22** more DD. Relative to flat it gains 416.07 net and retains
+  lower DD/worst-day loss. It is not uniformly better than the prior policy.
+- All 799 entries are preserved: **251 cuts,142 unchanged,406 boosts**. Only
+  **32** boosts carry the strong-conviction label; the other 374 are ordinary
+  budget redistribution, capped 1.10. Average strong eligible size **1.1406**,
+  dicey size **0.8250**, overall size **1.000000**. All 201 dicey entries remain
+  capped 0.85.134 strong 09:16 entries retain their no-boost protection.
+- Chronological examples are not selected on PnL:2021-01-05 CW 09:17 is a
+  strong-estimate boost 1.15 that loses-12.29 vs-10.68 flat;2021-02-03 CW 09:18
+  boosts 1.15 and earns 62.23 vs 54.11 flat.2021-01-06 CW 09:17 is dicey at 0.85,
+  losing-38.51 vs-45.31 flat. Scores do not guarantee a winning day.
+- `output/conviction_sizing/` has all 799 rows in`trade_comparison.csv`, a
+  detailed workbook with flat/previous/new sizes and PnL, strike/expiry and
+  entry/exit metadata, risk/conviction reasons, action/group/year/leg
+  attribution, coefficients, feasibility, charts, chronological examples,
+  summary and hashes. Twelve focused tests and independent artifact replay
+  checks pass. Full-history fitting/normalization remains in sample, with
+  the same linear cost/PnL scaling limitations and no live changes.
+
 ## 5. Overall conclusion from the earlier studies
 
 The working answer is: keep the book at base size 1 and only cut size on
@@ -534,9 +575,9 @@ and writes its own report workbook. They run in seconds;
 
 ## 7. Open point: what to do next
 
-Sections 4.9, 4.11, 4.12, and 4.13 are complete. The latest focus is DD-first
-GammaShort sizing with mandatory cuts on estimated dicey days, exact mean-one
-allocation and optimization; neural
+Sections 4.9 and 4.11–4.14 are complete. The latest focus is DD-first GammaShort
+sizing with mandatory dicey cuts, modest risk-gated conviction boosts, exact
+mean-one allocation and trade comparisons; neural
 directional research is deferred. The following are separate optional hypotheses, not
 selected operating rules:
 
