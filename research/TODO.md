@@ -2,7 +2,15 @@
 
 Research is isolated under `research/`. Do not translate a research result into `services/` or `ui/` without the owner's explicit direction.
 
-## Latest request: normalize average size to 1 and optimize
+## Latest request: prioritize DD and mandatory cuts on dicey days
+
+The owner wants reduced exposure on uncertain/risky days, not just better aggregate profit. `DRAWDOWN_SIZING_SPEC.md` fixed this experiment before evaluation. `sizing_drawdown_risk.py` defines dicey entries using fitted loss probability, expected downside, pre-entry instability, and missing CW features; it then enforces ceilings 0.90/0.85/0.75 before bounded mean-one normalization. The risk model excludes the outcome-fitted S1/S2 scores. All entries stay within 0.75–1.15; 09:16 CW is never boosted. LUT tax T=(13,5,2,2,6) and selected trade set remain unchanged.
+
+201 of 799 historical entries are flagged. Lowest observed qualifying DD policy: dicey ceiling 0.85, net 10,749.08, MDD 105.41, ratio 101.97, worst day -56.16. Average size on dicey days is 0.8057, on other days 1.0653, and on all entries exactly 1. Net +2.16%, DD -26.98% versus flat. A profit-focused ceiling-0.85 alternative gives net 11,328.04 / MDD 124.86 / worst day -56.25. All nine new candidate policies satisfy net >= flat, DD <= flat and worst day >= flat worst in this in-sample run.
+
+Outputs: `output/drawdown_risk_sizing/` workbook, risk flags/reasons, coefficients, summary and hashes. Nine tests pass across the risk and normalization modules; saved flags/models/sizes, mean/caps, PnL/DD and attribution were independently verified. Full-history model fitting and normalization use the full dataset and do not establish causal live risk prediction. The current research focus is DD-first sizing with mandatory risk cuts; neural directional research stays deferred.
+
+## Previous request: normalize average size to 1 and optimize
 
 The owner now explicitly requires increases and decreases to balance so average size across recorded trade days remains exactly 1. This supersedes the earlier no-rescaling instruction for this research. `sizing_normalized_optimization.py` compares 65 normalized historical templates, flat, and three optimized policies over all 1,430 days / 799 entries. Every candidate has mean size 1, floor 0.75, max 1.15, and no 09:16 CW boost; no trades are skipped.
 

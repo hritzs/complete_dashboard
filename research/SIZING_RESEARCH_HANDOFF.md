@@ -3,9 +3,9 @@
 Updated 2026-10-15. The sizing studies through v6 and the preregistered
 relaxed-entry rerun are complete. The derived-strategy simulator remains a
 scaffold (see sections 4.9, 4.10, and 7). The latest owner request is the
-normalized full-history optimization in section 4.12, which uses no
-60/20/20 split and enforces mean trade size 1. Section 4.11 preserves the
-preceding unnormalized study.
+drawdown-first full-history optimization in section 4.13, which uses no
+60/20/20 split and enforces mean trade size 1. Sections 4.11 and 4.12 preserve
+the preceding unnormalized and normalized studies without mandatory risk cuts.
 
 ## 1. Goal
 
@@ -14,7 +14,7 @@ on high-opportunity days and falls on poor ones, plus a daily
 **opportunity tracker** that shows the reading behind that size.
 
 The owner's conditions for the original split-based studies (the current
-normalized full-history analysis in section 4.12 supersedes the split):
+drawdown-first full-history analysis in section 4.13 supersedes the split):
 
 - **60 / 20 / 20 chronological split.** TRAIN is the first 60 % of days,
   VALIDATION the next 20 %, TEST the last 20 %. Every number is fitted on
@@ -432,6 +432,51 @@ The "pre-entry stability" inputs and the early-exit rules in v2 use these.
   projection, exact mean after bounds, early-stage cap feasibility, the
   five-boosts/three-cuts example, invalid inputs, and optimizer hard limits.
 
+### 4.13 DD-first optimization: mandatory cuts on estimated dicey days
+
+- Latest owner instruction: optimize DD while ensuring uncertain/risky days
+  do not receive a full position. Risk reduction must be a hard allocation
+  rule, not just an aggregate performance side effect.
+- The fixed specification `DRAWDOWN_SIZING_SPEC.md` precedes evaluation.
+  `sizing_drawdown_risk.py` fits penalized loss-probability and downside models
+  on raw entry features, excluding fullfit S1/S2 scores from the risk model.
+  Dicey is the top quartile of 0.4×loss-probability percentile +
+  0.4×expected-downside percentile + 0.2×pre-entry instability, or missing CW
+  pre-entry range/spread readings. There are **201 flagged entries** of 799.
+- Pre-entry instability averages underlying range, straddle range and spread
+  percentiles. Missing readings and NW's unavailable CW readings are neutral
+  0.5; missing CW data additionally forces the risk flag. Flat-book prior DD
+  and loss streak are entry-known stress inputs. This is not an own-equity
+  live DD halt.
+- Size ceiling on all flagged entries is fixed at 0.90, 0.85 or 0.75 for the
+  three experiments. Global floor 0.75, max 1.15, no 09:16 CW boost, exact
+  whole-book trade mean 1. Normalization cannot lift a dicey position above
+  its ceiling. LUTs retain tax vector (13,5,2,2,6) and the same entry set.
+- Multi-start bounded coordinate search has three objectives per ceiling:
+  minimum DD, maximum net/DD, maximum net. Every qualifying result must
+  retain at least flat profit without worsening either DD or worst daily
+  loss. All nine new policies qualify on the full history. Prior optima are
+  benchmarks only; they do not enforce the new dicey ceilings.
+- Lowest observed qualifying DD: ceiling **0.85**, net **10,749.08**, DD
+  **105.41**, ratio **101.97**, worst day **-56.16**, versus flat
+  **10,522.04 / 144.37 / 72.88 / -61.28**. Net improves **2.16%**, DD falls
+  **26.98%**. Dicey mean/max **0.8057/0.85**, other mean **1.0653**, total
+  mean **1.000000**. Every flagged day is below full size.
+- Profit alternative with the same ceiling: net **11,328.04**, DD **124.86**,
+  ratio **90.72**, worst day **-56.25**; net +7.66%, DD -13.51%. Flagged-day
+  mean size **0.7883**, never above 0.85; whole-book mean remains 1.
+- Full-history fitting, ranking thresholds, optimization and normalization
+  are in sample; this does not establish predictive accuracy on future days
+  or authorize live changes. Saved PnL and costs scale linearly, with no
+  quantity-dependent replay. Event-weighted exposure is reported separately.
+- `output/drawdown_risk_sizing/` stores the workbook with daily flags/reasons,
+  sizes/PnL, year/leg/risk attribution, risk/sizing coefficients, transforms,
+  search trace and equity/DD charts; also CSVs, summary and input hashes.
+- Nine focused tests across risk and normalization pass. Independent saved
+  artifact checks verify the 201 mandatory cuts, exact mean/budgets, bounds,
+  prior-entry stress timing, qualification constraints, DD, year/leg totals,
+  and risk/sizing model replay.
+
 ## 5. Overall conclusion from the earlier studies
 
 The working answer is: keep the book at base size 1 and only cut size on
@@ -489,8 +534,9 @@ and writes its own report workbook. They run in seconds;
 
 ## 7. Open point: what to do next
 
-Sections 4.9, 4.11, and 4.12 are complete. The latest focus is complete-history
-GammaShort sizing with exact mean-one allocation and optimization; neural
+Sections 4.9, 4.11, 4.12, and 4.13 are complete. The latest focus is DD-first
+GammaShort sizing with mandatory cuts on estimated dicey days, exact mean-one
+allocation and optimization; neural
 directional research is deferred. The following are separate optional hypotheses, not
 selected operating rules:
 

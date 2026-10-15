@@ -2,7 +2,23 @@
 
 Updated 2026-10-15. This is offline research; it contains no authorization to change live trading behavior.
 
-## Latest: average-size-one optimization (owner requested)
+## Latest: drawdown-first optimization with mandatory dicey-day cuts
+
+`../DRAWDOWN_SIZING_SPEC.md` was written before this experiment. `../sizing_drawdown_risk.py` fits estimated loss risk/downside from entry inputs, excludes fullfit S1/S2 from those risk models, and combines them with pre-entry instability to flag risky entries. Missing CW entry-window readings also flag a day. Of 799 entries, 201 are flagged. Normalization cannot undo their hard size ceiling.
+
+| Policy | Net | MDD | Worst day | Dicey mean size | Whole-book mean |
+|---|---:|---:|---:|---:|---:|
+| Flat | 10,522.04 | 144.37 | -61.28 | 1.0000 | 1.000000 |
+| DD-first, dicey cap 0.85 | 10,749.08 | 105.41 | -56.16 | 0.8057 | 1.000000 |
+| Profit-focused, dicey cap 0.85 | 11,328.04 | 124.86 | -56.25 | 0.7883 | 1.000000 |
+
+DD-first adds 2.16% net and lowers DD 26.98%; the profit alternative adds 7.66% net and lowers DD 13.51%. Global sizes remain 0.75–1.15, with no boost at 09:16. Fixed comparisons were dicey caps 0.90/0.85/0.75 and three search objectives each. All nine new results meet baseline profit, DD and worst-day limits. The prior unrestricted optima are preserved as benchmarks and are not compliant with the new mandatory dicey-day ceilings.
+
+These are full-history in-sample estimates; fitting, quantiles, optimization and normalization use the whole dataset. They do not show that future dicey days can be identified reliably. Stress features use flat-book equity through the previous day, not a live sized-equity halt. Existing saved PnL/costs scale linearly; no quantity-dependent fill replay. LUT tax vector (13,5,2,2,6) is retained as table selection, not deducted from PnL.
+
+Artifacts: `drawdown_risk_sizing/drawdown_risk_sizing.xlsx`, candidate CSV, daily risk scores/flags/reasons, saved coefficients and hash manifest. The workbook includes daily positions/PnL, equity/DD charts, risk-group/year/leg attribution, feature transforms and search trace. Nine focused tests pass; saved risk and sizing models, mandatory cuts, mean-one budgets, DD and attribution replay checks passed.
+
+## Previous: average-size-one optimization
 
 The owner explicitly replaced the previous no-rescaling instruction with exact average size 1 across all traded days, balancing size increases and decreases. `../sizing_normalized_optimization.py` evaluates 69 policies over 1,430 days / 799 entries with size floor 0.75, cap 1.15, no skipping, and no boost to 09:16 CW entries. All policies satisfy the same total multiplier budget, 799. Full-history fitting and normalization are deliberately in sample; there is no 60/20/20 split.
 
