@@ -2,7 +2,21 @@
 
 Updated 2026-10-15. This is offline research; it contains no authorization to change live trading behavior.
 
-## Latest: complete-history sizing (owner requested no split)
+## Latest: average-size-one optimization (owner requested)
+
+The owner explicitly replaced the previous no-rescaling instruction with exact average size 1 across all traded days, balancing size increases and decreases. `../sizing_normalized_optimization.py` evaluates 69 policies over 1,430 days / 799 entries with size floor 0.75, cap 1.15, no skipping, and no boost to 09:16 CW entries. All policies satisfy the same total multiplier budget, 799. Full-history fitting and normalization are deliberately in sample; there is no 60/20/20 split.
+
+| Observed policy | Net | MDD | Net/MDD | Mean size |
+|---|---:|---:|---:|---:|
+| Flat | 10,522.04 | 144.37 | 72.88 | 1.000000 |
+| Best observed profit (also satisfies flat DD cap) | 11,495.56 | 128.76 | 89.28 | 1.000000 |
+| Best observed ratio | 11,243.25 | 113.89 | 98.72 | 1.000000 |
+
+The profit-focused result adds 9.25% net with 10.81% lower DD. The ratio-focused result adds 6.85% net with 21.11% lower DD. These are historical improvements, not unseen-data alpha or global-optimum guarantees. The optimizer searches bounded coefficients for a 34-feature sizing equation, uses exact bounded mean-one projection, and saves the best feasible policy seen for each objective across all searches. Fifteen candidates beat flat on both full-history net and net/MDD.
+
+Workbook: `normalized_sizing/normalized_sizing.xlsx`; includes daily sizes/PnL, yearly and CW/NW attribution, coefficients/transforms, trace, and equity/DD charts. There are also ranking/coefficients CSVs, a summary, and input hashes. Existing saved net PnL/costs scale linearly; there is no quantity-dependent tick replay. Mean multiplier 1 is an arithmetic exposure budget; event-weighted notional exposure is reported separately. Neither the fitted parameters nor the full-period normalization are a causal live policy.
+
+## Previous: complete-history sizing without normalization
 
 The owner deferred neural-network directional research and requested sizing calculations for the complete GammaShort history. `../sizing_full_history.py` refits and evaluates 66 constrained variations on all 1,430 days through 2026-10-14, including CW and NW production PnL. It retains max size 1.15, no rescaling to mean 1, and no boosting 09:16 CW entries. This is deliberately in sample; the archived split-based conclusions below are separate analyses.
 
@@ -16,7 +30,7 @@ No variation beats flat on both net and net/MDD. Units are normalized Rs. The an
 
 ## Current decision
 
-Keep the current book flat at size 1. The owner allows cuts on clearly poor days, caps any allowed increase at 1.15, forbids rescaling to an average, and explicitly forbids boosting the 09:16 table. Archived split-based studies required beating flat on both validation net and net/MDD. The latest full-history analysis above uses no split.
+The previous live operating conclusion remains flat at size 1. Current research permits normalized size redistribution with mean 1, max 1.15, and no boosting of the 09:16 table. Archived split-based studies required beating flat on both validation net and net/MDD. The latest full-history research above uses no split and is not a live implementation.
 
 ## What the studies found
 

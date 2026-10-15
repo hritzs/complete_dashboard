@@ -3,7 +3,9 @@
 Updated 2026-10-15. The sizing studies through v6 and the preregistered
 relaxed-entry rerun are complete. The derived-strategy simulator remains a
 scaffold (see sections 4.9, 4.10, and 7). The latest owner request is the
-full-history sizing analysis in section 4.11, which uses no 60/20/20 split.
+normalized full-history optimization in section 4.12, which uses no
+60/20/20 split and enforces mean trade size 1. Section 4.11 preserves the
+preceding unnormalized study.
 
 ## 1. Goal
 
@@ -12,7 +14,7 @@ on high-opportunity days and falls on poor ones, plus a daily
 **opportunity tracker** that shows the reading behind that size.
 
 The owner's conditions for the original split-based studies (the current
-full-history analysis in section 4.11 explicitly supersedes the split):
+normalized full-history analysis in section 4.12 supersedes the split):
 
 - **60 / 20 / 20 chronological split.** TRAIN is the first 60 % of days,
   VALIDATION the next 20 %, TEST the last 20 %. Every number is fitted on
@@ -387,7 +389,50 @@ The "pre-entry stability" inputs and the early-exit rules in v2 use these.
 - Size multiplies saved production PnL and existing costs linearly; there is
   no new execution replay, nonlinear liquidity impact or fee model.
 
-## 5. Overall conclusion so far
+### 4.12 Exact average-size-one optimization (latest owner instruction)
+
+- The owner explicitly requested balancing boosts and cuts so the average
+  size across traded days is 1, overriding the previous research instruction
+  against average rescaling. Five boosts to 1.15 balance three cuts to 0.75.
+- `sizing_normalized_optimization.py`: all 1,430 production days / 799
+  recorded entries, including breakeven entries; non-trade days excluded from
+  the mean. No split. Size floor 0.75, ceiling 1.15, CW 09:16 ceiling 1.
+  All entries remain traded. The total multiplier budget is exactly 799.
+- Uses bounded Euclidean projection `size = clip(raw + offset, lower,
+  upper)`, with offset solved by bisection. This maintains mean 1 after
+  capping; dividing by the mean and then clipping would break equality.
+- Evaluates 65 normalized historical templates, flat, and three optimized
+  policies. Template projection can raise former cut-only rules and alter
+  NW exposure. Source template names are retained for traceability.
+- Optimization: seeded multi-start bounded coordinate pattern search on 34
+  entry-input features, coefficients bounded [-1,1], coarse-to-fine steps.
+  Objectives are profit, profit subject to DD <= flat, and net/DD subject
+  to net >= flat. The best feasible point seen for each objective across
+  all searches is retained. Global optimality is not claimed.
+- Flat: net **10,522.04**, MDD **144.37**, net/MDD **72.88**.
+- Best observed profit: net **11,495.56**, MDD **128.76**, net/MDD **89.28**,
+  average size **1.000000**. Adds 9.25% net and reduces DD by 10.81%; this
+  same policy also supplies the best observed DD-capped-profit result.
+- Best observed ratio: net **11,243.25**, MDD **113.89**, net/MDD **98.72**,
+  average size **1.000000**. Adds 6.85% net and reduces DD by 21.11%.
+- Fifteen candidates beat flat on both full-history net and net/MDD.
+  Both fitting and normalization use the full history; this is in-sample
+  descriptive optimization and does not establish a causal live policy.
+  Predictor values are entry-time inputs, but fitted coefficients, S1/S2
+  scores and the normalization offset use historical outcomes/distributions.
+- Saved production PnL and costs scale linearly, without quantity-dependent
+  replay, market impact or fixed-fee recalculation. Arithmetic mean multiplier
+  1 does not guarantee unchanged cash exposure/risk; original event sizing
+  is embedded in base PnL. Event-weighted notional proxy is reported.
+- Outputs: `output/normalized_sizing/normalized_sizing.xlsx`, ranking and
+  coefficient CSVs, `SUMMARY.md`, and input hash manifest. Workbook includes
+  daily sizes/PnL, yearly/leg attribution, model coefficients/transforms,
+  search trace, equity/DD charts, and equal increase/decrease budgets.
+- Five focused tests in `test_sizing_normalized_optimization.py` cover
+  projection, exact mean after bounds, early-stage cap feasibility, the
+  five-boosts/three-cuts example, invalid inputs, and optimizer hard limits.
+
+## 5. Overall conclusion from the earlier studies
 
 The working answer is: keep the book at base size 1 and only cut size on
 poor days, with a hard cap of 1.15. Do not rescale to average 1, and do
@@ -444,9 +489,9 @@ and writes its own report workbook. They run in seconds;
 
 ## 7. Open point: what to do next
 
-Sections 4.9 and 4.11 are complete and leave the current book unchanged.
-The latest focus is complete-history GammaShort sizing; neural directional
-research is deferred. The following are separate optional hypotheses, not
+Sections 4.9, 4.11, and 4.12 are complete. The latest focus is complete-history
+GammaShort sizing with exact mean-one allocation and optimization; neural
+directional research is deferred. The following are separate optional hypotheses, not
 selected operating rules:
 
 - **First 15 min range vs RV:** only usable for late entries; most entries

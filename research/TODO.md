@@ -2,7 +2,15 @@
 
 Research is isolated under `research/`. Do not translate a research result into `services/` or `ui/` without the owner's explicit direction.
 
-## Latest request: complete-history GammaShort sizing
+## Latest request: normalize average size to 1 and optimize
+
+The owner now explicitly requires increases and decreases to balance so average size across recorded trade days remains exactly 1. This supersedes the earlier no-rescaling instruction for this research. `sizing_normalized_optimization.py` compares 65 normalized historical templates, flat, and three optimized policies over all 1,430 days / 799 entries. Every candidate has mean size 1, floor 0.75, max 1.15, and no 09:16 CW boost; no trades are skipped.
+
+Normalization projects onto the size bounds and an exact total-size budget of 799. Optimization uses a seeded, multi-start coordinate search on 34 entry-input features, with profit, DD-capped profit, and profit-floored net/MDD objectives. Best observed profit is 11,495.56, MDD 128.76, ratio 89.28. Best observed ratio is 98.72 with net 11,243.25 and MDD 113.89. Flat is 10,522.04 / 144.37 / 72.88. These are full-history in-sample numerical optima, not proven live alpha. Exact full-history normalization also uses the full score distribution.
+
+Outputs: `output/normalized_sizing/normalized_sizing.xlsx` (including daily sizes/PnL, coefficients, optimization trace, equity/DD charts), ranking and coefficient CSVs, summary, input hashes. Arithmetic mean size 1 does not guarantee identical cash/risk exposure because original event-day sizing is embedded in PnL; event-weighted exposure is reported separately. Five focused unit tests cover normalization and hard optimizer constraints.
+
+## Previous request: full-history sizing without normalization
 
 The owner requested a full-history sizing calculation without a 60/20/20 split, deferring the neural-network directional-strategy idea. `sizing_full_history.py` fits and evaluates the existing sizing families on all 1,430 saved days (2021-01-01 through 2026-10-14), with base 1, max 1.15, no average-size rescaling, and no boosting 09:16 CW entries. Results are in `output/full_history_sizing/`: workbook, ranking CSV, summary, and input hash manifest.
 
@@ -10,8 +18,8 @@ The 66-candidate comparison is explicitly in sample. Flat net/MDD is 10,522.04 /
 
 ## Current operating conclusion
 
-- Keep base size at 1. Only cut size on clearly poor days; maximum permitted size is 1.15.
-- Do not rescale sizes to an average and never boost the 09:16 table. Archived split-based studies required beating flat on both validation net and net/MDD. The latest full-history analysis uses no split and reports those metrics over all dates.
+- Research now redistributes size above and below 1 with exact mean 1, floor 0.75 and cap 1.15. Previous live operating conclusion remains flat pending a separate implementation decision.
+- The latest research explicitly normalizes average trade size to 1; never boost the 09:16 table. Archived split-based studies and their earlier no-rescaling restriction remain historical records. The current analysis has no split and reports full-history metrics.
 - Current decision is flat. No completed sizing study has established a reliable out-of-sample improvement.
 
 ## Completed studies
