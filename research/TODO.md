@@ -10,14 +10,13 @@ Research is isolated under `research/`. Do not translate a research result into 
 
 ## Completed studies
 
-Table and parameter sizing, pre-entry stability, drawdown overlays, early exits, VRP, volatility targeting, stop distance, calendar/regime flags, score sizing, capped sizing, and borderline-cell cuts have been evaluated. The 09:20+ relaxation experiment has a fixed rule and an evaluator, but its backtest is incomplete; it has no decision yet. See `SIZING_RESEARCH_HANDOFF.md` and `output/RESEARCH_SUMMARY.md` for results and caveats.
+Table and parameter sizing, pre-entry stability, drawdown overlays, early exits, VRP, volatility targeting, stop distance, calendar/regime flags, score sizing, capped sizing, borderline-cell cuts, and the preregistered 09:20+ relaxation experiment have been evaluated. None passed the validation gate. See `SIZING_RESEARCH_HANDOFF.md` and `output/RESEARCH_SUMMARY.md` for results and caveats.
 
 ## Immediate continuation
 
-1. Resume the relaxed-entry backtest. `output/backtest_relax/run_027bf0249b/days/` currently contains 652 of the expected 1,430 day records, and no backtest process was running when checked. The script resumes by skipping existing day files.
-2. Use the already fixed R1–R4 candidate definitions and run `./.venv/bin/python entry_relax_eval.py` only after all expected days are present. Verify its production PnL matches the reference run and preserve the chosen validation rule; report TEST once.
-3. Update the handoff and output summary with the actual result, or state why the run could not resume (for example, unavailable tick share/dependencies). Do not infer results from the partial run.
-4. Only after that study, define and preregister any derived strategy experiment. The `GS_DERIVED` / `simulate_legs` code in `GammaShort_Backtest_Final.py` is an unfinished generic scaffold: no strategy candidates are wired into `process_day`, and it has not been run or validated. Do not treat it as a result.
+1. The relaxed-entry study is complete. Its 1,430-day run includes two dates beyond the frozen 1,428-day reference; the evaluator aligns to reference dates, verifies exact production-PnL equality, and excludes those two unmatched dates before splitting. Current decision: flat; no R1–R4 size beat flat on both validation net and net/MDD.
+2. If continuing to a derived-strategy experiment, first select and preregister the concrete strategy and its entry time, legs/strikes, hedge cadence/threshold, exits, costs, comparison baseline, and split. The `GS_DERIVED` / `simulate_legs` code in `GammaShort_Backtest_Final.py` is an unfinished generic scaffold: no strategy candidates are wired into `process_day`, and it has not been run or validated. Do not treat it as a result.
+3. Keep any new experiment separate from sizing research, write only under `research/output/`, and do not edit `services/` or `ui/` without explicit direction.
 
 ## Relaxed-entry run command
 

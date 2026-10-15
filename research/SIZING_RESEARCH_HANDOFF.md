@@ -1,9 +1,8 @@
 # GammaShort sizing / opportunity research: where it stands
 
-Written 2026-10-15 to continue this research in a new session. The sizing
-studies through v6 are complete. The relaxed-entry rerun is still in
-progress, and the derived-strategy simulator remains a scaffold (see
-sections 4.9, 4.10, and 7).
+Updated 2026-10-15. The sizing studies through v6 and the preregistered
+relaxed-entry rerun are complete. The derived-strategy simulator remains a
+scaffold (see sections 4.9, 4.10, and 7).
 
 ## 1. Goal
 
@@ -316,14 +315,27 @@ The "pre-entry stability" inputs and the early-exit rules in v2 use these.
   (≥ 2/3, ≥ 1/2). It was replaced because YES cells form thin strips:
   only 29 NO cells have ≥ 1/2 YES neighbours. The change was based on
   trigger counts only, with no PnL seen.
-- **Output:** `output/backtest_relax/run_027bf0249b/days/`; evaluator
-  `entry_relax_eval.py`, intended report `output/entry_relax_report.xlsx`.
-- **Status at handoff (2026-10-15): incomplete.** The run directory held
-  652 of 1,430 expected day files and no process was running when checked.
-  Do not treat partial output as evidence. Resume with the command in
-  `TODO.md`, which reuses completed daily files, then run the evaluator only
-  after all days exist. The evaluator checks production PnL against the
-  reference run before applying the fixed validation decision rule.
+- **Output:** `output/backtest_relax/run_027bf0249b/days/` (1,430 day
+  records through 2026-10-14); evaluator `entry_relax_eval.py`; report
+  `output/entry_relax_report.xlsx`.
+- **Comparison and split:** the frozen production reference has 1,428 days
+  through 2026-10-12. The relaxed run has two additional dates (2026-10-13
+  and 2026-10-14); the evaluator excludes those relaxed-only dates before
+  splitting so the 60/20/20 split matches the reference. Production PnL
+  matches the reference exactly on all 1,428 comparable dates. The evaluator
+  now fails closed if dates are missing or production PnL differs.
+- **Decision: current book (flat).** On VALIDATION the current book was
+  2,106.41 / 126.39 / 16.67 (net / MDD / net÷MDD). The best relaxed result
+  was R2 at 0.75 size: 2,093.83 / 137.88 / 15.19, so it failed both
+  validation gates. Every other R1–R4 size also failed to beat flat on both
+  net and net÷MDD.
+- **TEST, reported once:** current book 1,311.65 / 120.99 / 10.84
+  (net / MDD / net÷MDD; 96 trades). Since validation selected the current
+  book, no relaxed candidate was selected and no TEST shuffle check was due.
+- The original evaluator split all 1,430 rows, which shifted the split
+  against the 1,428-day reference and counted the two unmatched dates in its
+  comparison. It has been corrected to align to the reference first and
+  assert exact production-PnL equality before evaluation.
 
 ### 4.10 Derived-strategy simulator (scaffold only)
 - `GammaShort_Backtest_Final.py` now has `GS_DERIVED`, `simulate_legs`,
@@ -396,8 +408,8 @@ and writes its own report workbook. They run in seconds;
 
 ## 7. Open point: what to do next
 
-Finish section 4.9 first. The following are separate optional hypotheses,
-not selected operating rules:
+Section 4.9 is complete and leaves the current book unchanged. The following
+are separate optional hypotheses, not selected operating rules:
 
 - **First 15 min range vs RV:** only usable for late entries; most entries
   are at 09:16–09:18.

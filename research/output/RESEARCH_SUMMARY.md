@@ -12,9 +12,11 @@ Completed studies tested table/input sizing, pre-entry stability, drawdown overl
 
 The detailed candidate definitions, sample periods, numerical results, and caveats are in `../SIZING_RESEARCH_HANDOFF.md`. Backtest PnL uses normalized Rs (index points × 25,000 / entry underlying), not actual account rupees.
 
-## Relaxed 09:20+ entry study: pending
+## Relaxed 09:20+ entry study: complete; keep current book
 
-`GammaShort_Backtest_Final.py` has a research-only `GS_RELAX=1` path for four preregistered neighbor-support rules (R1–R4), and `entry_relax_eval.py` evaluates each at size 1 and 0.75 under the same validation gate. The run is **incomplete**: `output/backtest_relax/run_027bf0249b/days/` had 652 of 1,430 expected daily pickle files when checked, and no backtest process was running. There is no valid study decision yet. Resume using the command in `../TODO.md`; then evaluate only when the run is complete and confirm production PnL matches the reference.
+`GammaShort_Backtest_Final.py` has a research-only `GS_RELAX=1` path for four preregistered neighbor-support rules (R1–R4), evaluated at size 1 and 0.75. The run contains 1,430 dates through 2026-10-14, while the frozen production reference contains 1,428 dates through 2026-10-12. The evaluator excludes the two relaxed-only dates before splitting, verifies exact production-PnL equality on all reference dates, and then applies the fixed validation gate.
+
+**Decision: current book (flat).** Validation current book: net 2,106.41, MDD 126.39, net/MDD 16.67. Best relaxed candidate was R2 at 0.75 size: net 2,093.83, MDD 137.88, net/MDD 15.19. It fails both gates; all other R1–R4 sizes also fail. TEST was reported once for the selected current book: net 1,311.65, MDD 120.99, net/MDD 10.84 (96 trades). No candidate was selected, so no shuffle check was due. Detailed rows are in `output/entry_relax_report.xlsx`.
 
 ## Derived strategies: scaffold only
 
@@ -22,8 +24,7 @@ The `GS_DERIVED` / `simulate_legs` addition in `GammaShort_Backtest_Final.py` is
 
 ## Continue here
 
-1. Resume and finish the relaxed-entry run, then run `entry_relax_eval.py` and record the complete output and decision.
-2. Update `SIZING_RESEARCH_HANDOFF.md` and this summary with that result; preserve the fixed rules and TEST-once discipline.
-3. If beginning derived strategies, keep them as separate research candidates, use only same-day tick inputs/fill/hedge assumptions, and report their limitations. Do not edit `services/` or `ui/` from research conclusions.
+1. If beginning derived strategies, first preregister the concrete strategy, legs, entry time, hedge and exit rules, costs, baseline, and split. Keep it separate from the short-straddle sizing conclusion.
+2. `GS_DERIVED` / `simulate_legs` remains an unimplemented scaffold, not a result. Keep all work in `research/`; do not edit `services/` or `ui/` from research conclusions.
 
 See `../TODO.md` for commands and method constraints. Existing source modifications and generated reports may be uncommitted; inspect `git status` before starting new edits.

@@ -32,15 +32,24 @@ def main():
     D = pd.DataFrame([pickle.load(open(f, "rb")) for f in files]).sort_values("Date").reset_index(drop=True)
     D["Net_PnL"] = pd.to_numeric(D["Net_PnL"], errors="coerce").fillna(0.0)
     D["Leg"] = D["Leg"].fillna("")
+
+    # Align to the reference run before splitting. The relaxed run may contain
+    # newer dates than the frozen reference; those dates have no comparable
+    # production PnL and must not move the chronological split boundaries.
+    ref = sorted(glob.glob(os.path.join(HERE, "output", "backtest_final", "run_*", "days", "*.pkl")))
+    R0 = pd.DataFrame([pickle.load(open(f, "rb")) for f in ref])[["Date", "Net_PnL"]]
+    R0["Net_PnL"] = pd.to_numeric(R0["Net_PnL"], errors="coerce").fillna(0.0)
+    chk = D[["Date", "Net_PnL"]].merge(R0, on="Date", how="outer", suffixes=("", "_ref"), indicator=True)
+    matched = chk[chk["_merge"] == "both"]
+    equal = np.isclose(matched["Net_PnL"], matched["Net_PnL_ref"], atol=1e-8, rtol=0)
+    if len(matched) != len(R0) or not equal.all():
+        raise ValueError("Relaxed run does not cover the reference dates with identical production PnL")
+    extra_dates = int((~D["Date"].isin(R0["Date"])).sum())
+    D = D[D["Date"].isin(R0["Date"])].sort_values("Date").reset_index(drop=True)
     n = len(D)
     part = np.where(np.arange(n) < int(0.6 * n), "Train", np.where(np.arange(n) < int(0.8 * n), "Validation", "Test"))
     base = D["Net_PnL"].values
-
-    # Same days and same production PnL as the run every other study uses?
-    ref = sorted(glob.glob(os.path.join(HERE, "output", "backtest_final", "run_*", "days", "*.pkl")))
-    R0 = pd.DataFrame([pickle.load(open(f, "rb")) for f in ref])[["Date", "Net_PnL"]].fillna(0.0)
-    chk = D[["Date", "Net_PnL"]].merge(R0, on="Date", how="outer", suffixes=("", "_ref"))
-    print(f"days {n}; production PnL equal to backtest_final on {np.isclose(chk.Net_PnL, chk.Net_PnL_ref).mean() * 100:.2f} % of days")
+    print(f"days {n}; production PnL matches the reference on every date; excluded {extra_dates} relaxed-only newer dates")
 
     series, prof = {"Current book": base.copy()}, []
     for v in VARIANTS:
