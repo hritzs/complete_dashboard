@@ -2,7 +2,37 @@
 
 Research is isolated under `research/`. Do not translate a research result into `services/` or `ui/` without the owner's explicit direction.
 
-## Latest request: tick-based percentile / relative-value entry research
+## Latest request: exact risk formulas and a persistent Excel iteration ledger
+
+`RISK_FORMULAS.md` documents logistic loss probability (L2 lambda20), ridge
+expected negative PnL (lambda50, winners contribute zero), exact percentile/tie
+conventions, the three instability ranges/spreads, fixed40/40/20 weights, the
+75th-percentile dicey threshold and mandatory sizing caps. These weights are
+research choices, not learned probabilities. Full-history and annual versions
+have different fitting/reference protocols and remain labelled accordingly.
+
+`build_research_ledger.py` reads `research_iterations.json` without refitting
+strategies or changing saved source workbooks. `output/research_ledger/` holds
+the master Excel ledger for14 iterations/189 daily policy paths, separate
+trade/daily/quarter/year/month/FY/group/policy/input/source-summary sheets per
+iteration, risk coefficients/transforms/references, exact trade risk replays,
+Excel formulas, and equity/DD charts. Older selected-only or rounded exports
+are explicitly marked; unsaved daily candidate paths are not fabricated.
+
+Verification passes across173 sheets,189 daily paths and20,223 period rows.
+LibreOffice recalculation reproduces all799 original Excel risk scores within
+6.7e-16, with identical dicey flags. The Python annual replay also reproduces
+all617 scored rows. Saved audit, verification and SHA256 manifests accompany
+the master workbook and the smaller calculated-formula workbook.
+
+**Standing reporting convention for every future iteration:** preserve the
+source artifact, register a new iteration ID/protocol/coverage, rebuild this
+ledger and run `verify_research_ledger.py`. Include trade-wise PnL/sizing and
+calendar quarterly/yearly results, with costs, sample period, fitting protocol,
+precision and causal limitations. Do not describe an iteration as fully
+reported until these sheets exist. See the ledger README for commands.
+
+## Previous request: tick-based percentile / relative-value entry research
 
 Completed the eight fixed entry hypotheses in `TICK_ENTRY_SPEC.md` using fresh
 strictly-before-entry tick features. `tick_entry_features.py` extracted all720 CW

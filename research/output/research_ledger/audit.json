@@ -1,0 +1,119 @@
+{
+  "Status": "PASS",
+  "Iterations": 14,
+  "Daily_policy_paths": 189,
+  "Periodic_reconciliation": [
+    {
+      "Iteration": "01",
+      "Policies": 2,
+      "Days": 1428,
+      "Trade_rows": 798,
+      "Periodic_reconciliation": "PASS"
+    },
+    {
+      "Iteration": "02",
+      "Policies": 2,
+      "Days": 1428,
+      "Trade_rows": 798,
+      "Periodic_reconciliation": "PASS"
+    },
+    {
+      "Iteration": "03",
+      "Policies": 1,
+      "Days": 1428,
+      "Trade_rows": 798,
+      "Periodic_reconciliation": "PASS"
+    },
+    {
+      "Iteration": "04",
+      "Policies": 2,
+      "Days": 1428,
+      "Trade_rows": 798,
+      "Periodic_reconciliation": "PASS"
+    },
+    {
+      "Iteration": "05",
+      "Policies": 2,
+      "Days": 1428,
+      "Trade_rows": 798,
+      "Periodic_reconciliation": "PASS"
+    },
+    {
+      "Iteration": "06",
+      "Policies": 2,
+      "Days": 1428,
+      "Trade_rows": 798,
+      "Periodic_reconciliation": "PASS"
+    },
+    {
+      "Iteration": "07",
+      "Policies": 2,
+      "Days": 1428,
+      "Trade_rows": 798,
+      "Periodic_reconciliation": "PASS"
+    },
+    {
+      "Iteration": "08",
+      "Policies": 9,
+      "Days": 1428,
+      "Trade_rows": 840,
+      "Periodic_reconciliation": "PASS"
+    },
+    {
+      "Iteration": "09",
+      "Policies": 66,
+      "Days": 1430,
+      "Trade_rows": 799,
+      "Periodic_reconciliation": "PASS"
+    },
+    {
+      "Iteration": "10",
+      "Policies": 69,
+      "Days": 1430,
+      "Trade_rows": 799,
+      "Periodic_reconciliation": "PASS"
+    },
+    {
+      "Iteration": "11",
+      "Policies": 12,
+      "Days": 1430,
+      "Trade_rows": 799,
+      "Periodic_reconciliation": "PASS"
+    },
+    {
+      "Iteration": "12",
+      "Policies": 6,
+      "Days": 1430,
+      "Trade_rows": 799,
+      "Periodic_reconciliation": "PASS"
+    },
+    {
+      "Iteration": "13",
+      "Policies": 5,
+      "Days": 1430,
+      "Trade_rows": 799,
+      "Periodic_reconciliation": "PASS"
+    },
+    {
+      "Iteration": "14",
+      "Policies": 9,
+      "Days": 1430,
+      "Trade_rows": 799,
+      "Periodic_reconciliation": "PASS"
+    }
+  ],
+  "Risk_replay": {
+    "Rows": 799,
+    "Dicey": 201,
+    "Threshold": 0.6677157174036119,
+    "Maximum_risk_replay_error": 5.551115123125783e-17,
+    "Maximum_loss_replay_error": 1.6653345369377348e-16,
+    "Maximum_downside_replay_error": 8.881784197001252e-15
+  },
+  "Annual_risk_replay": {
+    "Scored_rows": 617,
+    "Max_risk_replay_error": 1.1102230246251565e-16,
+    "Dicey": 175
+  },
+  "Excel_formulas": "Recalculate on open; static replay values also provided"
+}

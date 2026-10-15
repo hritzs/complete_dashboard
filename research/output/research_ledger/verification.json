@@ -1,0 +1,23 @@
+{
+  "Status": "PASS",
+  "Iterations": 14,
+  "Policies": 189,
+  "Period_rows_checked": 20223,
+  "Sheets": 173,
+  "Spreadsheet_engine": "LibreOffice headless; stored cached formula results verified",
+  "Spreadsheet_risk_rows": 799,
+  "Maximum_formula_errors": {
+    "Probability_formula": 6.106226635438361e-16,
+    "Downside_formula": 5.1514348342607263e-14,
+    "Risk_formula": 6.661338147750939e-16,
+    "Threshold_formula": 1.1102230246251565e-16
+  },
+  "Checks": [
+    "input/output hashes",
+    "every daily equity/DD",
+    "trade totals and execution counts",
+    "every quarterly/yearly/monthly/FY net and reset DD",
+    "actual spreadsheet formulas and flags",
+    "spreadsheet inputs and coefficients agree with master"
+  ]
+}

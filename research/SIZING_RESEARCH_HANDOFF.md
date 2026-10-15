@@ -2,8 +2,10 @@
 
 Updated 2026-10-15. The sizing studies through v6 and the preregistered
 relaxed-entry rerun are complete. The derived-strategy simulator remains a
-scaffold (see sections 4.9, 4.10, and 7). The latest owner request is tick-based
-percentile / relative-value entry research in section 4.16. Section4.15 retains
+scaffold (see sections 4.9, 4.10, and 7). The latest owner request is exact risk
+formulas and a persistent Excel iteration ledger in section4.17. This includes
+the tick-based percentile / relative-value entry research in section4.16.
+Section4.15 retains
 the higher-tax conviction sizing including 09:16, using annually fitted
 past-only overlays and actual mean exposure. Earlier studies
 4.11–4.14 retain their historical full-fit normalization and no-09:16-boost
@@ -620,6 +622,57 @@ The "pre-entry stability" inputs and the early-exit rules in v2 use these.
   causal performance. Legacy LUTs used broader history, saved fills remain
   uncertified, and stored tick timestamps are assumed to reflect availability.
   No shared files, live services, UI, credentials or live positions changed.
+
+### 4.17 Risk formulas and persistent iteration-by-iteration Excel ledger
+
+- The owner requests exact formulas behind loss probability, expected downside,
+  instability and the40/40/20 composite, plus in-depth Excel reporting for each
+  iteration. `RISK_FORMULAS.md` documents the actual code, not a generic model.
+- Loss probability uses a logistic model with an unpenalized intercept and L2
+  lambda20. Downside is ridge lambda50 predicting max(-net_PnL,0), including
+  zero for winners, clipped nonnegative. It is not conditional loss size or VaR.
+  Instability averages CW percentile ranks of underlying range, LTP-straddle
+  range and bid/ask spread; missing/NW components receive0.5. A missing CW
+  component also independently forces dicey. Risk weights0.4/0.4/0.2 are fixed.
+- The full-history threshold is0.6677157174036119, flagging201/799 entries.
+  Its scalers, regressions, percentile references, threshold and mean-one size
+  balancing are in sample. Annual high-tax risk models use previous years only,
+  with2021 warmup; legacy base LUT and entry-second feature caveats remain.
+- `research_iterations.json` registers14 iterations. `build_research_ledger.py`
+  consolidates189 saved daily policy paths, without refitting strategies or
+  editing any original workbook. The master workbook is
+  `output/research_ledger/GammaShort_Research_Ledger.xlsx`. Every iteration has
+  separate inputs/policy-map/trade/daily/summary/quarter/year/month/FY/group/
+  source-table sheets. Costs/base metadata, per-policy size/net/delta/action/
+  entry/available exit, execution counts and equity/DD are retained.
+- Risk sheets contain coefficients, transformed inputs, raw instability inputs,
+  component ranks, targets/outcomes, flags and exact saved-value replays for all
+  799 original and617 scored annual entries. Annual model/scaler/reference
+  samples and cutoffs are separate. Executable Excel formulas and equity/DD
+  example charts are included; standalone Risk_Formulas files support actual
+  spreadsheet-engine verification. Static replay values do not require Excel.
+- Original raw readings sometimes differ below Excel's15-digit precision.
+  Dense-order integer keys and17-digit raw text preserve exact archived ranking.
+  Excel uses direct numeric SUMPRODUCT comparisons, not rounded text COUNTIF
+  criteria. Regenerate frozen order keys when changing raw inputs.
+- Legacy exports sometimes saved only selected policies or rounded sizes/PnL.
+  Their limitations and source date ranges are explicit; unsaved candidate
+  histories are not invented. Modern saved candidate paths are all included.
+  Period DD resets at each month/quarter/year/FY start; Daily DD retains the
+  global peak. PnL is normalized backtest units, not account returns. Modified
+  entry metadata remains separate from original Base_ metadata; unavailable
+  counterfactual strikes are not fabricated.
+- **Future convention:** preserve the source artifact, register each new
+  iteration with protocol/precision/coverage, rebuild and verify this ledger
+  before considering its reporting complete. Commands and navigation are in
+  the ledger README. This is a reporting addition, not new alpha or adoption.
+- Verification passes for173 sheets,189 daily policy paths and20,223 period
+  rows. The actual spreadsheet engine reproduces799 risk scores within6.7e-16
+  and downside predictions within5.2e-14; every dicey flag agrees. Independent
+  checks reproduce daily equity/DD, trade totals/execution counts, every
+  monthly/quarterly/yearly/FY net and reset DD, inputs/coefficients and hashes.
+  Both original799 and annual617 Python risk replays also pass. Evidence is
+  stored in `verification.json`, `audit.json` and the ledger manifest.
 
 ## 5. Overall conclusion from the earlier studies
 

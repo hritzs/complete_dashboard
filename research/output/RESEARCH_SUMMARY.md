@@ -2,7 +2,42 @@
 
 Updated 2026-10-15. This is offline research; it contains no authorization to change live trading behavior.
 
-## Latest: tick-based entry filters and one-minute delay
+## Latest: risk-formula documentation and Excel research ledger
+
+Exact definitions are in `../RISK_FORMULAS.md`: regularized logistic loss
+probability, ridge prediction of `max(-net_PnL,0)`, three equally weighted
+instability percentile ranks, and fixed0.4/0.4/0.2 composite weights. Expected
+downside is unconditional negative PnL, not conditional loss size or VaR.
+The full-history risk threshold is0.6677157174036119, flagging201/799 entries;
+the annual version uses saved prior-year coefficients and reference samples.
+
+`research_ledger/GammaShort_Research_Ledger.xlsx` consolidates14 iterations and
+189 saved daily policy paths. Each iteration has its own policies, inputs,
+trades, daily equity/DD, summary, quarterly/yearly/monthly/FY and group results,
+plus original source summary tables. Static risk replays reproduce all799
+original scores and617 annual scores. Coefficients, transforms, annual rank
+references, executable Excel formulas and comparison charts are included.
+Older selected-only and rounded artifacts remain explicitly labelled, alongside
+all their original saved candidate summaries. Date ranges differ across studies.
+
+`research_ledger/Risk_Formulas_Calculated.xlsx` is the standalone spreadsheet-
+engine-recalculated formula workbook; the master also includes formulas and
+static replay values. Exact order keys and17-digit raw text preserve legacy
+floating-point distinctions below Excel precision; regenerate with the builder
+after changing raw inputs. `research_ledger/README.md` explains navigation,
+precision, DD resets, original-versus-counterfactual metadata and reproduction.
+
+The registry `../research_iterations.json` and TODO require every future
+iteration to retain its source and rebuild/verify the ledger. No new strategy
+fit, live behavior, original workbook or shared-input change is introduced.
+
+Verification passes for173 sheets,189 policy paths and20,223 monthly/quarterly/
+yearly/FY rows. The actual spreadsheet engine reproduces799 risk scores within
+6.7e-16, downside within5.2e-14, and every dicey flag exactly. Every daily
+equity/DD series, trade total/count and period net/reset DD is independently
+checked. `research_ledger/verification.json` and hashes preserve the evidence.
+
+## Previous: tick-based entry filters and one-minute delay
 
 Eight fixed hypotheses in `../TICK_ENTRY_SPEC.md` were evaluated on the frozen
 GammaShort book. New features use only ticks strictly earlier than entry, a
