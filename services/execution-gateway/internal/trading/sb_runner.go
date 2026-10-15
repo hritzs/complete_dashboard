@@ -298,11 +298,12 @@ func sbDefaults(c SBConfig) SBConfig {
 	if c.MaxLevels <= 0 || c.MaxLevels > 5 {
 		c.MaxLevels = 5
 	}
-	// 250 ms between tranches (the loop runs every 100 ms). Rules saved with
-	// the old 1000 ms default move to 250 (2026-10-09: 44 one-second pauses
-	// were ~55 s of a 76 s build); set any other value on the rule.
-	if c.TrancheGapMs <= 0 || c.TrancheGapMs == 1000 {
-		c.TrancheGapMs = 250
+	// 50 ms between tranches (the loop runs every 100 ms). Rules saved with
+	// the old 1000 / 250 ms defaults move to 50 (2026-10-09: 44 one-second
+	// pauses were ~55 s of a 76 s build; 2026-10-15 owner: build faster);
+	// set any other value on the rule.
+	if c.TrancheGapMs <= 0 || c.TrancheGapMs == 1000 || c.TrancheGapMs == 250 {
+		c.TrancheGapMs = 50
 	}
 	if c.StraddleDiv <= 0 {
 		c.StraddleDiv = 4

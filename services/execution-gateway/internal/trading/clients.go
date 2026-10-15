@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -22,9 +23,23 @@ func NewSnapshotClient() *SnapshotClient {
 }
 
 func (c *SnapshotClient) GetOptionChain(ctx context.Context, symbol string, expiry string) (*OptionChainSnapshot, error) {
+	return c.getOptionChain(ctx, symbol, expiry, url.Values{})
+}
+
+// GetOptionChainStrike reads one strike's row (?strike=K): the header (ATM,
+// futures, expiry) is the full chain's, only the rows are cut. A snapshot
+// service without the filter answers the whole chain -- callers pick the row.
+func (c *SnapshotClient) GetOptionChainStrike(ctx context.Context, symbol, expiry string, strike float64) (*OptionChainSnapshot, error) {
+	return c.getOptionChain(ctx, symbol, expiry, url.Values{"strike": {strconv.FormatFloat(strike, 'f', -1, 64)}})
+}
+
+func (c *SnapshotClient) getOptionChain(ctx context.Context, symbol string, expiry string, q url.Values) (*OptionChainSnapshot, error) {
 	u := fmt.Sprintf("%s/api/option-chain/%s", strings.TrimRight(c.BaseURL, "/"), url.PathEscape(strings.TrimSpace(symbol)))
 	if strings.TrimSpace(expiry) != "" {
-		u = fmt.Sprintf("%s?expiry=%s", u, url.QueryEscape(strings.TrimSpace(expiry)))
+		q.Set("expiry", strings.TrimSpace(expiry))
+	}
+	if len(q) > 0 {
+		u += "?" + q.Encode()
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)

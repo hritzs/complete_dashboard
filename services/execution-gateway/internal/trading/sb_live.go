@@ -278,19 +278,32 @@ func (r *sbRunner) sbRejectLocked(what, reason string) {
 	r.event("ORDER", "LIVE %s REJECTED (%s) -- %d rejections in a row: building stopped; position stays monitored", what, reason, r.rejects)
 }
 
+// sbStrikeChainReader: a snapshot client that can read one strike's row.
+type sbStrikeChainReader interface {
+	GetOptionChainStrike(ctx context.Context, symbol, expiry string, strike float64) (*OptionChainSnapshot, error)
+}
+
 // sbFreshBids re-reads the best bids and L5 limits of one strike (each
-// falls back to the old value).
-func (s *Service) sbFreshBids(symbol, expiry string, strike float64, old, oldL5 map[string]float64) (map[string]float64, map[string]float64) {
+// falls back to the old value) and the chain's current ATM (0 = unknown).
+// It reads only that strike's row when the snapshot service supports it
+// (?strike=), the whole chain otherwise.
+func (s *Service) sbFreshBids(symbol, expiry string, strike float64, old, oldL5 map[string]float64) (map[string]float64, map[string]float64, float64) {
 	out := map[string]float64{"CE": old["CE"], "PE": old["PE"]}
 	l5 := map[string]float64{"CE": oldL5["CE"], "PE": oldL5["PE"]}
 	if s.Snapshot == nil {
-		return out, l5
+		return out, l5, 0
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
-	c, err := s.Snapshot.GetOptionChain(ctx, symbol, expiry)
+	var c *OptionChainSnapshot
+	var err error
+	if sr, ok := s.Snapshot.(sbStrikeChainReader); ok {
+		c, err = sr.GetOptionChainStrike(ctx, symbol, expiry, strike)
+	} else {
+		c, err = s.Snapshot.GetOptionChain(ctx, symbol, expiry)
+	}
 	if err != nil || c == nil {
-		return out, l5
+		return out, l5, 0
 	}
 	for _, row := range c.Chain {
 		if math.Abs(row.Strike-strike) > 1e-6 {
@@ -303,7 +316,7 @@ func (s *Service) sbFreshBids(symbol, expiry string, strike float64, old, oldL5 
 			}
 		}
 	}
-	return out, l5
+	return out, l5, c.ATM
 }
 
 func sbRowBids(row OptionChainRow) map[string]float64 {
@@ -439,15 +452,73 @@ func (s *Service) sbExecuteLiveAsync(r *sbRunner, plan DepthEntryPlan, atm Optio
 			need := filled[p] * planQty[leg] / planQty[p] / lot * lot
 			return (need - filled[leg]) / lot
 		}
+		// catchUp re-sends a lagging leg's missing lot at once, more
+		// marketably each try; still short after the tries stops the tranche.
+		catchUp := func(leg string, got int64) {
+			for k := 1; k < sbCompleteRetries && canSend() && got < lot; k++ {
+				bestBid, l5, _ = s.sbFreshBids(symbol, expiry, atm.Strike, bestBid, l5)
+				lim := sbCompletionLimit(k, l5[leg], bestBid[leg])
+				r.mu.Lock()
+				r.event("COMPLETE", "LIVE %s one lot behind its partner -- retry %d/%d at %.2f (best %.2f)", leg, k, sbCompleteRetries-1, lim, bestBid[leg])
+				r.mu.Unlock()
+				g := send(map[string]order{leg: {qty: lot - got, lim: lim}}, "COMPLETE ")
+				got += g[leg]
+			}
+			if stopWhy == "" && got < lot {
+				stopWhy = fmt.Sprintf("%s still a lot behind its partner after %d tries", leg, sbCompleteRetries)
+			}
+		}
+		// A cancelled IOC with the legs level does not end the tranche
+		// (owner, 2026-10-15: build faster): the next clip goes out at once
+		// at a fresh quote while both legs still clear the plan's prices;
+		// sbMaxClipMisses misses in a row, a price below the plan, or a new
+		// ATM end it (re-plan).
+		misses := 0
 		for clip := 0; clip < 4000 && (left("CE") >= lot || left("PE") >= lot); clip++ {
 			if !canSend() {
 				break
 			}
 			if clip > 0 {
-				bestBid, l5 = s.sbFreshBids(symbol, expiry, atm.Strike, bestBid, l5)
+				var nowATM float64
+				bestBid, l5, nowATM = s.sbFreshBids(symbol, expiry, atm.Strike, bestBid, l5)
+				if nowATM > 0 && math.Abs(nowATM-atm.Strike) > 1e-6 && ahead("CE") < 1 && ahead("PE") < 1 {
+					stopWhy = fmt.Sprintf("ATM moved %.0f -> %.0f", atm.Strike, nowATM) // legs level: re-plan at the new ATM
+					break
+				}
 			}
 			leg := sbNextClipLeg(planQty, filled, lot, plan, bestBid)
 			behind := ahead(leg) >= 1
+			if pair := sbClipPair(planQty, filled, lot, leg); pair != "" && !behind {
+				// Legs level: one lot of each together.
+				limits, why := sbPlanLimits([]string{"CE", "PE"}, plan, bestBid)
+				if why != "" {
+					stopWhy = why
+					break
+				}
+				got := send(map[string]order{"CE": {qty: lot, lim: limits["CE"]}, "PE": {qty: lot, lim: limits["PE"]}}, "")
+				if stopWhy != "" {
+					break
+				}
+				switch {
+				case got["CE"] >= lot && got["PE"] >= lot:
+					misses = 0
+				case got["CE"] >= lot || got["PE"] >= lot: // one side missed: complete it now
+					misses = 0
+					miss := "CE"
+					if got["CE"] >= lot {
+						miss = "PE"
+					}
+					catchUp(miss, got[miss])
+				default:
+					if misses++; misses >= sbMaxClipMisses {
+						stopWhy = fmt.Sprintf("nothing filled at the plan's price (%d IOCs cancelled in a row)", misses)
+					}
+				}
+				if stopWhy != "" {
+					break
+				}
+				continue
+			}
 			limits, why := sbPlanLimits([]string{leg}, plan, bestBid)
 			if why != "" {
 				if !behind {
@@ -461,24 +532,17 @@ func (s *Service) sbExecuteLiveAsync(r *sbRunner, plan DepthEntryPlan, atm Optio
 				break
 			}
 			if got[leg] >= lot {
+				misses = 0
 				continue
 			}
 			if !behind {
-				stopWhy = "nothing filled at the plan's price (IOC cancelled)"
-				break
+				if misses++; misses >= sbMaxClipMisses {
+					stopWhy = fmt.Sprintf("nothing filled at the plan's price (%d IOCs cancelled in a row)", misses)
+					break
+				}
+				continue
 			}
-			for k := 1; k < sbCompleteRetries && canSend() && got[leg] < lot; k++ {
-				bestBid, l5 = s.sbFreshBids(symbol, expiry, atm.Strike, bestBid, l5)
-				lim := sbCompletionLimit(k, l5[leg], bestBid[leg])
-				r.mu.Lock()
-				r.event("COMPLETE", "LIVE %s one lot behind its partner -- retry %d/%d at %.2f (best %.2f)", leg, k, sbCompleteRetries-1, lim, bestBid[leg])
-				r.mu.Unlock()
-				g := send(map[string]order{leg: {qty: lot - got[leg], lim: lim}}, "COMPLETE ")
-				got[leg] += g[leg]
-			}
-			if stopWhy == "" && got[leg] < lot {
-				stopWhy = fmt.Sprintf("%s still a lot behind its partner after %d tries", leg, sbCompleteRetries)
-			}
+			catchUp(leg, got[leg])
 			if stopWhy != "" {
 				break
 			}
@@ -495,6 +559,25 @@ func (s *Service) sbExecuteLiveAsync(r *sbRunner, plan DepthEntryPlan, atm Optio
 		r.persistLocked()
 		r.mu.Unlock()
 	}()
+}
+
+// sbMaxClipMisses: cancelled IOCs in a row (legs level, prices still at or
+// above the plan) after which the tranche stops and re-plans.
+const sbMaxClipMisses = 3
+
+// sbClipPair: with the legs level, the partner of next (the leg furthest
+// behind its share) goes out with it when both have a lot left and the
+// partner's lot does not take it past next's share after next's lot (plan
+// ratio kept). "" = send next alone.
+func sbClipPair(planQty, filled map[string]int64, lot int64, next string) string {
+	p := map[string]string{"CE": "PE", "PE": "CE"}[next]
+	if planQty[next]-filled[next] < lot || planQty[p]-filled[p] < lot || planQty[next] <= 0 || planQty[p] <= 0 {
+		return ""
+	}
+	if float64(filled[p])/float64(planQty[p]) > float64(filled[next]+lot)/float64(planQty[next])+1e-9 {
+		return ""
+	}
+	return p
 }
 
 // sbNextClipLeg: the leg for the next one-lot clip -- of the legs with at

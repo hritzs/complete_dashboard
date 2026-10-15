@@ -234,3 +234,35 @@ func TestSBNextClipLeg(t *testing.T) {
 		}
 	}
 }
+
+// Legs level -> CE and PE go out together; a partner that would run past
+// the plan ratio, or a leg with less than a lot left, goes alone. Pairs
+// and single clips together fill the plan without drifting a lot apart.
+func TestSBClipPair(t *testing.T) {
+	q := map[string]int64{"CE": 4680, "PE": 5330}
+	if p := sbClipPair(q, map[string]int64{}, 65, "CE"); p != "PE" {
+		t.Fatalf("level start pairs: %q", p)
+	}
+	if p := sbClipPair(q, map[string]int64{"CE": 130, "PE": 0}, 65, "PE"); p != "" {
+		t.Fatalf("CE two lots ahead must not be sent with PE: %q", p)
+	}
+	if p := sbClipPair(q, map[string]int64{"CE": 4680, "PE": 5200}, 65, "PE"); p != "" {
+		t.Fatalf("CE done -> PE alone: %q", p)
+	}
+	plan := DepthEntryPlan{CEQty: 4680, PEQty: 5330, CEWorst: 240, PEWorst: 70}
+	bb := map[string]float64{"CE": 241, "PE": 71}
+	f := map[string]int64{}
+	for i := 0; i < 400 && (q["CE"]-f["CE"] >= 65 || q["PE"]-f["PE"] >= 65); i++ {
+		next := sbNextClipLeg(q, f, 65, plan, bb)
+		if p := sbClipPair(q, f, 65, next); p != "" {
+			f[p] += 65
+		}
+		f[next] += 65
+		if d := float64(f["CE"])/4680 - float64(f["PE"])/5330; d > 65.0/4680+1e-9 || d < -65.0/4680-1e-9 {
+			t.Fatalf("step %d drifted: CE %d PE %d", i, f["CE"], f["PE"])
+		}
+	}
+	if f["CE"] != 4680 || f["PE"] != 5330 {
+		t.Fatalf("plan not filled: %v", f)
+	}
+}

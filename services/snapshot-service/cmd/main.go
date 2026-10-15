@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/json"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -180,7 +182,7 @@ func main() {
 				json.NewEncoder(w).Encode(map[string]interface{}{
 					"success":     true,
 					"cached_at":   entry.LastUpdated.Format(time.RFC3339),
-					"data":        entry.Payload["data"],
+					"data":        chainOnlyStrike(entry.Payload["data"], r.URL.Query().Get("strike")),
 					"data_source": "go_cache",
 				})
 				return
@@ -237,7 +239,7 @@ func main() {
 				json.NewEncoder(w).Encode(map[string]interface{}{
 					"success":     true,
 					"cached_at":   nearestEntry.LastUpdated.Format(time.RFC3339),
-					"data":        nearestEntry.Payload["data"],
+					"data":        chainOnlyStrike(nearestEntry.Payload["data"], r.URL.Query().Get("strike")),
 					"data_source": "go_cache",
 				})
 				return
@@ -394,4 +396,37 @@ func parseSnapshotExpiryDate(expiry string) (time.Time, bool) {
 	}
 
 	return time.Time{}, false
+}
+
+// chainOnlyStrike: with ?strike=K, the chain's rows are cut to that strike
+// (everything else in "data" kept) -- a one-row read for a caller pricing a
+// single strike many times a second (the straddle build). No strike, or an
+// unparsable one: the data unchanged.
+func chainOnlyStrike(data interface{}, strike string) interface{} {
+	k, err := strconv.ParseFloat(strings.TrimSpace(strike), 64)
+	if strike == "" || err != nil {
+		return data
+	}
+	m, ok := data.(map[string]interface{})
+	if !ok {
+		return data
+	}
+	rows, ok := m["chain"].([]interface{})
+	if !ok {
+		return data
+	}
+	out := make(map[string]interface{}, len(m))
+	for key, v := range m {
+		out[key] = v
+	}
+	var keep []interface{}
+	for _, row := range rows {
+		if rm, ok := row.(map[string]interface{}); ok {
+			if f, ok := rm["strike"].(float64); ok && math.Abs(f-k) < 1e-6 {
+				keep = append(keep, row)
+			}
+		}
+	}
+	out["chain"] = keep
+	return out
 }
