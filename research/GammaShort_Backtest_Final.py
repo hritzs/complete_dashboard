@@ -473,6 +473,26 @@ def load_cw_luts(lut_dir=LUT_DIR):
     return out
 
 
+def neighbour_support(lut, coord):
+    """Number of the cell's neighbours (+/-1 on IV ratio, straddle ratio, Build IV) that are ON."""
+    on = 0
+    for ax in (1, 2, 3):
+        for d in (-1, 1):
+            c = list(coord)
+            c[ax] += d
+            if 0 <= c[ax] < DIMS[ax]:
+                on += bool(lut[tuple(c)])
+    return on
+
+
+# Research only (GS_RELAX=1): also record, per day, what a less rigid 09:20+ scan would
+# have traded. A relaxed variant accepts an OFF cell from its start time on when enough
+# neighbours are ON. The production decision is unchanged.
+RELAX = _env("GS_RELAX", "0") == "1"
+RELAX_VARIANTS = {"R1": [(1030, 1)], "R2": [(1100, 1)], "R3": [(1200, 1)],
+                  "R4": [(1030, 2), (1200, 1)]}   # (from hhmm, min ON neighbours)
+
+
 def load_nw_lut(lut_dir=LUT_DIR):
     df = pd.read_csv(os.path.join(lut_dir, "NW_LUT.csv"))
     arr = (df["Trade"].astype(str).str.strip().str.upper() == "YES").values.reshape(2, 4, 4, 3)
@@ -794,6 +814,76 @@ def simulate_cw(grid, entry_idx, strike_cache, dte_idx, abiv):
                 entry_underlying=u0, entry_credit=float(ev * sc), sl_bps=sl_bps, tp_bps=tp_bps,
                 exit_time=sim['Time'].iloc[xi].strftime('%H:%M:%S'),
                 exit_reason=EXIT_REASONS[int(reason)])
+
+
+# Research only (GS_DERIVED=1): strategies derived from the book, priced on the same
+# grid, fills, hedge machinery and costs. Exits are SL / TP / end of grid only.
+DERIVED = _env("GS_DERIVED", "0") == "1"
+LG_DELTA_THR = 0.10                     # long gamma: re-hedge when |net delta| > 0.10 per straddle
+DERIVED_DELTA_THR = 0.15                # short structures, DTE 3+ (DTE 1-2 use DELTA_MAP)
+
+
+def _bs_delta_gamma(S, K, T, sig, is_call):
+    sq = np.sqrt(T)
+    d1 = (np.log(S / K) + 0.5 * sig * sig * T) / (sig * sq)
+    cd = 0.5 * (1.0 + np.vectorize(math.erf)(d1 / 1.4142135623730951))
+    g = np.exp(-0.5 * d1 * d1) / 2.5066282746310002 / (S * sig * sq)
+    return (cd if is_call else cd - 1.0), g
+
+
+def simulate_legs(grid, entry_idx, get_arr, legs, dte_idx, sl_bps, tp_bps, delta_thr):
+    """Option legs [(strike, 'CE'|'PE', qty)], qty < 0 sold (at the 30-s bid, marked at the ask),
+    qty > 0 bought (at the 30-s ask, marked at the bid). Futures hedge to |net delta| <= delta_thr
+    (hedge_walk delta branch). Exits checked each minute: SL / TP in bps of entry underlying (tp_bps
+    None = no TP), else end of grid. Returns dict in normalised Rs, or None."""
+    sim_base = grid.iloc[entry_idx:].reset_index(drop=True)
+    if len(sim_base) < 2:
+        return None
+    t0 = sim_base['Time'].iloc[0]
+    mins = pd.date_range(t0, sim_base['Time'].iloc[-1], freq='1min')
+    pos_i = np.unique(np.searchsorted(sim_base['Time'].values, pd.Index([t0]).union(mins).values))
+    pos_i = pos_i[pos_i < len(sim_base)]
+    a_sec = np.arange(entry_idx, len(grid))
+    S = grid['Underlying'].values[a_sec].astype(float)
+    T = np.maximum(grid['DTE'].values[a_sec] / 365.0, 1e-5).astype(float)
+    od = np.zeros(len(a_sec)); val_mark = np.zeros(len(pos_i)); entry_cash = 0.0; exit_fill = np.zeros(len(pos_i))
+    for K, typ, q in legs:
+        arr = get_arr(K)
+        if arr is None:
+            return None
+        call = typ == 'CE'
+        ltp, bid, ask, xb, xa = (arr[0], arr[3], arr[5], arr[7], arr[9]) if call else (arr[1], arr[4], arr[6], arr[8], arr[10])
+        iv = arr[2][a_sec]
+        d, _ = _bs_delta_gamma(S, K, T, np.where(np.isfinite(iv) & (iv > 0), iv, np.nan), call)
+        od += q * np.nan_to_num(d)
+        if q < 0:
+            entry_cash += -q * xb[entry_idx]
+            val_mark += q * ask[a_sec][pos_i]
+            exit_fill += q * xa[a_sec][pos_i]
+        else:
+            entry_cash -= q * xa[entry_idx]
+            val_mark += q * bid[a_sec][pos_i]
+            exit_fill += q * xb[a_sec][pos_i]
+    is_min = np.zeros(len(a_sec), dtype=np.bool_); is_min[pos_i] = True
+    ft, tr = hedge_walk(od, np.zeros(len(a_sec)), np.zeros(len(a_sec)), np.ones(len(a_sec), dtype=np.int64), is_min,
+                        HEDGE_FRAC, INTRA_MULT, INTRA_FRAC, float(delta_thr))
+    ub = grid['UnderlyingBid'].values[a_sec].astype(float); ua = grid['UnderlyingAsk'].values[a_sec].astype(float)
+    hn = hedge_notional_cum(tr, ub, ua)[pos_i]
+    fut = futures_pnl(ft, tr, grid['FutExecBid'].values[a_sec].astype(float),
+                      grid['FutExecAsk'].values[a_sec].astype(float), ub, ua)[pos_i]
+    tot = entry_cash + val_mark + fut
+    u0 = float(S[0])
+    xi, reason = len(pos_i) - 1, "EOD"
+    for i in range(len(pos_i)):
+        if tot[i] <= -u0 * sl_bps / 1e4:
+            xi, reason = i, "SL"; break
+        if tp_bps is not None and tot[i] >= u0 * tp_bps / 1e4:
+            xi, reason = i, "TP"; break
+    pts = entry_cash + exit_fill[xi] + fut[xi]
+    sc = 25000.0 / u0
+    hcost = HEDGE_SLIP_BPS.get(dte_idx, HEDGE_SLIP_DEF) / 1e4 * hn[xi] * sc
+    return dict(gross=float(pts * sc), hedge_cost=float(hcost), exit_reason=reason,
+                exit_time=sim_base['Time'].iloc[pos_i[xi]].strftime('%H:%M'), credit=float(entry_cash * sc))
 
 
 # ============================================================
@@ -1217,8 +1307,33 @@ def process_day(file_path):
                         take_cw(row, sim); return
             res["Note"] = res["Note"] or "no_signal"
 
+        def record_relax():
+            if res["Leg"] == "NW":
+                return
+            prod_th = int(res["Entry_Time"].replace(":", "")) if res["Leg"] == "CW" else 10 ** 6
+            for tag, steps in RELAX_VARIANTS.items():
+                for row in rows:
+                    if row["th"] >= prod_th:
+                        break
+                    need = [s for t, s in steps if row["th"] >= t]
+                    if row["stage"] != 4 or not need or row["veto"] or (comfort and row["floor"]):
+                        continue
+                    sup = neighbour_support(LUTS[4], row["coord"])
+                    if sup < need[-1]:
+                        continue
+                    sim = sim_at(row)
+                    if sim is None:
+                        continue
+                    gross, hn, ecost, hcost = net_of(row, sim)
+                    res.update({f"Relax_{tag}_Time": f"{row['th'] // 100:02d}:{row['th'] % 100:02d}",
+                                f"Relax_{tag}_PnL": gross - ecost - hcost, f"Relax_{tag}_Support": sup,
+                                f"Relax_{tag}_Exit": f"{sim['exit_reason']} {sim['exit_time'][:5]}"})
+                    break
+
         decide()
         record_fixed()
+        if RELAX:
+            record_relax()
         return res
     except Exception:
         res["Note"] = "exception: " + traceback.format_exc().strip().split("\n")[-1][:150]
