@@ -1,6 +1,6 @@
 # High-Level Design
 
-**Status of this document**: current-state reference, written 2026-09-17
+**Status of this document**: current-state reference, reviewed 2026-10-15
 against the actual, running system. `docs/architecture.MD` is the
 *original pre-implementation plan* — its folder/file listings don't match
 what was actually built (e.g. it lists `market-state/src/shm_writer.cpp`
@@ -21,7 +21,8 @@ different latency/complexity trade-offs:
 - **C++ hot path** — direct exchange market-data ingestion and option
   chain construction, running at multicast-UDP speed.
 - **Go warm path** — broker integration, order execution, reconciliation,
-  persistence, and the HTTP API the UI talks to.
+  persistence, the target-based Straddle Build engine, and the HTTP API the
+  UI talks to.
 - **SolidJS UI** — the trading terminal (option chain, portfolio,
   automation config, manual controls, logs, latency dashboard).
 
@@ -46,6 +47,7 @@ flowchart TB
 
     subgraph Go["Go warm path"]
         EG[execution-gateway :8005<br/>order placement, chunking, verification]
+        SB[Straddle Build engine<br/>inside execution-gateway]
         RC[reconciler :8021<br/>Iris consumer, ACID persistence]
         FB[greeksoft-feed-bridge :8022<br/>Apollo backup feed]
         LD[latency-dashboard :8023<br/>read-only stats API]
@@ -64,6 +66,9 @@ flowchart TB
 
     TW -- "ZMQ :5557 OrderIntent" --> EG
     EG -- REST orders/positions --> REST
+    SB -- IOC build / MARKET hedge and exit --> REST
+    SB -- order and fill confirmation --> Iris
+    SB -- saved rules, run state, PMS fills --> PG
     EG -- "reads verified fills" --> PG
     RC -- "Iris push" --> Iris
     RC -- "ACID writes" --> PG
@@ -72,6 +77,7 @@ flowchart TB
     CM --> EG
     SS -- WS --> UI
     EG -- "/api/*" --> UI
+    SB -- "/api/sbuild/*" + sbuild_update --> UI
     LD -- "/api/latency/*" --> UI
 ```
 
@@ -130,6 +136,32 @@ samples read-only; the UI's Latency tab polls it every 5s through vite's
 dev-server proxy (a direct port isn't reachable from the browser in
 every deployment of this environment — confirmed live).
 
+### 3.6 Target-based Straddle Build
+`execution-gateway` also hosts a separate multi-rule Straddle Build engine
+(`sb_runner.go`, `sb_live.go`, `sb_pms.go`, `sb_rule.go`). It is not the
+standard LUT entry flow. A rule watches the current ATM's CE/PE bid depth,
+waits until the depth-weighted sell price clears its configured straddle
+target, and plans a delta-neutral tranche from the verified fills already
+held by its private PMS. SHADOW simulates fills; LIVE sends GreekSoft orders
+only after the operator selects LIVE and confirms the action. The SBuild
+order and risk lifecycle is detailed in `docs/LLD.md` §10.
+
+One engine loop polls the snapshot service at 100 ms, sharing a chain read
+between rules on the same symbol/expiry. Every third loop it publishes
+`sbuild_update` through snapshot-service to the UI. The run is persisted
+atomically as JSON and mirrored through the platform state store. LIVE
+orders are write-ahead recorded before submission and are not considered
+position until terminal broker confirmation is reconciled; an unknown order
+halts the run rather than allowing subsequent orders against an uncertain
+position.
+
+When a LIVE build reaches COMPLETE, or is stopped part-way, the engine
+hands its verified positions to the standard trade monitor when the
+position has both a short CE and short PE and there are no pending orders.
+The handoff carries additional strikes and hedge legs as extra trade legs,
+then the normal Portfolio monitor becomes the sole owner. This avoids two
+monitors hedging or exiting the same position.
+
 ## 4. Broker strategy
 
 | | GreekSoft | XTS |
@@ -143,8 +175,11 @@ every deployment of this environment — confirmed live).
 ## 5. Non-goals / explicitly deferred
 
 Per the user's own sequencing ("clean up and document *before* the full
-Python-reference migration"), the following are deliberately **not**
-built yet — see `docs/TODO.md` Phase 9/10 for the full roadmap:
+Python-reference migration"), the following remain deliberately deferred
+in the standard LUT / trade path — see `docs/TODO.md` Phase 9/10 for the
+full roadmap. These statements do not describe the separate SBuild engine
+in §3.6, which has its own incremental builder and limited hedge / SL / TP /
+exit-time monitor:
 
 - Autonomous SL/TP/roll/hedge-fix/fast-exit decision logic (today,
   `runtime.go`'s risk monitors are alert-only for SL/TP/time-exit; the
