@@ -2,10 +2,16 @@
 
 Research is isolated under `research/`. Do not translate a research result into `services/` or `ui/` without the owner's explicit direction.
 
+## Latest request: complete-history GammaShort sizing
+
+The owner requested a full-history sizing calculation without a 60/20/20 split, deferring the neural-network directional-strategy idea. `sizing_full_history.py` fits and evaluates the existing sizing families on all 1,430 saved days (2021-01-01 through 2026-10-14), with base 1, max 1.15, no average-size rescaling, and no boosting 09:16 CW entries. Results are in `output/full_history_sizing/`: workbook, ranking CSV, summary, and input hash manifest.
+
+The 66-candidate comparison is explicitly in sample. Flat net/MDD is 10,522.04 / 144.37; best net/MDD candidate is Table + IV ratio at 9,937.07 / 124.74. Highest net is Calendar Event at 10,587.37 / 145.50, with a slightly lower net/MDD ratio than flat. No candidate beats flat on both full-history net and net/MDD. Historical split-based studies below remain archived; their split rule does not apply to this new analysis.
+
 ## Current operating conclusion
 
 - Keep base size at 1. Only cut size on clearly poor days; maximum permitted size is 1.15.
-- Do not rescale sizes to a TRAIN average and never boost the 09:16 table. The owner's validation gate remains: a candidate must beat flat on both net profit and net profit / maximum drawdown on VALIDATION.
+- Do not rescale sizes to an average and never boost the 09:16 table. Archived split-based studies required beating flat on both validation net and net/MDD. The latest full-history analysis uses no split and reports those metrics over all dates.
 - Current decision is flat. No completed sizing study has established a reliable out-of-sample improvement.
 
 ## Completed studies
@@ -50,7 +56,7 @@ All rules accept a 09:20+ NO cell when its ±1 neighbors on IV ratio, straddle r
 
 Decision: choose the candidate with best validation net / MDD only if both validation net and net / MDD beat the current book; otherwise stay with the current book. A validation winner receives the predeclared TEST shuffle check. Do not adjust rules after inspecting performance.
 
-## Method constraints
+## Method constraints for archived split-based studies
 
 - Chronological 60/20/20 split by day: first 60% TRAIN, next 20% VALIDATION, last 20% TEST.
 - Fit all bin edges, scores, and scaling on TRAIN only. Inputs must be available by the decision time.

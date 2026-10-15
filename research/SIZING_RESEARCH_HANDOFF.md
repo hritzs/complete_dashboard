@@ -2,7 +2,8 @@
 
 Updated 2026-10-15. The sizing studies through v6 and the preregistered
 relaxed-entry rerun are complete. The derived-strategy simulator remains a
-scaffold (see sections 4.9, 4.10, and 7).
+scaffold (see sections 4.9, 4.10, and 7). The latest owner request is the
+full-history sizing analysis in section 4.11, which uses no 60/20/20 split.
 
 ## 1. Goal
 
@@ -10,7 +11,8 @@ Find a **sizing equation** for the GammaShort book: trade size that rises
 on high-opportunity days and falls on poor ones, plus a daily
 **opportunity tracker** that shows the reading behind that size.
 
-The owner's standing conditions:
+The owner's conditions for the original split-based studies (the current
+full-history analysis in section 4.11 explicitly supersedes the split):
 
 - **60 / 20 / 20 chronological split.** TRAIN is the first 60 % of days,
   VALIDATION the next 20 %, TEST the last 20 %. Every number is fitted on
@@ -351,6 +353,40 @@ The "pre-entry stability" inputs and the early-exit rules in v2 use these.
 - This is research-only. Do not move the scaffold or conclusions into
   `services/` or `ui/` based on this handoff.
 
+### 4.11 Full-history sizing, without 60/20/20 (owner request)
+
+- The owner deferred the neural-network directional-strategy idea and asked
+  to calculate sizing variations for the complete GammaShort history.
+- `sizing_full_history.py` fits and evaluates 66 variants on all 1,430 saved
+  production days, 2021-01-01 through 2026-10-14. Production PnL matches the
+  frozen reference on all 1,428 overlapping dates. This analysis deliberately
+  uses no train/validation/test split and is **in sample**. The earlier
+  split-based reports remain preserved as separate studies.
+- Keeps base multiplier 1, maximum 1.15, no rescaling to average 1, and no
+  boosting 09:16 CW entries. Includes the full CW+NW book; scope of each
+  sizing family is recorded in the report. Existing event sizing remains
+  embedded in the underlying production PnL.
+- Families: fixed-bin table/input/stability equations, S1 bucket and S2
+  ridge terciles (including cut/skip variants), drawdown guards, IV/RV and
+  premium/stop sizing, VRP terciles and risk cuts, calendar factors, LUT
+  borderline/isolated-cell cuts, and drawdown/streak controls. The calendar
+  combined variant uses DTE/event/weekday/absolute gap without the old
+  monthly-expiry proxy. All fitted effects use the entire history.
+- Flat: net **10,522.04**, MDD **144.37**, net/MDD **72.88**.
+- Best historical ratio: Table + IV ratio, net **9,937.07**, MDD **124.74**,
+  net/MDD **79.66**. It sacrifices 584.97 net profit for lower drawdown.
+- Highest profit: Calendar Event, net **10,587.37**, MDD **145.50**,
+  net/MDD **72.77**. The extra 65.33 profit comes with worse net/MDD.
+- **No candidate improves both full-history net and net/MDD over flat.**
+  These are historical calculations, not measured unseen-data alpha.
+- Outputs: `output/full_history_sizing/full_history_sizing.xlsx`, ranking
+  `candidates.csv`, `SUMMARY.md`, and `manifest.json` input hashes. Workbook
+  includes yearly/leg attribution, daily sizes/PnL, fitting effects, score
+  tiers, and feature coverage. Three CW entries have missing entry-window
+  features and receive neutral contributions for those missing inputs.
+- Size multiplies saved production PnL and existing costs linearly; there is
+  no new execution replay, nonlinear liquidity impact or fee model.
+
 ## 5. Overall conclusion so far
 
 The working answer is: keep the book at base size 1 and only cut size on
@@ -408,8 +444,10 @@ and writes its own report workbook. They run in seconds;
 
 ## 7. Open point: what to do next
 
-Section 4.9 is complete and leaves the current book unchanged. The following
-are separate optional hypotheses, not selected operating rules:
+Sections 4.9 and 4.11 are complete and leave the current book unchanged.
+The latest focus is complete-history GammaShort sizing; neural directional
+research is deferred. The following are separate optional hypotheses, not
+selected operating rules:
 
 - **First 15 min range vs RV:** only usable for late entries; most entries
   are at 09:16–09:18.

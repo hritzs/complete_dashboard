@@ -2,9 +2,21 @@
 
 Updated 2026-10-15. This is offline research; it contains no authorization to change live trading behavior.
 
+## Latest: complete-history sizing (owner requested no split)
+
+The owner deferred neural-network directional research and requested sizing calculations for the complete GammaShort history. `../sizing_full_history.py` refits and evaluates 66 constrained variations on all 1,430 days through 2026-10-14, including CW and NW production PnL. It retains max size 1.15, no rescaling to mean 1, and no boosting 09:16 CW entries. This is deliberately in sample; the archived split-based conclusions below are separate analyses.
+
+| Full-history result | Net | MDD | Net/MDD |
+|---|---:|---:|---:|
+| Flat | 10,522.04 | 144.37 | 72.88 |
+| Best ratio: Table + IV ratio | 9,937.07 | 124.74 | 79.66 |
+| Highest profit: Calendar Event | 10,587.37 | 145.50 | 72.77 |
+
+No variation beats flat on both net and net/MDD. Units are normalized Rs. The analysis scales existing production PnL and its costs linearly; it does not replay fills at different quantities. Three CW entries lack entry-window features; those missing inputs receive neutral adjustments. Full rankings, annual results, CW/NW totals, daily sizes/PnL, fitting effects and feature coverage are stored in `full_history_sizing/full_history_sizing.xlsx`. `full_history_sizing/manifest.json` records input hashes.
+
 ## Current decision
 
-Keep the current book flat at size 1. The owner allows cuts on clearly poor days, caps any allowed increase at 1.15, forbids rescaling to a TRAIN average, and explicitly forbids boosting the 09:16 table. A candidate must beat flat on both net profit and net profit / maximum drawdown on VALIDATION before selection.
+Keep the current book flat at size 1. The owner allows cuts on clearly poor days, caps any allowed increase at 1.15, forbids rescaling to an average, and explicitly forbids boosting the 09:16 table. Archived split-based studies required beating flat on both validation net and net/MDD. The latest full-history analysis above uses no split.
 
 ## What the studies found
 
