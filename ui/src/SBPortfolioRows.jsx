@@ -84,6 +84,11 @@ function SBRow(props) {
   const splitOf = (t) => (legsOf(t).length > 1
     ? legsOf(t).map((l) => `${fmt(l.strike, 0)}: ${Math.abs(Number(l.qty))}${Number(l.qty) > 0 ? ' long' : ''}`).join(' · ')
     : '');
+  // Net sold across every strike (hedge legs net in); a net long shows "+N long".
+  const qtyText = (t) => (qtyOf(t) > 0 ? `+${qtyOf(t)} long` : String(-qtyOf(t)));
+  // Hedges that filled: distinct seconds with a HEDGE CE fill (a market
+  // hedge can fill in several pieces at the same moment).
+  const hedgeCount = () => new Set((s().fills || []).filter((f) => f.role === 'HEDGE' && f.option_type === 'CE').map((f) => String(f.time || '').slice(0, 8))).size;
   const ltpOf = (t) => (legsOf(t).length === 1 ? legsOf(t)[0].mark : null);
   // Held at several strikes: each strike's LTP ("22550: 156.20 · 22600: 131.60").
   const ltpText = (t) => (legsOf(t).length > 1
@@ -131,13 +136,14 @@ function SBRow(props) {
             <div style={{ 'font-size': '11px', opacity: 0.75, 'margin-top': '2px' }}>Built {sold()}/{target()}</div>
           </Show>
         </td>
-        <td style={td}>{Math.abs(qtyOf('CE'))}<Show when={splitOf('CE')}><div style={{ 'font-size': '11px', opacity: 0.7 }}>{splitOf('CE')}</div></Show></td>
+        <td style={td}>{qtyText('CE')}<Show when={splitOf('CE')}><div style={{ 'font-size': '11px', opacity: 0.7 }}>{splitOf('CE')}</div></Show></td>
         <td style={{ ...td, 'white-space': 'nowrap' }}>{ltpText('CE')}</td>
-        <td style={td}>{Math.abs(qtyOf('PE'))}<Show when={splitOf('PE')}><div style={{ 'font-size': '11px', opacity: 0.7 }}>{splitOf('PE')}</div></Show></td>
+        <td style={td}>{qtyText('PE')}<Show when={splitOf('PE')}><div style={{ 'font-size': '11px', opacity: 0.7 }}>{splitOf('PE')}</div></Show></td>
         <td style={{ ...td, 'white-space': 'nowrap' }}>{ltpText('PE')}</td>
         <td style={td}>{fmt(p().net_delta, 4)}</td>
         <td style={td}>{fmt(pointsOut(), 2)}</td>
         <td style={td} title="from the minute-end hedge check">{hedgeNum('allowed') == null ? '—' : fmt(hedgeNum('allowed'), 2)}</td>
+        <td style={td}>{hedgeCount()}</td>
         <td style={td} class={pnlCls(unreal())}>₹{fmt(unreal())}</td>
         <td style={td} class={pnlCls(realized())}>₹{fmt(realized())}</td>
         <td style={td} class={pnlCls(total())}>₹{fmt(total())}</td>
@@ -154,7 +160,7 @@ function SBRow(props) {
       </tr>
       <Show when={open()}>
         <tr class="details-row">
-          <td colSpan="18" style={{ padding: '16px', background: '#101a33' }}>
+          <td colSpan="19" style={{ padding: '16px', background: '#101a33' }}>
             <div class="trade-dashboard">
               <div class="trade-dashboard-header">
                 <div>

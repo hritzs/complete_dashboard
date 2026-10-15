@@ -2729,13 +2729,14 @@ function App() {
                       <th style={{ padding: "10px" }}>Symbol</th>
                       <th style={{ padding: "10px" }} title="Strike of the sold straddle">Strike</th>
                       <th style={{ padding: "10px" }} title="ACTIVE = monitored; PARTIAL = built less than requested; CLOSED_* = how it was closed">Status</th>
-                      <th style={{ padding: "10px" }} title="Contracts of the CE leg currently sold">CE Qty</th>
+                      <th style={{ padding: "10px" }} title="Net CE contracts sold across every leg held; only wings excluded">CE Qty</th>
                       <th style={{ padding: "10px" }} title="Last traded price of the CE leg (avg exit price once closed)">CE LTP</th>
-                      <th style={{ padding: "10px" }} title="Contracts of the PE leg currently sold">PE Qty</th>
+                      <th style={{ padding: "10px" }} title="Net PE contracts sold across every leg held; only wings excluded">PE Qty</th>
                       <th style={{ padding: "10px" }} title="Last traded price of the PE leg (avg exit price once closed)">PE LTP</th>
                       <th style={{ padding: "10px" }} title="Net delta of the whole position incl. hedge legs (wings excluded)">Net Δ</th>
                       <th style={{ padding: "10px" }} title="How far the position has drifted (delta / straddle divisor) -- the minute-end hedge fires when this exceeds Points Allowed">Points Out</th>
                       <th style={{ padding: "10px" }} title="Drift allowed before the minute-end hedge acts (from straddle / IV and the floor)">Points Allowed</th>
+                      <th style={{ padding: "10px" }} title="Hedges that filled on this position">Hedges</th>
                       
                       
                       
@@ -2841,8 +2842,22 @@ function App() {
                             leg("PE")?.entry_price
                           );
 
-                        const ceQty = () => leg("CE")?.quantity ?? live().ce_quantity ?? item.ceQty ?? 0;
-                        const peQty = () => leg("PE")?.quantity ?? live().pe_quantity ?? item.peQty ?? 0;
+                        // CE / PE Qty: NET across every leg held (ATM moved,
+                        // hedge legs, manual legs) -- only wings are left out;
+                        // sold shown as a plain number, a net long as "+N long".
+                        const netLegs = (type) => livePositions().filter((p) =>
+                          String(p.option_type || "").toUpperCase() === type && !p.wing && Number(p.quantity) !== 0);
+                        const netQty = (type) => netLegs(type).reduce((a, p) =>
+                          a + (String(p.action || "").toUpperCase() === "BUY" ? 1 : -1) * Math.abs(Number(p.quantity) || 0), 0);
+                        const qtyOf = (type, fallback) => (netLegs(type).length > 0 ? -netQty(type) : fallback);
+                        const ceQty = () => qtyOf("CE", leg("CE")?.quantity ?? live().ce_quantity ?? item.ceQty ?? 0);
+                        const peQty = () => qtyOf("PE", leg("PE")?.quantity ?? live().pe_quantity ?? item.peQty ?? 0);
+                        const qtyText = (q) => (Number(q) < 0 ? `+${-Number(q)} long` : String(q));
+                        // "22750: 4680 · 22850: 650 long" when held at more than one strike.
+                        const splitOf = (type) => (netLegs(type).length > 1
+                          ? netLegs(type).map((p) => `${fmt(p.strike, 0)}: ${Math.abs(Number(p.quantity) || 0)}${String(p.action || "").toUpperCase() === "BUY" ? " long" : ""}`).join(" · ")
+                          : "");
+                        const hedgeCount = () => Number(live().config?.hedge_count ?? item.config?.hedge_count ?? 0) || 0;
                         const netDelta = () => live().net_delta ?? item.netDelta ?? 0;
                         const netGamma = () => live().net_gamma ?? item.netGamma ?? 0;
 
@@ -2922,13 +2937,14 @@ function App() {
                                   </div>
                                 </Show>
                               </td>
-                              <td style={{ padding: "10px" }}>{ceQty()}</td>
+                              <td style={{ padding: "10px" }}>{qtyText(ceQty())}<Show when={splitOf("CE")}><div style={{ "font-size": "11px", opacity: 0.7 }}>{splitOf("CE")}</div></Show></td>
                               <td style={{ padding: "10px" }}>₹{fmt(ceLtp(), 2)}</td>
-                              <td style={{ padding: "10px" }}>{peQty()}</td>
+                              <td style={{ padding: "10px" }}>{qtyText(peQty())}<Show when={splitOf("PE")}><div style={{ "font-size": "11px", opacity: 0.7 }}>{splitOf("PE")}</div></Show></td>
                               <td style={{ padding: "10px" }}>₹{fmt(peLtp(), 2)}</td>
                               <td style={{ padding: "10px" }}>{fmt(netDelta(), 4)}</td>
                               <td style={{ padding: "10px" }}>{fmt(pointsOut(), 2)}</td>
                               <td style={{ padding: "10px" }}>{fmt(pointsAllowed(), 2)}</td>
+                              <td style={{ padding: "10px" }}>{hedgeCount()}</td>
                               
                               
                               
@@ -2956,7 +2972,7 @@ function App() {
                             </tr>
                             <Show when={isExpanded()}>
                               <tr class="details-row">
-                                <td colSpan="18" style={{ padding: "16px", background: "#101a33" }}>
+                                <td colSpan="19" style={{ padding: "16px", background: "#101a33" }}>
                                   <div class="trade-dashboard">
 
                                     <div class="trade-dashboard-header">
