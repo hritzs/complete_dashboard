@@ -10,6 +10,7 @@ from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 from openpyxl.workbook.properties import CalcProperties
+from sizing_algorithm_report import add_sheets
 
 ROOT=Path(__file__).resolve().parent
 OUT=ROOT/'output/research_ledger'
@@ -318,7 +319,7 @@ def main():
     table(book,'Formula_Guide',formulas)
     riskcheck=risk_replay(book,raw)
     annualcheck=annual_risk_replay(book,raw)
-    all_summary=[]; registry=[]; audit=[]
+    all_summary=[]; registry=[]; audit=[]; algorithm_map=[]
     charts=book.create_sheet('Equity_DD_Charts')
     for c in configs:
         print('Building',c['id'],c['name'],flush=True)
@@ -339,6 +340,8 @@ def main():
             extra=original_inputs.set_index('Date')[risk_columns].reindex(d.Date)
             for col in risk_columns: d[col]=extra[col].to_numpy()
         for j,p in enumerate(policies): p['id']=f'{prefix}_P{j:02d}'
+        algorithm_map.extend({'Iteration':prefix,'Policy':p['id'],'Policy_name':p['name'],
+            'Protocol':c['protocol'],'Coverage':c['coverage']} for p in policies)
         catalog=pd.DataFrame([{'Policy':p['id'],'Name':p['name'],'Protocol':c['protocol'],'Precision_coverage':c['coverage']} for p in policies])
         table(book,prefix+'_Policies',catalog)
         metadata=[v for v in ('Date','Leg','Stage','Entry_Time','Exit_Time','Exit_Reason','Strike','CW_Expiry','NW_Expiry','Event','Gross_PnL','Entry_Cost','Hedge_Cost','Net_PnL','Part') if v in d]
@@ -391,13 +394,14 @@ def main():
                 total=check.loc[check.Policy.eq(p['id']),'Net'].sum()
                 np.testing.assert_allclose(total,p['pnl'].sum(),atol=1e-8)
         audit.append({'Iteration':prefix,'Policies':len(policies),'Days':len(d),'Trade_rows':int(union.sum()),'Periodic_reconciliation':'PASS'})
+    algorithm_inputs,algorithm_checks=add_sheets(book,table,algorithm_map); INPUTS.update(algorithm_inputs)
     summary=pd.concat(all_summary,ignore_index=True)
     overview.append(summary.columns.tolist())
     for row in summary.itertuples(index=False,name=None): overview.append([scalar(v) for v in row])
     overview.freeze_panes='E2'; overview.auto_filter.ref=f'A1:{get_column_letter(len(summary.columns))}{len(summary)+1}'
     index.append(['Research ledger — saved iterations, not live recommendations'])
     index.append(['Quarter/year/month/FY DD resets at each period start; Daily DD uses the global running equity peak.'])
-    index.append(['Risk formulas are executable on Risk_Excel_Formulas; saved and Python-replayed values are on Risk_Trade_Replay.'])
+    index.append(['Risk: Risk_Excel_Formulas / Risk_Trade_Replay. Boost/cut rules: Algo_Catalog / Algo_Priority / Algo_Annual / Algo_Opt_Replay.'])
     index.append(['Older candidate daily paths were not all saved. Coverage below identifies selected-only and rounded artifacts.'])
     index.append(['Modern full-history optimization is IN SAMPLE. Later overlays remain conditional on legacy LUT/fill assumptions.'])
     index.append(['Calendar quarters; Indian financial year starts April. PnL is normalized backtest units, not account returns.'])
@@ -417,14 +421,21 @@ def main():
     for name in ('Risk_Inputs','Risk_Coefs','Risk_Rank_Keys','Risk_Excel_Formulas','Risk_Trade_Replay','Formula_Guide'):
         ws=small.create_sheet(name); ws.freeze_panes='D2'
         for row in saved[name].iter_rows(values_only=True): ws.append(list(row))
-    small.save(OUT/'Risk_Formulas.xlsx'); saved.close()
+    small.save(OUT/'Risk_Formulas.xlsx')
+    algorithms=Workbook(write_only=True); algorithms.calculation=CalcProperties(calcId=0,fullCalcOnLoad=True)
+    for name in saved.sheetnames:
+        if name.startswith('Algo_'):
+            ws=algorithms.create_sheet(name); ws.freeze_panes='D2'
+            for row in saved[name].iter_rows(values_only=True): ws.append(list(row))
+    algorithms.save(OUT/'Sizing_Algorithms_Explained.xlsx'); saved.close()
     summary.to_csv(OUT/'all_iterations_summary.csv',index=False)
     pd.DataFrame(registry).to_csv(OUT/'iteration_index.csv',index=False)
     checks={'Status':'PASS','Iterations':len(configs),'Daily_policy_paths':sum(r['Policies'] for r in registry),
-        'Periodic_reconciliation':audit,'Risk_replay':riskcheck,'Annual_risk_replay':annualcheck,'Excel_formulas':'Recalculate on open; static replay values also provided'}
+        'Periodic_reconciliation':audit,'Risk_replay':riskcheck,'Annual_risk_replay':annualcheck,
+        'Algorithms':algorithm_checks,'Excel_formulas':'Recalculate on open; static replay values also provided'}
     (OUT/'audit.json').write_text(json.dumps(checks,indent=2)+'\n')
     manifest={'Stage':'built','Input_sha256':{str(p.relative_to(ROOT)) if p.is_relative_to(ROOT) else str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(INPUTS)},
-        'Output_sha256':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in OUT.iterdir() if p.is_file() and p.name not in ('manifest.json','Risk_Formulas_Calculated.xlsx','verification.json')}}
+        'Output_sha256':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in OUT.iterdir() if p.is_file() and p.name not in ('manifest.json','Risk_Formulas_Calculated.xlsx','Sizing_Algorithms_Calculated.xlsx','verification.json')}}
     (OUT/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     print(json.dumps({'Workbook':str(path),'Iterations':len(configs),'Policy_paths':checks['Daily_policy_paths'],'Risk_replay':riskcheck}),flush=True)
 

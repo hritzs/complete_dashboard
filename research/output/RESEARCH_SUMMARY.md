@@ -2,7 +2,34 @@
 
 Updated 2026-10-15. This is offline research; it contains no authorization to change live trading behavior.
 
-## Latest: risk-formula documentation and Excel research ledger
+## Latest: what controls boosts, cuts, restrictions and allocation
+
+`../SIZING_ALGORITHMS.md` documents the exact research algorithms and their
+version-specific priorities. The master ledger now has185 sheets, including12
+Algo_ sheets for21 families and all189 saved policy paths. Standalone
+`research_ledger/Sizing_Algorithms_Calculated.xlsx` contains explanatory tables,
+parameter changes, the799-entry conviction gate replay,3,196 annual sizing
+decisions and11,985 continuous allocation replays across15 optimized policies.
+
+The later annual method is risk-first: warmup size1, otherwise dicey0.85,
+otherwise stronger-tax CW size1.05/1.10, otherwise1. Higher-tax membership uses
+maximum-weight closure/min-cut (iterative Dinic), with the original13/5/2/2/6
+tax gate preserved. 09:16 may boost after its original13 plus15/17 gate. NW
+receives no CW-tax boost, but can be risk cut. There is no future normalization.
+
+The earlier full-fit allocator combines S1 shrunk-bucket and S2 ridge scores
+with risk to establish bounds, uses multi-start coordinate pattern search for
+allocation coefficients, and projects raw sizes into bounds with an offset
+enforcing historical mean1. Risk cuts, stage caps and strong lower bounds
+remain hard constraints. An ordinary optimizer boost is a budget allocation,
+not evidence of strong edge. The earlier09:16 ban remains in archived results.
+
+Actual spreadsheet formulas reproduce every annual size exactly and optimized
+sizes within1e-14; all prior risk, daily and20,223 period checks pass. No new
+strategy was fitted/adopted and no live code changed. These are linear/ridge/
+logistic, graph and numerical optimization methods, not neural networks.
+
+## Previous: risk-formula documentation and Excel research ledger
 
 Exact definitions are in `../RISK_FORMULAS.md`: regularized logistic loss
 probability, ridge prediction of `max(-net_PnL,0)`, three equally weighted

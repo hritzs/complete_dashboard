@@ -115,5 +115,16 @@
     "Max_risk_replay_error": 1.1102230246251565e-16,
     "Dicey": 175
   },
+  "Algorithms": {
+    "Algorithms": 21,
+    "Mapped_policies": 189,
+    "Conviction_rows": 799,
+    "Strong": 166,
+    "Eligible": 32,
+    "Annual_sizing_rows": 3196,
+    "Optimized_policies": 15,
+    "Optimized_trade_rows": 11985,
+    "Maximum_size_replay_error": 8.881784197001252e-16
+  },
   "Excel_formulas": "Recalculate on open; static replay values also provided"
 }

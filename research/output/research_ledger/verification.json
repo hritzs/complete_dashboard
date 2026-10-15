@@ -3,7 +3,7 @@
   "Iterations": 14,
   "Policies": 189,
   "Period_rows_checked": 20223,
-  "Sheets": 173,
+  "Sheets": 185,
   "Spreadsheet_engine": "LibreOffice headless; stored cached formula results verified",
   "Spreadsheet_risk_rows": 799,
   "Maximum_formula_errors": {
@@ -11,6 +11,13 @@
     "Downside_formula": 5.1514348342607263e-14,
     "Risk_formula": 6.661338147750939e-16,
     "Threshold_formula": 1.1102230246251565e-16
+  },
+  "Annual_sizing_formula_rows": 3196,
+  "Optimized_sizing_formula_rows": 11985,
+  "Maximum_algorithm_formula_errors": {
+    "Annual_Size_Excel": 0.0,
+    "Optimized_Raw_Excel": 1.0658141036401503e-14,
+    "Optimized_Size_Excel": 9.992007221626409e-15
   },
   "Checks": [
     "input/output hashes",

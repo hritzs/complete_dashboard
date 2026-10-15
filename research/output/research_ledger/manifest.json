@@ -2,7 +2,8 @@
   "Stage": "verified",
   "Input_sha256": {
     "RISK_FORMULAS.md": "ebd8651d8ce6a4325c061821924d4460eb5ef6eccd202b41647b523dbefac54b",
-    "build_research_ledger.py": "863e8f2c565a5daa772ba1ce22f8e494b7488198d5d8ee247adc63d352fadd67",
+    "SIZING_ALGORITHMS.md": "08c74555883d18d83908d3587189fe8e1ba85d96128cc89321e6d92bd6667b9b",
+    "build_research_ledger.py": "ef4023397da1191691555c5867d518435a08be8623082135a5030c4256e63326",
     "output/backtest_relax/run_027bf0249b/days/2021-01-01.pkl": "86048a37fd271d5e4679db158b241d5fd25c0f03fc7055493dd8f8db750cadd3",
     "output/backtest_relax/run_027bf0249b/days/2021-01-04.pkl": "28351d9d5bca8b194bd4fa0ed56d592f321e579c535bc936a629884ce172593c",
     "output/backtest_relax/run_027bf0249b/days/2021-01-05.pkl": "5504056bd40cafe4545fe96fd6e8a483a30dbb38d4601f4c5411281414ded472",
@@ -1434,6 +1435,7 @@
     "output/backtest_relax/run_027bf0249b/days/2026-10-13.pkl": "98509b05905be3e183eea719d98f1833ad518bfb3fe575e1e6065b0712b9e857",
     "output/backtest_relax/run_027bf0249b/days/2026-10-14.pkl": "d43368929dd521c73f8aa6f2e286e7747746ba544ec5349664b53ba362e687af",
     "output/conviction_sizing/conviction_trade_comparison.xlsx": "c21a500132ec722a48474f8e66c5fd0d7488cb42310ecf8093cb5432d3e6dbd8",
+    "output/conviction_sizing/trade_comparison.csv": "f5a7d1bc4595067f9f9b27c359a81de6524a63254b878c1966e1f6b25d7a55f6",
     "output/drawdown_risk_sizing/drawdown_risk_sizing.xlsx": "551763bad899fdf76d19f881556a684f213cb74d8477a67d83f4d175d82de6d7",
     "output/entry_relax_report.xlsx": "a534114dc1b02df4b8662e06fb8b4a2073198c2f93f0326bdc4cc2fd068fe2c0",
     "output/entry_window_features.csv": "9181b8aaa224e015a034e5fd73c293f910c3fbd93f5c1a65377801e8fffe8874",
@@ -1455,17 +1457,20 @@
     "output/sizing_vrp_report.xlsx": "534941467d36edd7c1dd6a4f9d27b78e4009109afde5afcaef4ecccf8de87ec8",
     "output/tick_entry_study/tick_entry_comparison.xlsx": "747d04f526d6721e1b2d2f94cd72de4396070e6da271f2d4143d9b5c4dec23d0",
     "research_iterations.json": "63b9841f3a5c6c7f626e695673097431ea702885d1ee180e05fd82fd4b0c0174",
+    "sizing_algorithm_report.py": "c5ddc78caf94b2e44de7cd05af38c93cc3830fd57de608301b728f1314f773e9",
     "/mnt/shared/Hardik/Project_Codes/GammaShortDailyProcess/GammaShortDailydata.csv": "70b3293e8ef0b67910535cae7cb9190b26975b3a36b6ed625471c855efe0ea07",
-    "verify_research_ledger.py": "e5d417abc44e768d0f327cf12b5d53c8965119e3874056567ee3113eb0e4a095"
+    "verify_research_ledger.py": "be58bec6f66f6009259dcd3d5ae6f35e37b4d48579ba4cb9dbae62bb500d97bb"
   },
   "Output_sha256": {
-    "audit.json": "ec20068ae543225953b15b40150d19b313b148811d8d8d6b2b64fbf0e9c3a3b0",
+    "audit.json": "2368c5e00a5f497ffc7cdc4f5b7efbc8dad0b2e0dbdcb10d399dd2fbb63848f9",
+    "Sizing_Algorithms_Explained.xlsx": "07267a9317d91d39e436cbe02da243f059c06f96be9cd2a14fd1ebeda7a30e06",
     "Risk_Formulas_Calculated.xlsx": "bfb7a5015236650c25b6b372994011e83828bdcf8945ce6f812246c3943963c4",
-    "Risk_Formulas.xlsx": "392396d9e41d5d48048303534c982c288cfc4b1e785c7352f0d438d147448340",
+    "Risk_Formulas.xlsx": "efc2bf4ee11ece5ddfeb10e81046f671e0880ba42e24d5aeefa546b9ddad6975",
     "iteration_index.csv": "19127f5eb9d4368e919914cba219bb318ab3368844bfe03f2fdd978ca779249a",
-    "verification.json": "3e8d827de75e477e9d4aa509eec4e9f2708e0b029cbf8afeb20e7a0f53f54aaf",
-    "GammaShort_Research_Ledger.xlsx": "620a494128e786b0aef520b14d41ebc5c43559c87038433495fe07353360d2e1",
+    "verification.json": "d430f15105f49c47eac0c5b3d79a781970a38c59d0745651b580f0cdef3cdd1d",
+    "GammaShort_Research_Ledger.xlsx": "d5d54ede8822f76b4d38fef4e89a2e46b2d84c7100f4fdd0777f08cbec23f1b3",
+    "Sizing_Algorithms_Calculated.xlsx": "001e65d87eda07b83eac9aa927760b1ad91c803d841e033829c76f29f116e399",
     "all_iterations_summary.csv": "9ccd58c40e261254e7c4cf4d05ac52f175eae95aebcddcc1f9231763061f476f",
-    "README.md": "c0b2cc2c69108dd9ac787068bffa6d76768cd0e534dc9bbadd73dcb446141145"
+    "README.md": "07d186160322bfd706cfb2b244c938b52b1ab17f5fdda6d22abfcedb58c666d9"
   }
 }

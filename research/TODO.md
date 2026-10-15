@@ -2,7 +2,30 @@
 
 Research is isolated under `research/`. Do not translate a research result into `services/` or `ui/` without the owner's explicit direction.
 
-## Latest request: exact risk formulas and a persistent Excel iteration ledger
+## Latest request: explain boost/cut algorithms and save their Excel formulas
+
+`SIZING_ALGORITHMS.md` and `sizing_algorithm_report.py` document21 algorithm
+families, inputs/outputs, formulas, priority and version changes. The master
+ledger now has185 sheets, including12 Algo_ sheets and a mapping for all189
+saved policies. Standalone `Sizing_Algorithms_Explained.xlsx` and
+`Sizing_Algorithms_Calculated.xlsx` contain the same algorithm explanation and
+executable sizing formulas; the latter is spreadsheet-engine recalculated.
+
+The later annual rule is warmup1 -> dicey0.85 -> non-dicey stronger-tax CW
+boost1.05/1.10 -> ordinary1. Risk overrides conviction. CW09:16 can boost only
+after its original tax13 and the additional15/17 hurdle. NW has no CW-tax
+boost but may receive risk cuts. No future mean-one balancing occurs.
+Older full-history optimization and its09:16 restriction remain archived:
+S1/S2 determine priority bounds; coordinate search fits allocation coefficients;
+bounded projection enforces historical mean1 and caps. Ordinary budget boosts
+are not high-conviction labels. These are not neural-network sizing models.
+
+Verification passes for799 historical conviction gates,3,196 annual sizes and
+11,985 optimized trade sizes across15 policies. Actual Excel annual sizes match
+exactly; optimized sizes match within1e-14. The prior189 daily paths and20,223
+period rows also reconcile. Reporting only: no model refits or live changes.
+
+## Previous request: exact risk formulas and a persistent Excel iteration ledger
 
 `RISK_FORMULAS.md` documents logistic loss probability (L2 lambda20), ridge
 expected negative PnL (lambda50, winners contribute zero), exact percentile/tie

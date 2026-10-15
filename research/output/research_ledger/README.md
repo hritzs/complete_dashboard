@@ -29,6 +29,30 @@ The original source workbooks remain unchanged.
   higher-tax and tick-delay examples. These charts do not select a live policy.
 - **Reporting_Audit**: iteration-level reconciliation results.
 
+The **Algo_** sheets add boost/cut explanations and executable sizing formulas:
+
+- **Algo_Catalog / Algo_Guide**:21 algorithm families, mathematical definitions,
+  inputs, outputs, training protocol, limitations and source-code references.
+- **Algo_Policy_Map / Algo_Changes / Algo_Priority**: all189 saved policy IDs,
+  version changes and the exact precedence of risk cuts, warmup and boosts.
+- **Algo_Conviction / Algo_Profile_Feasibility**: all799 historical S1/S2 edge
+  gates and why the Gentle profile could not satisfy its mean-one budget.
+- **Algo_Annual**:3,196 date/candidate rows replay all four annual fixed-boost
+  policies, with warmup, risk/strong flags, tax hurdles, reasons and Excel sizes.
+- **Algo_Opt_Inputs / Algo_Opt_Coefs / Algo_Opt_Replay / Algo_Opt_Checks**:
+  coefficients, offsets, bounds, floor/ceiling clipping, action reasons and
+  executable raw/final-size formulas for11,985 trade allocations across15
+  saved optimized policies. Diagnostic historical risk/conviction flags shown
+  on normalized-optimization rows were not constraints in that earlier study.
+
+`Sizing_Algorithms_Explained.xlsx` is the smaller editable algorithm workbook;
+`Sizing_Algorithms_Calculated.xlsx` includes spreadsheet-engine-calculated
+results. The master contains the same algorithm sheets plus all trade/period
+PnL reporting. Details are in `../../SIZING_ALGORITHMS.md`.
+Family mappings for legacy selected-only reports identify the study's algorithm
+families; generic archived selection labels do not assert that every family
+was used simultaneously. Original source tables preserve the available detail.
+
 Each iteration has:
 
 | Sheet suffix | Contents |
@@ -93,6 +117,9 @@ research/.venv/bin/python research/build_research_ledger.py
 mkdir -p /tmp/gs-risk-ledger-recalc
 libreoffice -env:UserInstallation=file:///tmp/gs-risk-ledger-lo-20261015 --headless --convert-to xlsx --outdir /tmp/gs-risk-ledger-recalc research/output/research_ledger/Risk_Formulas.xlsx
 cp /tmp/gs-risk-ledger-recalc/Risk_Formulas.xlsx research/output/research_ledger/Risk_Formulas_Calculated.xlsx
+mkdir -p /tmp/gs-algorithms-recalc
+libreoffice -env:UserInstallation=file:///tmp/gs-algorithms-lo-20261015 --headless --convert-to xlsx --outdir /tmp/gs-algorithms-recalc research/output/research_ledger/Sizing_Algorithms_Explained.xlsx
+cp /tmp/gs-algorithms-recalc/Sizing_Algorithms_Explained.xlsx research/output/research_ledger/Sizing_Algorithms_Calculated.xlsx
 research/.venv/bin/python research/verify_research_ledger.py
 ```
 

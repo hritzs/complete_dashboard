@@ -3,7 +3,9 @@
 Updated 2026-10-15. The sizing studies through v6 and the preregistered
 relaxed-entry rerun are complete. The derived-strategy simulator remains a
 scaffold (see sections 4.9, 4.10, and 7). The latest owner request is exact risk
-formulas and a persistent Excel iteration ledger in section4.17. This includes
+formulas and a persistent Excel iteration ledger in section4.17, extended with
+boost/cut algorithm explanations and executable sizing formulas in section4.18.
+This includes
 the tick-based percentile / relative-value entry research in section4.16.
 Section4.15 retains
 the higher-tax conviction sizing including 09:16, using annually fitted
@@ -673,6 +675,35 @@ The "pre-entry stability" inputs and the early-exit rules in v2 use these.
   monthly/quarterly/yearly/FY net and reset DD, inputs/coefficients and hashes.
   Both original799 and annual617 Python risk replays also pass. Evidence is
   stored in `verification.json`, `audit.json` and the ledger manifest.
+
+### 4.18 Boost/cut algorithms, priorities and executable Excel sizing
+
+- `SIZING_ALGORITHMS.md` explains21 algorithm families and the distinction
+  between prediction, gating, allocation, constraints and entry changes.
+  `sizing_algorithm_report.py` adds12 Algo_ sheets to the master ledger
+  (185 total), plus standalone explained/calculated Excel workbooks.
+- Latest annual research priority: warmup1; otherwise dicey0.85; otherwise
+  higher-tax CW conviction1.05/1.10; otherwise1. Risk wins over conviction.
+  Original taxes13/5/2/2/6 remain intact. 09:16 must pass original13 plus15/17
+  to boost; NW cannot receive CW-tax boosts but can receive risk cuts.
+- Higher-tax LUTs solve a monotone maximum-weight closure by minimum cut,
+  implemented with iterative Dinic flow. Weights are cents-rounded
+  total_post_cost_PnL - weighted_count*tax. Minimum anchor evidence and stage
+  cascade remain unchanged. This is a cell-membership gate, not probability.
+- Earlier historical priority uses shrunk-bucket S1 and ridge S2 profit scores,
+  dicey flags and low estimated loss risk. Strong eligible entries get priority
+  bounds; coordinate pattern search finds allocation coefficients; monotone
+  bounded projection enforces caps and exact historical mean1. Ordinary boosts
+  may simply fund mandatory cuts and are not strong-edge labels. Archived
+  09:16 boost bans remain unchanged; later annual permission is separate.
+- Reports include per-policy family mapping, version changes, branch priority,
+ 799 historical conviction gates,3,196 annual size decisions, and11,985 trade
+  allocations across15 optimized policies. Coefficients, common projection
+  offsets, lower/upper bounds, clipping status and reasons are explicit.
+- Spreadsheet-engine verification reproduces annual sizes exactly and final
+  optimized sizes within1e-14. All189 daily policy paths,20,223 period rows
+  and799 risk formulas remain verified. No refits, new optimization search,
+  strategy adoption, shared writes or live changes were performed.
 
 ## 5. Overall conclusion from the earlier studies
 
