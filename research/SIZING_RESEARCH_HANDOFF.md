@@ -3,9 +3,10 @@
 Updated 2026-10-15. The sizing studies through v6 and the preregistered
 relaxed-entry rerun are complete. The derived-strategy simulator remains a
 scaffold (see sections 4.9, 4.10, and 7). The latest owner request is the
-conviction-aware full-history optimization in section 4.14, which uses no
-60/20/20 split and enforces mean trade size 1. Sections 4.11 and 4.12 preserve
-the preceding unnormalized and normalized studies without mandatory risk cuts.
+higher-tax conviction sizing including 09:16 in section 4.15. It uses annually
+fitted past-only overlays and reports actual mean exposure. Earlier studies
+4.11–4.14 retain their historical full-fit normalization and no-09:16-boost
+rules; those are superseded for the latest experiment.
 
 ## 1. Goal
 
@@ -14,7 +15,7 @@ on high-opportunity days and falls on poor ones, plus a daily
 **opportunity tracker** that shows the reading behind that size.
 
 The owner's conditions for the original split-based studies (the current
-conviction-aware full-history analysis in section 4.14 supersedes the split):
+higher-tax overlay in section 4.15 replaces that protocol with prior-year fits):
 
 - **60 / 20 / 20 chronological split.** TRAIN is the first 60 % of days,
   VALIDATION the next 20 %, TEST the last 20 %. Every number is fitted on
@@ -518,6 +519,55 @@ The "pre-entry stability" inputs and the early-exit rules in v2 use these.
   checks pass. Full-history fitting/normalization remains in sample, with
   the same linear cost/PnL scaling limitations and no live changes.
 
+### 4.15 Higher-tax conviction, including 09:16 (latest owner override)
+
+- The owner explicitly permits a modest boost on a strong 09:16 entry,
+  overriding the prior blanket ban, while keeping the original tax 13.
+  Preserve the complete base vector **(13,5,2,2,6)** and legacy entry LUTs.
+- `higher_tax_sizing.py` builds a separate monotone min-cut conviction layer
+  at tax increments **+2/+4**: vectors (15,7,4,4,8) and (17,9,6,6,10).
+  A base-approved cell must additionally survive the corresponding stronger
+  tax. Boost candidates are **1.05/1.10**, including at 09:16. Dicey flags
+  always override conviction, setting size **0.85**. NW has no CW-tax boost.
+- `HIGH_TAX_CONVICTION_SPEC.md` fixes the experiment before evaluation. Each
+  year's high-tax masks, risk models, imputations/scales, empirical rank
+  distributions and risk thresholds fit on prior years only. Outcome-fitted
+  S1/S2 scores and future-period normalization are excluded. 2021's 182
+  entries are warmup; 617 entries from 2022 onward receive past-only scores.
+- Counterfactual source: read-only round48 no-roll ps1 cache, 1,373 days
+  through 2026-08-19. Production bucket axes, veto, entry cutoffs, event
+  weights and modeled entry/hedge costs are retained. 2026 masks fit only
+  through 2025-12-31. Existing base LUTs predate this refit and remain fixed.
+- `lut_tax_closure.py` solves the same maximum-weight monotone closure as the
+  original generator, using observed-node compression and iterative Dinic
+  flow. It preserves cents rounding, minimum anchor evidence 1 and stage
+  cascading. Exact objectives match brute-force tiny graph enumeration;
+  tests also cover tax nesting and fractional event-only anchor exclusion.
+- On scored 2022+ entries, flat net/DD is **7,593.21/144.37**. +2 with boost
+  1.05 gives **7,409.32/144.15**, actual mean **0.9743**. +2 with boost 1.10
+  gives **7,519.15/149.90**, mean **0.9912**. +4 with 1.05 gives
+  **7,395.19/144.15**, mean **0.9718**; +4 with 1.10 gives
+  **7,490.89/149.90**, mean **0.9861**. **None improves flat profit and
+  profit/DD together.** Do not adopt based on the earlier full-fit gains.
+- 09:16 boosts now occur: **66** under +2 and **61** under +4. Example:
+  2022-01-13 passes base tax 13 plus the past-fitted tax-15 gate, is not
+  dicey, and receives 1.10 in that candidate. Stronger hurdle is a research
+  definition, not proof of reliable future edge.
+- This is a **conditional sizing overlay**, not a causal end-to-end strategy
+  result: the fixed base LUTs used wider history, and original cached feature
+  timestamps/fill assumptions have not been certified. The forward overlay
+  avoids its own future fitting but cannot undo base-entry selection bias.
+- Exact mean 1 over unknown future trades is not asserted. These candidates
+  report their actual means and include an ex-post constant-size comparison
+  at the same realized mean; that diagnostic is not a live sizing decision.
+  Earlier normalized research reports remain archived, not live policies.
+- Outputs in `output/higher_tax_sizing/`: comparisons for all 799 entries,
+  workbook with full-history and scored-period statistics, stage/year
+  attribution, training cutoffs, five prior-only risk model JSON files, ten
+  higher-tax mask NPZs, summary and source hashes. Seven new tests plus
+  independent model/mask/cutoff/PnL/DD/mean/hash replay checks pass. No live
+  or shared-input edits; saved net PnL/costs still scale linearly.
+
 ## 5. Overall conclusion from the earlier studies
 
 The working answer is: keep the book at base size 1 and only cut size on
@@ -539,7 +589,7 @@ The book's edge looks fairly uniform across these readings. The only
 consistent pattern is "rich IV vs recent RV leads to more stop-outs", which
 is a risk effect, not a profit-ranking one.
 
-The owner-approved operational rule is now:
+The owner-approved rule at that earlier stage was:
 
 - base size = 1
 - cut only on poor days
@@ -575,9 +625,10 @@ and writes its own report workbook. They run in seconds;
 
 ## 7. Open point: what to do next
 
-Sections 4.9 and 4.11–4.14 are complete. The latest focus is DD-first GammaShort
-sizing with mandatory dicey cuts, modest risk-gated conviction boosts, exact
-mean-one allocation and trade comparisons; neural
+Sections 4.9 and 4.11–4.15 are complete. The latest focus is stronger-tax
+conviction including 09:16, with mandatory dicey cuts, modest boosts and
+past-only overlay fitting. Full end-to-end causal verification remains open;
+neural
 directional research is deferred. The following are separate optional hypotheses, not
 selected operating rules:
 

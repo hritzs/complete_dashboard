@@ -1,0 +1,40 @@
+{
+  "Input_sha256": {
+    "/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/higher_tax_sizing.py": "cd301ec5762a90a6901aec090e08cca2beb9df429d899246459bf96125a2feb0",
+    "/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/lut_tax_closure.py": "ee1ff5aff9cf3936410daeaae7581441dd1f34229280b715be46f6290fe7cfb6",
+    "/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/HIGH_TAX_CONVICTION_SPEC.md": "36cddbb94e84eacece776329752bbef38a2b6a7bf1605fb8ed8195cba7bc1d29",
+    "/mnt/shared/GammaShortData/GammaShort/round48_noroll/sim_cache.pkl": "c24e08daa3c1d4d533e11efd59d9beebddb4e3302f273890020bb6b8a98652f1",
+    "/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/output/entry_window_features.csv": "9181b8aaa224e015a034e5fd73c293f910c3fbd93f5c1a65377801e8fffe8874",
+    "/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/sizing_full_history.py": "3117811cf32fdf757873822115bfdfd5199db800fb97ca3ff7fab8e89ec0e4c1",
+    "/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/sizing_drawdown_risk.py": "d93c381d41cf2df94739be73e86c0d937fa98611cb7f65686de7e61e8ac9e017",
+    "/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/GammaShort_Backtest_Final.py": "debb230a3eeb1fa6ffbdafb7ac8a99f328e01857bab11939dd652aafb4a0ce75",
+    "/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/sizing_vrp.py": "ea2b53aabdfee5af3749c552fa79a47c9cd5040ee097c0efca1ce39fe18125cb",
+    "/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/sizing_v5_capped.py": "4401b79a7caff06b37203cd968edc75aa52d7149c565e6e7164db8b0470d2de2",
+    "/mnt/shared/Hardik/Project_Codes/GammaShortDailyProcess/GammaShortDailydata.csv": "70b3293e8ef0b67910535cae7cb9190b26975b3a36b6ed625471c855efe0ea07",
+    "/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/output/backtest_final/run_027bf0249b/daily_log.csv": "9a5db100492739058a15ffefa15c68b917bf158b49874839a763be2fe29edf88",
+    "/mnt/shared/GammaShortData/GammaShort/LUTS_r46V2_cwnw_adj007_005_T13_5_2_2_6/LUT_0916.csv": "807319199a93e6cf5a5ee9833ee55253cd86aaa471a71e6df236df0e061815c4",
+    "/mnt/shared/GammaShortData/GammaShort/LUTS_r46V2_cwnw_adj007_005_T13_5_2_2_6/LUT_0917.csv": "2d3814e7db0bccec8a5468160047dbfb5a9f0beb5589913499bec14f20bda48f",
+    "/mnt/shared/GammaShortData/GammaShort/LUTS_r46V2_cwnw_adj007_005_T13_5_2_2_6/LUT_0918.csv": "3293771ec1eb80089512ebca55adb1c25b26673fadda200e0e0fba7e97afff37",
+    "/mnt/shared/GammaShortData/GammaShort/LUTS_r46V2_cwnw_adj007_005_T13_5_2_2_6/LUT_0919.csv": "3d0c637ac2880ed2feba244ee5b94a9c13190c52e2eb47b7003f0ce60e8400da",
+    "/mnt/shared/GammaShortData/GammaShort/LUTS_r46V2_cwnw_adj007_005_T13_5_2_2_6/LUT_0920_Onwards.csv": "131d9a1140f00c36df7b3d0c81df5aad455445230fe8260442cc76de0492be0d"
+  },
+  "Daily_pickles_sha256": "a5d86cd774749405cb5841c7f6c7754c430d90da32c48fa12afe32972a57eeb7",
+  "Base_taxes": [
+    13,
+    5,
+    2,
+    2,
+    6
+  ],
+  "Deltas": [
+    2,
+    4
+  ],
+  "Boosts": [
+    1.05,
+    1.1
+  ],
+  "Cache_last_day": "2026-08-19",
+  "Entry_rows": 799,
+  "Scope": "Past-only overlay conditional on legacy base entry list"
+}

@@ -2,7 +2,17 @@
 
 Research is isolated under `research/`. Do not translate a research result into `services/` or `ui/` without the owner's explicit direction.
 
-## Latest request: trade comparison and modest strong-edge boosts
+## Latest request: higher-tax conviction, including 09:16 boosts
+
+The owner explicitly permits a modest 09:16 boost when conviction is strong, superseding the prior blanket no-boost rule. Keep original entry LUT taxes **(13,5,2,2,6)**. `higher_tax_sizing.py` adds separately fitted conviction masks at +2 and +4: 09:16 must first pass the base tax 13 and then tax 15 or 17 to get a 5% or 10% boost. Dicey sizing at 0.85 always overrides conviction. The other CW stages use their own unchanged base tax plus the same additional hurdle. NW receives no CW-tax boost.
+
+This experiment uses annually fitted **past-only sizing overlays**: risk models/scalers/rank references and higher-tax min-cut masks are fitted through the prior year. The 182 entries in 2021 are warmup at size 1; 617 entries from 2022 onward are scored. There is no future whole-period normalization: actual mean is reported. This remains conditional on the legacy fixed entry list, whose base LUTs used broader history; it is not a leakage-free end-to-end strategy replay.
+
+Results do not support adopting any of the four fixed candidates over flat. On scored 2022+ entries, flat net/DD is 7,593.21/144.37. Tax +2 with boost 1.10 gives 7,519.15/149.90, mean 0.9912; tax +4 with boost 1.10 gives 7,490.89/149.90, mean 0.9861. The 1.05 versions reduce net further with only marginally lower DD. There are 66 boosted 09:16 entries under +2, and 61 under +4. Higher tax alone is not proof of a future edge.
+
+Artifacts: `output/higher_tax_sizing/` includes all-trade comparisons, workbook, training cutoffs, five prior-only risk-model artifacts, ten higher-tax LUT artifacts, summary and input hashes. `HIGH_TAX_CONVICTION_SPEC.md` fixed the experiment before evaluation. Seven new tests cover exact min-cut versus brute force, anchor evidence, risk override, prior-only fitting and empirical ranks; independent artifact checks verify all dates, masks, models, PnL, DD, means and hashes. No live service changes.
+
+## Previous request: trade comparison and modest strong-edge boosts
 
 The owner requested a trade-by-trade comparison and modest boosts when estimated edge is strong. `CONVICTION_SIZING_SPEC.md` fixed the gate/profiles before evaluating the new policy. Reuse the frozen DD-risk inputs/flags: CW S1 upper tercile + S2 at least CW median, estimated loss probability <= book median, and no dicey flag. There are 166 strong-estimate entries, of which 134 are blocked by the 09:16 no-boost rule and 32 can be boosted. NW has no equivalent two-score conviction label.
 
@@ -36,8 +46,8 @@ The 66-candidate comparison is explicitly in sample. Flat net/MDD is 10,522.04 /
 
 ## Current operating conclusion
 
-- Research now redistributes size above and below 1 with exact mean 1, floor 0.75 and cap 1.15. Previous live operating conclusion remains flat pending a separate implementation decision.
-- The latest research explicitly normalizes average trade size to 1; never boost the 09:16 table. Archived split-based studies and their earlier no-rescaling restriction remain historical records. The current analysis has no split and reports full-history metrics.
+- Base benchmark is size 1. Research size limits remain 0.75–1.15; the latest past-only overlay uses risk size 0.85 and modest boosts 1.05/1.10, reporting its actual mean. Previous live operating conclusion remains flat pending a separate implementation decision.
+- The latest owner instruction allows 09:16 boosts only after the original tax-13 entry gate and a stronger-tax conviction gate, with risk cuts taking priority. The latest past-only overlay reports actual average exposure; exact future mean 1 cannot be forced without lookahead. Previous no-09:16-boost and full-history normalization studies remain archived.
 - Current decision is flat. No completed sizing study has established a reliable out-of-sample improvement.
 
 ## Completed studies

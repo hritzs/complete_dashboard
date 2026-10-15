@@ -2,7 +2,25 @@
 
 Updated 2026-10-15. This is offline research; it contains no authorization to change live trading behavior.
 
-## Latest: trade comparison and modest conviction boosts
+## Latest: stronger-tax conviction with 09:16 boosts allowed
+
+The owner superseded the previous blanket 09:16 no-boost restriction. Original entry taxes remain (13,5,2,2,6). The new conviction layer fits tax increments +2/+4, so a base-approved 09:16 entry must additionally survive tax 15/17 before receiving size 1.05/1.10. Risk flags override the boost and enforce 0.85. The higher-tax model is an additional gate; the original tax is neither removed nor charged against reported PnL.
+
+`higher_tax_sizing.py` fits every year's additional LUTs and risk models using completed prior years only; full-history S1/S2 predictors and future normalization are excluded. The 2021 warmup has 182 size-1 entries; the forward overlay has 617 entries from 2022 onward. Base entries still come from the legacy wider-history LUTs and existing cached features/execution, so this is a **conditional sizing-overlay check, not an end-to-end leakage-free strategy result**.
+
+| Scored period 2022+ | Net | MDD | Actual mean size | Boosted 09:16 entries |
+|---|---:|---:|---:|---:|
+| Flat | 7,593.21 | 144.37 | 1.0000 | 0 |
+| Higher tax +2, boost 1.05 | 7,409.32 | 144.15 | 0.9743 | 66 |
+| Higher tax +2, boost 1.10 | 7,519.15 | 149.90 | 0.9912 | 66 |
+| Higher tax +4, boost 1.05 | 7,395.19 | 144.15 | 0.9718 | 61 |
+| Higher tax +4, boost 1.10 | 7,490.89 | 149.90 | 0.9861 | 61 |
+
+None improves flat on both profit and profit/DD. This supersedes optimistic interpretations of the earlier full-history fits; it does not prove high-tax conviction is a profitable live sizing signal. Actual means are reported without future balancing. The workbook includes same-average constant-size diagnostics, explicitly ex post.
+
+See `higher_tax_sizing/higher_tax_comparison.xlsx`, `trade_comparison.csv`, `training_cutoffs.csv`, fold-specific risk JSON and higher-tax LUT NPZ files, summary and manifest. The min-cut solver in `../lut_tax_closure.py` is verified against brute-force tiny closures and preserves minimum weighted anchor evidence 1. Seven new tests and independent artifact checks pass. Shared files and live services remain unchanged.
+
+## Previous: trade comparison and modest conviction boosts
 
 The same 799 entries now have a complete flat/previous-DD/new-policy trade comparison. The predeclared strong-edge gate is CW S1 upper tercile + S2 >=CW median + low estimated loss probability + no dicey flag. Of 166 strong estimates,134 are at 09:16 and remain blocked;32 qualify for a modest boost. The feasible profile enforces strong 1.10–1.15, ordinary <= 1.10, dicey 0.75–0.85, 09:16 <= 1, and exact mean 1. Its high-conviction size averages 1.1406. The gentler profile cannot fund mandatory cuts while restoring mean 1 and is explicitly infeasible (maximum budget 792.35 vs 799 required).
 
@@ -60,7 +78,7 @@ No variation beats flat on both net and net/MDD. Units are normalized Rs. The an
 
 ## Current decision
 
-The previous live operating conclusion remains flat at size 1. Current research permits normalized size redistribution with mean 1, max 1.15, and no boosting of the 09:16 table. Archived split-based studies required beating flat on both validation net and net/MDD. The latest full-history research above uses no split and is not a live implementation.
+The previous live operating conclusion remains flat at size 1. Current research permits modest 09:16 boosts after both the unchanged base tax-13 gate and a stronger-tax gate, with risk cuts taking priority. Latest overlay models fit only prior years and report actual mean exposure. Earlier exact-mean normalization and no-09:16-boost studies remain historical records. No live sizing change is implemented.
 
 ## What the studies found
 
