@@ -1,0 +1,7 @@
+{
+  "Rows": 720,
+  "Feature_sha256": "b8b591bb3ce147f0ecb8ba3f6a4d840405cbc0bf39d8b0d49316c0c232f015e1",
+  "Code_sha256": "185d4318af363a0ea6c3eae6b75e647f225a176c49b0c326615f35fc767ca725",
+  "Source_fingerprints": "size/mtime/row count only; full tick payloads are not hashed",
+  "Decision_policy": "Time_dt strictly before decision; no backfill; as-of quote age<=3s"
+}

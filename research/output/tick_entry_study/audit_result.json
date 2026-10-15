@@ -1,0 +1,19 @@
+{
+  "Status": "PASS",
+  "Days": 1430,
+  "Base_entries": 799,
+  "CW_features": 720,
+  "Valid_CW_features": 716,
+  "Policies": 9,
+  "Threshold_rows_verified": 312,
+  "Checks": [
+    "raw base replay",
+    "strict tick cutoffs",
+    "prior-only quantiles",
+    "NW and warmup invariance",
+    "skip and delay gates/PnL",
+    "independent sequential DD",
+    "counts and attribution",
+    "input/output SHA256"
+  ]
+}

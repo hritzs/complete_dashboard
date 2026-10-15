@@ -2,7 +2,37 @@
 
 Research is isolated under `research/`. Do not translate a research result into `services/` or `ui/` without the owner's explicit direction.
 
-## Latest request: higher-tax conviction, including 09:16 boosts
+## Latest request: tick-based percentile / relative-value entry research
+
+Completed the eight fixed entry hypotheses in `TICK_ENTRY_SPEC.md` using fresh
+strictly-before-entry tick features. `tick_entry_features.py` extracted all720 CW
+dates (716 usable); the 2022+ score covers617 base entries, including550 CW
+(547 usable) and67 unchanged NW. No live changes. Keep original LUT taxes
+(13,5,2,2,6), saved exits/costs and event weights; use size multiplier1 to isolate
+entry effects. 2021 is warmup; annual spread/stress cutoffs use prior years only.
+
+None improves both net and net/DD. Flat2022+ net/MDD is7593.21/144.37;
+P20 is5992.09/173.71; P10 is6560.90/153.02. Delaying cheap-looking early
+entries one minute gives7362.48/139.86 (128 delays,4 skips): lower DD but
+3.04% less net. The delay's net placebo tail fraction .047 becomes .376 after
+eight-rule correction; this does not establish robust new profit alpha.
+Two call and two put apparent butterfly credits occur in scored observations;
+they do not establish executable arbitrage. No candidate is adopted.
+
+Artifacts: `output/tick_entry_study/REPORT.md`, comparison workbook with curves,
+all799-trade CSV, coverage/year/stage attribution, thresholds, 1,000 randomized
+trigger allocations per rule, apparent butterfly candidates, source hashes and
+`audit_result.json`. Eleven tests pass, plus independent raw-PnL, DD, gate,
+cutoff, NW/warmup invariance and hash checks. Reproduction: run feature extraction,
+`tick_entry_eval.py`, then `tick_entry_audit.py` with `.venv/bin/python`.
+
+Important limit: fresh overlay features and annual cutoffs are past-only, but
+legacy base LUTs used broader history and saved fills are not certified causal.
+This is conditional entry-overlay research, not a clean end-to-end strategy or
+a continuously scanned statistical-arbitrage backtest. Missing features retain
+the original trade; no future normalization, later re-scan or NW fallback occurs.
+
+## Previous request: higher-tax conviction, including 09:16 boosts
 
 The owner explicitly permits a modest 09:16 boost when conviction is strong, superseding the prior blanket no-boost rule. Keep original entry LUT taxes **(13,5,2,2,6)**. `higher_tax_sizing.py` adds separately fitted conviction masks at +2 and +4: 09:16 must first pass the base tax 13 and then tax 15 or 17 to get a 5% or 10% boost. Dicey sizing at 0.85 always overrides conviction. The other CW stages use their own unchanged base tax plus the same additional hurdle. NW receives no CW-tax boost.
 

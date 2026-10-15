@@ -2,7 +2,45 @@
 
 Updated 2026-10-15. This is offline research; it contains no authorization to change live trading behavior.
 
-## Latest: stronger-tax conviction with 09:16 boosts allowed
+## Latest: tick-based entry filters and one-minute delay
+
+Eight fixed hypotheses in `../TICK_ENTRY_SPEC.md` were evaluated on the frozen
+GammaShort book. New features use only ticks strictly earlier than entry, a
+pre-decision ATM strike, backward as-of quotes (max age3s), no backfill, and
+prior-year-only across-day thresholds. Original LUT taxes (13,5,2,2,6), event
+weights, size multiplier1, saved exits/costs and NW entries are retained.
+2021 is warmup. Of720 CW dates,716 have usable features; scored2022+ has617
+base entries, with547/550 CW dates feature-covered and67 NW unchanged.
+
+| Scored 2022+ rule | Net | MDD | Net/MDD | Skips | Delays |
+|---|---:|---:|---:|---:|---:|
+| Original entries |7593.21|144.37|52.60|0|0|
+| Avoid premium percentile below20% |5992.09|173.71|34.50|105|0|
+| Avoid premium percentile below10% |6560.90|153.02|42.88|66|0|
+| Delay cheap-looking early entries1min |7362.48|139.86|52.64|4|128|
+
+None of the eight improves both net and net/DD with worst day no worse. The
+delay reduces net3.04% and DD3.12%, while worst day improves from-61.28 to-55.77.
+Its random-trigger net tail fraction is .047, rising to .376 after an eight-rule
+correction. Percentile rejection and the tested residual/spread/stress filters
+do not establish a new profit edge. Keep the existing entry rule.
+
+The butterfly diagnostic finds two positive call and two positive put quote
+credits in scored observations. These are apparent quotes, not executable
+arbitrage: whole lots, fees, quote simultaneity and all-leg fills are unresolved.
+The residual model is a local price indicator; mean reversion itself has not
+been established. Past-only ATM differs from saved fill strike on17 valid days.
+
+`tick_entry_study/REPORT.md` and `tick_entry_comparison.xlsx` contain all eight
+results, full and scored periods, curves, all799 trades, matched coverage,
+year/stage attribution, training thresholds and 1,000 matched random-trigger
+allocations per rule. Eleven tests and the independent artifact audit pass.
+`audit_result.json` and `manifest.json` retain validation and hashes. No live
+or shared-input changes. **Conditional entry-overlay study only:** legacy LUTs
+used broader history and saved fill assumptions remain uncertified, so this
+does not establish leakage-free end-to-end performance or live statistical arb.
+
+## Previous: stronger-tax conviction with 09:16 boosts allowed
 
 The owner superseded the previous blanket 09:16 no-boost restriction. Original entry taxes remain (13,5,2,2,6). The new conviction layer fits tax increments +2/+4, so a base-approved 09:16 entry must additionally survive tax 15/17 before receiving size 1.05/1.10. Risk flags override the boost and enforce 0.85. The higher-tax model is an additional gate; the original tax is neither removed nor charged against reported PnL.
 

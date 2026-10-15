@@ -2,9 +2,10 @@
 
 Updated 2026-10-15. The sizing studies through v6 and the preregistered
 relaxed-entry rerun are complete. The derived-strategy simulator remains a
-scaffold (see sections 4.9, 4.10, and 7). The latest owner request is the
-higher-tax conviction sizing including 09:16 in section 4.15. It uses annually
-fitted past-only overlays and reports actual mean exposure. Earlier studies
+scaffold (see sections 4.9, 4.10, and 7). The latest owner request is tick-based
+percentile / relative-value entry research in section 4.16. Section4.15 retains
+the higher-tax conviction sizing including 09:16, using annually fitted
+past-only overlays and actual mean exposure. Earlier studies
 4.11–4.14 retain their historical full-fit normalization and no-09:16-boost
 rules; those are superseded for the latest experiment.
 
@@ -568,6 +569,58 @@ The "pre-entry stability" inputs and the early-exit rules in v2 use these.
   independent model/mask/cutoff/PnL/DD/mean/hash replay checks pass. No live
   or shared-input edits; saved net PnL/costs still scale linearly.
 
+### 4.16 Tick-based percentile and relative-value entry study
+
+- The owner asks whether existing tick data can improve entries using statistical
+  arbitrage or percentiles. `TICK_ENTRY_SPEC.md` fixes eight hypotheses before
+  performance scoring. `tick_entry_features.py` reads only the share, writes
+  local research outputs, and uses strictly pre-decision timestamps. Features
+  select ATM from the last known underlying, retain that strike throughout the
+  lookback, use backward as-of snapshots with age<=3s, and never backfill.
+- Signals:60-second sellable-premium midrank percentile (constant=0.5), local
+  straddle residual against underlying/quadratic/time fitted outside the final
+  five seconds, spread%, underlying range, premium change, and neighboring
+  call/put butterfly quote credits. The residual is not proven mean reversion;
+  butterfly quotes are not completed arbitrage trades.
+- All720 CW dates extracted;716 have usable features. Unavailable dates:
+  2021-01-21 and2025-04-07 (missing ATM legs),2024-09-16 and2026-06-02
+  (stale/invalid current quotes). Features at17 valid entries select a different
+  past-only ATM from the saved fill strike. Missing feature rules keep the
+  original trade. Scored2022+ contains617 original entries (550CW,67NW),
+  with547 usable CW features. 2021 is warmup. Quantile90 thresholds fit only
+  earlier completed years, same-stage/DTE if n>=30, otherwise pooled CW n>=60.
+- Hold original taxes **(13,5,2,2,6)**, event weights, saved costs/exits and NW
+  entries fixed, with multiplier1. Entry rejection skips CW for the day, without
+  simulating later re-scans or NW fallback. Delaycheap defers adverse09:16/17
+  signals one minute only when the saved next-minute LUT gate passes; otherwise
+  skips. No future whole-period normalization or sizing boosts are introduced.
+- Scored2022+ flat net/MDD/net-per-DD: **7593.21/144.37/52.60**. P20 gives
+  **5992.09/173.71/34.50**, P10 **6560.90/153.02/42.88**. Rcheap, Rrich,
+  Lspread, Mstress and Combined also fail the fixed qualification (net and
+  net/DD above flat, worst day no worse). **None is adopted.**
+- Delaycheap gives **7362.48/139.86/52.64**, worst day **-55.77** vs flat
+  **-61.28**;128 delays and4 skips. Net falls3.04%, DD falls3.12%: a risk/profit
+  tradeoff, not improved total profit. Its net random-trigger tail fraction is
+  **.047**, or **.376** with eight-rule correction. The1,000 allocations per
+  candidate preserve trigger counts by calendar-year/original-stage/DTE and
+  feature availability. This remains exploratory and does not cover all past
+  experiments or repair the legacy LUT selection bias.
+- The scored observations include two positive call and two positive put
+  butterfly quote credits. Quantity/age/skew checks are only preliminary;
+  contract lots, costs, simultaneous execution and all-leg fill probabilities
+  remain unresolved. No continuously scanned statistical-arbitrage strategy,
+  cross-expiry hedge or delta-neutral residual trading was backtested here.
+- Artifacts under `output/tick_entry_study/`: report, workbook with equity/DD
+  curves, all799-trade and1430-day comparisons, full/scored statistics,
+  coverage/matched-coverage, stage/year attribution, past-only cutoffs, placebo
+  checks, apparent butterfly candidates, feature/source hashes and audit JSON.
+  Eleven tests pass; `tick_entry_audit.py` independently verifies raw PnL,
+  sequential DD, gates,312 recorded thresholds, NW/warmup invariance and hashes.
+- This is **conditional entry-overlay research**, not certified end-to-end
+  causal performance. Legacy LUTs used broader history, saved fills remain
+  uncertified, and stored tick timestamps are assumed to reflect availability.
+  No shared files, live services, UI, credentials or live positions changed.
+
 ## 5. Overall conclusion from the earlier studies
 
 The working answer is: keep the book at base size 1 and only cut size on
@@ -611,6 +664,11 @@ cd research
 ./.venv/bin/python sizing_v4_params.py
 ./.venv/bin/python sizing_v5_capped.py
 ./.venv/bin/python sizing_v6_borderline.py
+# tick entry study (shared tick inputs are read-only):
+./.venv/bin/python tick_entry_features.py --workers 8
+./.venv/bin/python tick_entry_eval.py
+./.venv/bin/python tick_entry_audit.py
+./.venv/bin/python -m unittest discover -p 'test_tick_entry*.py'
 # relaxed intraday entry (about 75 min; separate output folder):
 GS_RELAX=1 GS_OUTPUT_DIR=$PWD/output/backtest_relax GS_TICK_DIR=/mnt/shared/TickDataIV \
   GS_LUT_DIR=/mnt/shared/GammaShortData/GammaShort/LUTS_r46V2_cwnw_adj007_005_T13_5_2_2_6 \
@@ -625,9 +683,11 @@ and writes its own report workbook. They run in seconds;
 
 ## 7. Open point: what to do next
 
-Sections 4.9 and 4.11–4.15 are complete. The latest focus is stronger-tax
-conviction including 09:16, with mandatory dicey cuts, modest boosts and
-past-only overlay fitting. Full end-to-end causal verification remains open;
+Sections 4.9 and 4.11–4.16 are complete. The latest tick-entry comparison finds
+no rule improving both total net and net/DD; keep the current entry rule.
+The one-minute delay's small DD gain comes with lower profit and weak corrected
+placebo evidence. Higher-tax sizing including09:16 also failed flat qualification.
+Full end-to-end causal verification remains open;
 neural
 directional research is deferred. The following are separate optional hypotheses, not
 selected operating rules:
