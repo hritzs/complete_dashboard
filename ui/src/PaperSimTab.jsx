@@ -374,8 +374,13 @@ export default function PaperSimTab(props) {
         if (sel() !== 'overview' && !(d.sims || []).some((s) => s.config.id === sel())) setSel('overview');
         if (wantSel && d.day === wantDay) {
           // "Sim" from a portfolio row: open that trade's own simulation.
-          if ((d.sims || []).some((s) => s.config.id === wantSel)) setSel(wantSel);
-          else setMsg(`No simulation for ${wantSel.replace(/^ACTUAL-/, '')} on ${wantDay}`);
+          // A trade built by the LUT at its first YES has no table of its
+          // own: the server points it at the LUT table (actual[].sim_id).
+          const uid = wantSel.replace(/^ACTUAL-/, '');
+          const alias = (d.actual || []).find((a) => a.trade_uid === uid)?.sim_id;
+          const target = (d.sims || []).some((s) => s.config.id === wantSel) ? wantSel : alias;
+          if (target && (d.sims || []).some((s) => s.config.id === target)) setSel(target);
+          else setMsg(`No simulation for ${uid} on ${wantDay}`);
           wantSel = null;
         }
       } else setMsg(d.error || 'failed');

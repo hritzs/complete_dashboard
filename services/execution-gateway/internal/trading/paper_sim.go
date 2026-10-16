@@ -1298,6 +1298,42 @@ func (s *Service) paperActuals(ctx context.Context, day string) []PaperActual {
 	return out
 }
 
+// sameSimAs returns the id of an already-run LUT table (LUT-*) that is the
+// very simulation c would produce -- same entry minute and strike, same
+// resolved SL / TP / exit time, hedge rule, band, divisors and MTM rule (and
+// lots unless the view is per straddle) -- or "" when there is none.
+func sameSimAs(done []PaperSimResult, c PaperSimConfig, unit bool) string {
+	want := paperDefaults(c)
+	hhmm := func(s string) string {
+		if s = strings.TrimSpace(s); len(s) > 5 {
+			return s[:5]
+		}
+		return s
+	}
+	for _, r := range done {
+		lc := r.Config
+		if !strings.HasPrefix(lc.ID, "LUT-") || r.Status == "NO DATA" {
+			continue
+		}
+		switch {
+		case hhmm(lc.Entry) != hhmm(want.Entry),
+			want.Strike > 0 && r.Strike != want.Strike,
+			c.SLBps > 0 && lc.SLBps != want.SLBps,
+			want.TPBps > 0 && r.TPBps != want.TPBps,
+			hhmm(lc.ExitTime) != hhmm(want.ExitTime),
+			hedgeRuleFor(lc.HedgeRule).Key != hedgeRuleFor(want.HedgeRule).Key,
+			lc.PointsAllowed != want.PointsAllowed,
+			lc.HedgeMode != want.HedgeMode,
+			lc.StraddleDiv != want.StraddleDiv || lc.HedgeDiv != want.HedgeDiv || lc.HedgeMinBps != want.HedgeMinBps,
+			lc.MTMSqfOn != want.MTMSqfOn || lc.MTMSqfLevel != want.MTMSqfLevel || lc.MTMSqfUnit != want.MTMSqfUnit || lc.MTMSqfPct != want.MTMSqfPct,
+			!unit && lc.Lots != want.Lots:
+			continue
+		}
+		return lc.ID
+	}
+	return ""
+}
+
 // PaperSimHandler: GET /api/paper/sim?day=&lots=&hedge=1
 func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
@@ -1444,6 +1480,10 @@ func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 	paperMu.Unlock()
 	hiddenN := 0
 	var sims []PaperSimResult
+	actualIdx := map[string]int{}
+	for i := range actual {
+		actualIdx[actual[i].SimID] = i
+	}
 	for _, c := range cfgs {
 		if hidden[view+"|"+c.ID] {
 			hiddenN++
@@ -1454,6 +1494,15 @@ func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if c.HedgeRule == "" { // the chosen set's hedge (a sim-driven trade keeps the driving set's)
 			c.HedgeRule = sets.Tables
+		}
+		// A real trade whose simulation would be the LUT table's own (the LUT
+		// build at its first YES: same entry, strike, SL / TP, exit, band)
+		// is not run a second time -- it points at that table instead.
+		if i, ok := actualIdx[c.ID]; ok {
+			if lut := sameSimAs(sims, withMTM(c), unit); lut != "" {
+				actual[i].SimID = lut
+				continue
+			}
 		}
 		cm := mins
 		if strings.HasPrefix(c.Source, "simulation that drove ") && view == "" {

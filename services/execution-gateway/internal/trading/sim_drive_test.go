@@ -118,3 +118,33 @@ func TestLegFlowsWingSplit(t *testing.T) {
 		t.Fatal("a leg without a split keeps its blended entry")
 	}
 }
+
+// A sim-driven LUT trade built at the LUT's first YES is the LUT table's own
+// simulation: it points there instead of running a second identical one.
+// Anything that changes the outcome keeps its own table.
+func TestSameSimAs(t *testing.T) {
+	lut := PaperSimResult{Status: "OPEN", Strike: 22950, TPBps: 20,
+		Config: paperDefaults(PaperSimConfig{ID: "LUT-NEW", Entry: "09:17", HedgeMode: "synthetic", HedgeRule: "new"})}
+	drive := PaperSimConfig{ID: "ACTUAL-T", Entry: "09:17", Lots: 192, HedgeMode: "synthetic", ExitTime: "15:37:00",
+		SLBps: 14, TPBps: 20, Strike: 22950, HedgeRule: "new"}
+	if got := sameSimAs([]PaperSimResult{lut}, drive, true); got != "LUT-NEW" {
+		t.Fatalf("identical setup: got %q, want LUT-NEW", got)
+	}
+	for name, mod := range map[string]func(*PaperSimConfig){
+		"other entry":  func(c *PaperSimConfig) { c.Entry = "09:42" },
+		"other strike": func(c *PaperSimConfig) { c.Strike = 23000 },
+		"other TP":     func(c *PaperSimConfig) { c.TPBps = 25 },
+		"other exit":   func(c *PaperSimConfig) { c.ExitTime = "15:00" },
+		"test band":    func(c *PaperSimConfig) { c.PointsAllowed = 30 },
+		"old rule":     func(c *PaperSimConfig) { c.HedgeRule = "old" },
+	} {
+		c := drive
+		mod(&c)
+		if got := sameSimAs([]PaperSimResult{lut}, c, true); got != "" {
+			t.Fatalf("%s: got %q, want its own table", name, got)
+		}
+	}
+	if got := sameSimAs([]PaperSimResult{lut}, drive, false); got != "" {
+		t.Fatalf("rupee view with other lots: got %q, want its own table", got)
+	}
+}

@@ -2921,6 +2921,14 @@ function App() {
                           if (value != null && Number.isFinite(Number(value))) return Number(value);
                           return item.points_allowed ?? item.pointsAllowed ?? 0;
                         };
+                        // Points out as a share of allowed: green below 70 %,
+                        // yellow 70-100 %, red above 100 % (a minute-end hedge is due).
+                        const outRatio = () => (Number(pointsAllowed()) > 0 ? Number(pointsOut()) / Number(pointsAllowed()) : 0);
+                        const outStyle = () => {
+                          const r = outRatio();
+                          return { color: r > 1 ? "#e66767" : r >= 0.7 ? "#e6b800" : "#4caf50", "font-weight": 600 };
+                        };
+                        const outTitle = () => `${fmt(outRatio() * 100, 0)}% of allowed (green < 70 %, yellow 70-100 %, red > 100 %)`;
 
                         // Pushed live from executeBuild over the straddle_update
                         // websocket while status is BUILDING (see build_orders_submitted/
@@ -2968,8 +2976,8 @@ function App() {
                               <td style={{ padding: "10px" }} title={splitOf("PE")}>{qtyText(peQty())}</td>
                               <td style={{ padding: "10px" }}>₹{fmt(peLtp(), 2)}</td>
                               <td style={{ padding: "10px" }}>{fmt(netDelta(), 4)}</td>
-                              <td style={{ padding: "10px" }}>{fmt(pointsOut(), 2)}</td>
-                              <td style={{ padding: "10px" }}>{fmt(pointsAllowed(), 2)}</td>
+                              <td style={{ padding: "10px", ...outStyle() }} title={outTitle()}>{fmt(pointsOut(), 2)}</td>
+                              <td style={{ padding: "10px", ...outStyle() }} title={outTitle()}>{fmt(pointsAllowed(), 2)}</td>
                               <td style={{ padding: "10px" }}>{hedgeCount()}</td>
                               
                               
@@ -2984,7 +2992,7 @@ function App() {
                               </td>
                               <td style={{ padding: "6px 10px" }} onClick={(event) => event.stopPropagation()}>
                                 <div style={{ display: "flex", gap: "4px", "flex-wrap": "nowrap" }}>
-                                  <button class="dashboard-btn" style={rowBtn} title="Open this trade's simulation in the Paper Sim tab"
+                                  <button class="dashboard-btn cyan" style={rowBtn} title="Open this trade's simulation in the Paper Sim tab"
                                     onClick={() => openTradeSim(uid)}>Sim</button>
                                 <Show when={!isClosed()}>
                                   <div style={{ display: "flex", gap: "4px", "flex-wrap": "nowrap" }}>
@@ -3079,12 +3087,12 @@ function App() {
 
                                         <div class="trade-metric-row">
                                           <span>Points Out</span>
-                                          <strong>{fmt(pointsOut(), 2)}</strong>
+                                          <strong style={outStyle()} title={outTitle()}>{fmt(pointsOut(), 2)}</strong>
                                         </div>
 
                                         <div class="trade-metric-row">
                                           <span>Points Allowed</span>
-                                          <strong>{fmt(pointsAllowed(), 2)}</strong>
+                                          <strong style={outStyle()} title={outTitle()}>{fmt(pointsAllowed(), 2)}</strong>
                                         </div>
                                         <div class="trade-metric-row">
                                           <span>&nbsp;&nbsp;Straddle ÷ S-Div{live().allowed_strike ? ` (${Math.round(live().allowed_strike)})` : ""}</span>
