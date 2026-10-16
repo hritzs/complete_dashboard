@@ -130,8 +130,16 @@ const executionsSelect = `
 	           ) x
 	           WHERE x.r > 0 OR x.g > 0
 	       ), o.filled_qty),
-	       COALESCE(NULLIF(o.avg_fill_price, 0), NULLIF(o.average_price, 0),
-	                (SELECT f.fill_price FROM fills f WHERE f.order_id = o.id ORDER BY f.id DESC LIMIT 1), 0),
+	       -- Price from the same fills as the qty: the exchange fills' VWAP
+	       -- when present. The last fill's price alone mispriced every order
+	       -- that filled in several pieces at different prices.
+	       COALESCE((
+	           SELECT SUM(f.fill_quantity * f.fill_price) / NULLIF(SUM(f.fill_quantity), 0)
+	           FROM fills f
+	           WHERE f.order_id = o.id
+	             AND NOT (COALESCE(o.broker_name,'') <> '' AND UPPER(f.fill_id) LIKE UPPER(o.broker_name) || ':%')
+	       ), NULLIF(o.avg_fill_price, 0), NULLIF(o.average_price, 0),
+	                (SELECT f.fill_price FROM fills f WHERE f.order_id = o.id ORDER BY f.fill_quantity DESC, f.id DESC LIMIT 1), 0),
 	       o.status, COALESCE(o.broker_order_id, ''),
 	       COALESCE(c.option_type, ''), COALESCE(c.strike_price, 0),
 	       COALESCE(c.broker_token, 0)

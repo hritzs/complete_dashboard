@@ -2230,20 +2230,16 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 				maxOrderQty,
 			)
 		} else {
-			// One lot per leg per order ("65-65") for a non-SL square-off,
-			// verifying each order's real, live-confirmed outcome before
-			// deciding what (if anything) still needs squaring off --
-			// never batching the whole remaining quantity into fewer,
-			// larger orders and guessing at completion from a timed poll.
-			// SL keeps the aggressive (fewest-orders, max-lots-per-order)
-			// path above: a real stop-loss still needs to exit fast, not
-			// lot-by-lot.
+			// Lots per order as the build sends them: ceil(trade lots / 100)
+			// (192 lots -> 2 = 130 qty), within the live per-order max; every
+			// chunk's outcome is still verified before the next. SL keeps the
+			// aggressive (fewest-orders, max-lots-per-order) path above.
 			chunks, err = GenerateChunkedOrders(
 				fmt.Sprintf("S%sA%d", tradeUID, executionAttempt),
 				legs,
-				baseLots,
+				exitSizeLots(tr, baseLots),
 				maxOrderQty,
-				1,
+				0,
 			)
 		}
 		if err != nil {
@@ -2260,6 +2256,26 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 			submitted := make(map[string]submittedOrderMeta)
 			requestedCE := int64(0)
 			requestedPE := int64(0)
+
+			// The hedge legs come down WITH this chunk, not after it: cut
+			// each to the fraction of the straddle this chunk takes the
+			// position to, in parallel with the straddle orders, so the whole
+			// trade (straddle + hedges) closes together. Never ahead by more
+			// than this one chunk; `done` keeps the cuts monotonic if the
+			// straddle under-fills and the next chunk aims at the same level.
+			var hedgeStep chan sqfHedgeStep
+			if len(extraInit) > 0 && targetCE+targetPE > 0 {
+				var planned int64
+				for _, o := range chunk {
+					planned += int64(o.Quantity)
+				}
+				frac := math.Min(1, float64(targetCE-remainingCE+targetPE-remainingPE+planned)/float64(targetCE+targetPE))
+				hedgeStep = make(chan sqfHedgeStep, 1)
+				go func(tr StoredTrade) {
+					xce, xpe, xerr := s.reduceExtraLegsInStep(tradeUID, tr, extraInit, extraDone, frac, "SQF")
+					hedgeStep <- sqfHedgeStep{xce, xpe, xerr}
+				}(tr)
+			}
 
 			for orderIndex, order := range chunk {
 				intent := OrderIntent{
@@ -2335,7 +2351,21 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 				}
 			}
 
+			// collectHedgeStep waits for this chunk's parallel hedge cut.
+			collectHedgeStep := func() {
+				if hedgeStep == nil {
+					return
+				}
+				r := <-hedgeStep
+				hedgeStep = nil
+				hedgeCE, hedgePE = hedgeCE+r.ce, hedgePE+r.pe
+				if r.err != nil {
+					log.Printf("⚠️ SQF in-step hedge reduction trade=%s: %v -- the rest closes after the straddle", tradeUID, r.err)
+				}
+			}
+
 			if len(submitted) == 0 {
+				collectHedgeStep()
 				continue
 			}
 
@@ -2396,14 +2426,7 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 			// quantity instead of the true remainder.
 			s.persistSQFProgress(tradeUID, tr, allVerifiedFills, remainingCE, remainingPE, "SQUARING_OFF")
 
-			if len(extraInit) > 0 && targetCE+targetPE > 0 && (remainingCE > 0 || remainingPE > 0) {
-				frac := float64(targetCE-remainingCE+targetPE-remainingPE) / float64(targetCE+targetPE)
-				xce, xpe, xerr := s.reduceExtraLegsInStep(tradeUID, tr, extraInit, extraDone, frac, "SQF")
-				hedgeCE, hedgePE = hedgeCE+xce, hedgePE+xpe
-				if xerr != nil {
-					log.Printf("⚠️ SQF in-step hedge reduction trade=%s: %v -- the rest closes after the straddle", tradeUID, xerr)
-				}
-			}
+			collectHedgeStep()
 			if remainingCE > 0 || remainingPE > 0 { // the last chunk: all wings go below
 				wingsF.follow(s, executor, tr, -(targetCE-remainingCE)+hedgeCE, -(targetPE-remainingPE)+hedgePE, "SQF-"+reason)
 			}
@@ -2633,6 +2656,21 @@ func (s *Service) reduceExtraOpenLegs(tradeUID string, tr StoredTrade, percentag
 // reduceExtraLegsInStep brings every extra leg down to frac of its size at
 // the start of the exit (whole lots, never below what is still open);
 // done tracks what this exit already closed per token.
+// sqfHedgeStep: one chunk's parallel hedge cut (net short change per side).
+type sqfHedgeStep struct {
+	ce, pe int64
+	err    error
+}
+
+// exitSizeLots: the lot count an exit sizes its orders from -- the trade's
+// own lots, as the build did (ceil(lots/100) per order), else fallback.
+func exitSizeLots(tr StoredTrade, fallback int) int {
+	if tr.Lots > 0 {
+		return tr.Lots
+	}
+	return fallback
+}
+
 func (s *Service) reduceExtraLegsInStep(tradeUID string, tr StoredTrade, init, done map[int64]int64, frac float64, phase string) (shortChangeCE, shortChangePE int64, err error) {
 	lot := int64(tr.LotSize)
 	if lot <= 0 {
@@ -2991,7 +3029,7 @@ func (s *Service) PartialSquareOff(tradeUID string, percentage float64) error {
 	chunks, err := GenerateChunkedOrders(
 		fmt.Sprintf("PSQF_%s", tradeUID),
 		legs,
-		int(ceLots+peLots),
+		exitSizeLots(tr, int(max(ceLots, peLots))),
 		maxOrderQty,
 		0,
 	)
