@@ -29,20 +29,6 @@ type ExecOrder struct {
 	ExchangeSegment string
 }
 
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
 func GenerateChunkedOrders(
 	tradeUIDPrefix string,
 	legs []LegData,
@@ -90,7 +76,7 @@ func generateChunkedOrdersInternal(
 		return nil, fmt.Errorf("invalid max order qty: %d", maxOrderQty)
 	}
 
-	maxLotsPerOrder := maxInt(1, maxOrderQty/lotSizeForCalc)
+	maxLotsPerOrder := max(1, maxOrderQty/lotSizeForCalc)
 
 	var minLotsPerOrder int
 	if aggressive {
@@ -98,14 +84,14 @@ func generateChunkedOrdersInternal(
 		minLotsPerOrder = maxLotsPerOrder
 	} else if orderLotsPerCall > 0 {
 		// Manual UI override
-		minLotsPerOrder = minInt(orderLotsPerCall, maxLotsPerOrder)
+		minLotsPerOrder = min(orderLotsPerCall, maxLotsPerOrder)
 	} else {
 		// Range-based auto (BUILD default, SQF, PSQF, Hedge)
 		raw := 1
 		if baseLots > 0 {
 			raw = int(math.Ceil(float64(baseLots) / 100.0))
 		}
-		minLotsPerOrder = minInt(raw, maxLotsPerOrder)
+		minLotsPerOrder = min(raw, maxLotsPerOrder)
 	}
 
 	if minLotsPerOrder <= 0 {

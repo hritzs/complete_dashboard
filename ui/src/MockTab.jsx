@@ -1,4 +1,6 @@
 import { createSignal, onCleanup, onMount, Show, For } from 'solid-js';
+import { postJSON } from './api.js';
+import { box, muted } from './styles.js';
 
 // MOCK SESSION -- sell / buy ONE instrument at a time (REAL broker orders).
 // On an exchange mock day the feed is random, so this tab lists only the
@@ -8,8 +10,6 @@ import { createSignal, onCleanup, onMount, Show, For } from 'solid-js';
 // an automatic sell-then-buy-back round trip.
 // Backend: services/execution-gateway/internal/trading/mock_session.go
 
-const box = { border: '1px solid rgba(255,255,255,0.10)', 'border-radius': '8px', padding: '10px 12px', margin: '10px 0' };
-const muted = { opacity: 0.65, 'font-size': '12px' };
 const th = { 'text-align': 'right', padding: '6px 8px', 'font-size': '11px', opacity: 0.7, 'white-space': 'nowrap' };
 const td = { 'text-align': 'right', padding: '5px 8px', 'font-size': '13px', 'white-space': 'nowrap' };
 const left = { 'text-align': 'left' };
@@ -31,7 +31,7 @@ export default function MockTab() {
     setBusy(true);
     setMsg('');
     try {
-      const d = await (await fetch('/api/mock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, confirm: st()?.confirm_text || 'MOCK ORDER' }) })).json();
+      const d = await postJSON('/api/mock', { ...body, confirm: st()?.confirm_text || 'MOCK ORDER' });
       setSt(d);
       if (!d.success) setMsg(d.error || 'failed');
       else if (d.order) setMsg(`${d.order.side} ${d.order.name} ${d.order.qty} @ ${n2(d.order.limit)} → ${d.order.status}${d.order.filled_qty ? ` (filled ${d.order.filled_qty} @ ${n2(d.order.avg_price)})` : ''}`);
@@ -63,7 +63,7 @@ export default function MockTab() {
     setBusy(true);
     setMsg('');
     try {
-      await fetch('/api/mock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'enable', on }) });
+      await postJSON('/api/mock', { action: 'enable', on });
     } catch (e) { setMsg(String(e)); }
     setBusy(false);
     load();

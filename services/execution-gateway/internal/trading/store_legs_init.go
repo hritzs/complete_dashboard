@@ -190,7 +190,7 @@ func (f legFlows) realized() float64 {
 	if f.buyQ <= 0 || f.sellQ <= 0 {
 		return 0
 	}
-	return (f.sellV/float64(f.sellQ) - f.buyV/float64(f.buyQ)) * float64(minInt64(f.buyQ, f.sellQ))
+	return (f.sellV/float64(f.sellQ) - f.buyV/float64(f.buyQ)) * float64(min(f.buyQ, f.sellQ))
 }
 
 // entry: the average price of the open side (sells when net short, buys

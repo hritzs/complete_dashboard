@@ -267,7 +267,7 @@ func TrancheLotSequence(ceLots, peLots int) []string {
 	ce, pe := 0, 0
 	for len(out) < total {
 		// Send whichever leg is furthest behind its share of the tranche.
-		ceBehind := float64(ce+1)/float64(maxInt(ceLots, 1)) <= float64(pe+1)/float64(maxInt(peLots, 1))
+		ceBehind := float64(ce+1)/float64(max(ceLots, 1)) <= float64(pe+1)/float64(max(peLots, 1))
 		switch {
 		case ce >= ceLots:
 			out, pe = append(out, "PE"), pe+1

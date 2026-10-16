@@ -1,4 +1,5 @@
 import { createSignal, onMount, Show, For } from 'solid-js';
+import { postJSON } from './api.js';
 
 // Manual legs on an open trade: add any strike / CE-PE / expiry (BUY or
 // SELL) as part of the trade -- choosing whether it counts in the trade's
@@ -7,8 +8,7 @@ import { createSignal, onMount, Show, For } from 'solid-js';
 
 const post = async (body) => {
   try {
-    const res = await fetch('/api/trade/manual-leg', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    return await res.json();
+    return await postJSON('/api/trade/manual-leg', body);
   } catch (err) {
     return { success: false, error: String(err) };
   }

@@ -6,6 +6,8 @@
   import SBPortfolioRows, { sbStore } from './SBPortfolioRows.jsx';
   import ManualLegPanel, { closeManualLeg, addManualLeg } from './ManualLegPanel.jsx';
   import PortfolioMTMPanel from './PortfolioMTMPanel.jsx';
+  import { postJSON, safeFetchJson, postJSONStrict } from "./api.js";
+  import { formInput, formLabel } from "./styles.js";
   import './App.css';
   import LatencyDashboard from './LatencyDashboard.jsx';
 
@@ -50,24 +52,6 @@
       ? t.toLocaleTimeString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' })
       : '—';
   };
-
-  async function safeFetchJson(url, options = {}) {
-    const res = await fetch(url, options);
-    const text = await res.text();
-
-    let data;
-    try {
-      data = text ? JSON.parse(text) : {};
-    } catch {
-      throw new Error(`Invalid backend response from ${url}`);
-    }
-
-    if (!res.ok) {
-      throw new Error(data?.error || data?.message || `HTTP ${res.status}`);
-    }
-
-    return data;
-  }
 
   // Exit steps <-> "level:%, level:%" text (Modify form).
 function tiersText(tiers) {
@@ -195,24 +179,20 @@ function App() {
       // etc., none of which matched the backend's gtoken/side/ordertype
       // fields, so token in particular always decoded to empty regardless
       // of what was shown in the confirmation dialog above.
-      const result = await safeFetchJson('/api/manual/order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: executionPrefs().user_id || 'U001',
-          broker_name: executionPrefs().broker_name || 'greeksoft',
-          account_id: executionPrefs().account_id || '147',
-          exchange_segment: executionPrefs().exchange_segment || 'NSEFO',
-          product_type: manualProduct() === '0' ? 'MIS' : 'NRML',
-          symbol,
-          token: shortToken,
-          side: 'SELL',
-          order_type: manualOrderType() === '2' ? 'MARKET' : 'LIMIT',
-          price: Number(ltp.toFixed(2)),
-          total_lots: totalLots,
-          lots_per_order: lotsPerOrder,
-          lot_size: exchangeLotSize
-        })
+      const result = await postJSONStrict('/api/manual/order', {
+        user_id: executionPrefs().user_id || 'U001',
+        broker_name: executionPrefs().broker_name || 'greeksoft',
+        account_id: executionPrefs().account_id || '147',
+        exchange_segment: executionPrefs().exchange_segment || 'NSEFO',
+        product_type: manualProduct() === '0' ? 'MIS' : 'NRML',
+        symbol,
+        token: shortToken,
+        side: 'SELL',
+        order_type: manualOrderType() === '2' ? 'MARKET' : 'LIMIT',
+        price: Number(ltp.toFixed(2)),
+        total_lots: totalLots,
+        lots_per_order: lotsPerOrder,
+        lot_size: exchangeLotSize
       });
 
       setDirectOrderResult(result);
@@ -262,17 +242,13 @@ function App() {
     setModifyOrderBusy(true);
     setModifyOrderStatus(`Modifying order ${brokerOrderId} to price ${price}...`);
     try {
-      const result = await safeFetchJson('/api/manual/order/modify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          broker_name: executionPrefs().broker_name || 'greeksoft',
-          account_id: executionPrefs().account_id || '147',
-          broker_order_id: brokerOrderId,
-          price,
-          quantity,
-          lot_size: exchangeLotSize
-        })
+      const result = await postJSONStrict('/api/manual/order/modify', {
+        broker_name: executionPrefs().broker_name || 'greeksoft',
+        account_id: executionPrefs().account_id || '147',
+        broker_order_id: brokerOrderId,
+        price,
+        quantity,
+        lot_size: exchangeLotSize
       });
       setModifyOrderStatus(`Modified: order ${brokerOrderId} re-priced to ${result.price ?? price}.`);
       appendEventLog('success', `Order ${brokerOrderId} modified to price ${price}`);
@@ -947,11 +923,7 @@ function App() {
       );
 
       try {
-        const data = await safeFetchJson("/api/trade/straddle", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
+        const data = await postJSONStrict("/api/trade/straddle", payload);
 
         if (data.success) {
           setSellStatus(
@@ -1006,11 +978,7 @@ function App() {
       );
 
       try {
-        const data = await safeFetchJson("/api/trade/straddle", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
+        const data = await postJSONStrict("/api/trade/straddle", payload);
 
         if (data.success) {
           setSellStatus(
@@ -1221,11 +1189,7 @@ function App() {
 
       for (const url of urls) {
         try {
-          return await safeFetchJson(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body)
-          });
+          return await postJSONStrict(url, body);
         } catch (err) {
           lastErr = err;
         }
@@ -1353,8 +1317,7 @@ function App() {
       if (!tradeUid) return;
       if (!window.confirm(`Stop building ${tradeUid}?\n\nNo more build orders are sent (resting ones are cancelled). What has filled stays open as a PARTIAL position and stays monitored (hedge / SL / TP / exit time).`)) return;
       try {
-        const res = await fetch("/api/build/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trade_uid: tradeUid }) });
-        const data = await res.json();
+        const data = await postJSON("/api/build/stop", { trade_uid: tradeUid });
         appendEventLog(data.success ? "success" : "error", data.success ? `Stop building sent for ${tradeUid}: filled part will be monitored as partial` : `Stop building ${tradeUid}: ${data.error}`);
       } catch (err) {
         appendEventLog("error", `Stop building ${tradeUid}: ${err.message}`);
@@ -1368,8 +1331,7 @@ function App() {
       const tradeUid = item.tradeUid || item.id;
       if (!tradeUid) return;
       const call = async (apply) => {
-        const res = await fetch("/api/trade/broker-sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trade_uid: tradeUid, apply }) });
-        return res.json();
+        return postJSON("/api/trade/broker-sync", { trade_uid: tradeUid, apply });
       };
       try {
         const pv = await call(false);
@@ -1911,11 +1873,7 @@ function App() {
       );
 
       try {
-        const data = await safeFetchJson("/api/trade/straddle/automated", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
+        const data = await postJSONStrict("/api/trade/straddle/automated", payload);
 
         if (data.success) {
           appendEventLog(
@@ -1949,11 +1907,7 @@ function App() {
 
     const cancelScheduledBuild = async (jobId) => {
       try {
-        const data = await safeFetchJson("/api/trade/straddle/scheduled/cancel", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ job_id: jobId })
-        });
+        const data = await postJSONStrict("/api/trade/straddle/scheduled/cancel", { job_id: jobId });
         appendEventLog(data.success ? "success" : "error", data.success ? `Cancelled scheduled build ${jobId}` : `Cancel failed: ${data.error}`);
       } catch (err) {
         appendEventLog("error", `Cancel failed: ${err.message}`);
@@ -1985,11 +1939,7 @@ function App() {
       appendEventLog("info", `Manual hedge preview via ${payload.broker_name} for ${payload.symbol}`);
 
       try {
-        const data = await safeFetchJson("/api/trade/manual-test", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
+        const data = await postJSONStrict("/api/trade/manual-test", payload);
 
         if (data.success) {
           setManualHedgePreview(data);
@@ -2015,11 +1965,7 @@ function App() {
       appendEventLog("info", `Manual hedge execute via ${payload.broker_name} for ${payload.symbol}`);
 
       try {
-        const data = await safeFetchJson("/api/trade/manual-execute", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
+        const data = await postJSONStrict("/api/trade/manual-execute", payload);
 
         if (data.success) {
           setManualHedgePreview(data);
@@ -2461,40 +2407,40 @@ function App() {
               </div>
 
               <div style={{ display: "grid", "grid-template-columns": "repeat(2, minmax(0, 1fr))", gap: "12px" }}>
-                <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
+                <label style={formLabel}>
                   SL (points / lot)
                   <input
                     type="text" inputmode="decimal"
                     step="0.01"
                     value={modifyTradeForm().sl_points_per_lot}
                     onInput={(event) => setModifyTradeForm((form) => ({ ...form, sl_points_per_lot: event.currentTarget.value }))}
-                    style={{ padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                    style={formInput}
                   />
                 </label>
 
-                <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
+                <label style={formLabel}>
                   SL (bps of spot)
                   <input
                     type="text" inputmode="decimal"
                     step="0.01"
                     value={modifyTradeForm().sl_pnl_bps_of_spot}
                     onInput={(event) => setModifyTradeForm((form) => ({ ...form, sl_pnl_bps_of_spot: event.currentTarget.value }))}
-                    style={{ padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                    style={formInput}
                   />
                 </label>
 
-                <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
+                <label style={formLabel}>
                   TP (bps of spot)
                   <input
                     type="text" inputmode="decimal"
                     step="0.01"
                     value={modifyTradeForm().tp_pnl_bps_of_spot}
                     onInput={(event) => setModifyTradeForm((form) => ({ ...form, tp_pnl_bps_of_spot: event.currentTarget.value }))}
-                    style={{ padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                    style={formInput}
                   />
                 </label>
 
-                <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
+                <label style={formLabel}>
                   MTM exit above (blank = ∞)
                   <div style={{ display: "flex", gap: "6px" }}>
                     <input
@@ -2504,7 +2450,7 @@ function App() {
                       value={modifyTradeForm().mtm_exit_level}
                       onInput={(event) => setModifyTradeForm((form) => ({ ...form, mtm_exit_level: event.currentTarget.value }))}
                       title="Closes the trade lot by lot at depth-checked IOC limits so it ends at or above this MTM (may be negative)"
-                      style={{ flex: 1, padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                      style={{ ...formInput, flex: 1 }}
                     />
                     <input
                       type="text" inputmode="decimal"
@@ -2513,12 +2459,12 @@ function App() {
                       value={modifyTradeForm().mtm_exit_pct}
                       onInput={(event) => setModifyTradeForm((form) => ({ ...form, mtm_exit_pct: event.currentTarget.value }))}
                       title="% of the ORIGINAL position this rule closes (100 = complete). Rules together never close more than what is open."
-                      style={{ width: "70px", padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                      style={{ ...formInput, width: "70px" }}
                     />
                     <select
                       value={modifyTradeForm().mtm_exit_unit}
                       onChange={(event) => setModifyTradeForm((form) => ({ ...form, mtm_exit_unit: event.currentTarget.value }))}
-                      style={{ padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                      style={formInput}
                     >
                       <option value="rs">₹ total</option>
                       <option value="pts">pts / straddle</option>
@@ -2527,7 +2473,7 @@ function App() {
                   </div>
                 </label>
 
-                <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
+                <label style={formLabel}>
                   More MTM steps (level:% , … same unit)
                   <input
                     type="text"
@@ -2535,11 +2481,11 @@ function App() {
                     value={modifyTradeForm().mtm_exit_tiers}
                     onInput={(event) => setModifyTradeForm((form) => ({ ...form, mtm_exit_tiers: event.currentTarget.value }))}
                     title="Each step closes its own % of the ORIGINAL position once, when the executable MTM reaches its level (lowest first, lot by lot, never below that level). All rules together never close more than is open."
-                    style={{ padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                    style={formInput}
                   />
                 </label>
 
-                <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
+                <label style={formLabel}>
                   ATM straddle exit below (blank = off) · % of position
                   <div style={{ display: "flex", gap: "6px" }}>
                     <input
@@ -2549,7 +2495,7 @@ function App() {
                       value={modifyTradeForm().straddle_exit_below}
                       onInput={(event) => setModifyTradeForm((form) => ({ ...form, straddle_exit_below: event.currentTarget.value }))}
                       title="Square off only when the live ATM CE LTP + PE LTP falls BELOW this; above it nothing happens"
-                      style={{ flex: 1, padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                      style={{ ...formInput, flex: 1 }}
                     />
                     <input
                       type="text" inputmode="decimal"
@@ -2558,12 +2504,12 @@ function App() {
                       value={modifyTradeForm().straddle_exit_pct}
                       onInput={(event) => setModifyTradeForm((form) => ({ ...form, straddle_exit_pct: event.currentTarget.value }))}
                       title="% of the ORIGINAL position (100 = complete). Combined with the other exits it never exceeds what is open."
-                      style={{ width: "70px", padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                      style={{ ...formInput, width: "70px" }}
                     />
                   </div>
                 </label>
 
-                <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
+                <label style={formLabel}>
                   More ATM straddle steps (below level:% , …)
                   <input
                     type="text"
@@ -2571,22 +2517,22 @@ function App() {
                     value={modifyTradeForm().straddle_exit_tiers}
                     onInput={(event) => setModifyTradeForm((form) => ({ ...form, straddle_exit_tiers: event.currentTarget.value }))}
                     title="Each step closes its own % of the ORIGINAL position once, when the live ATM straddle falls below its level (highest first). Hedges come down with the straddle. All rules together never close more than is open."
-                    style={{ padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                    style={formInput}
                   />
                 </label>
 
-                <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
+                <label style={formLabel}>
                   Hedge Delta Threshold
                   <input
                     type="text" inputmode="decimal"
                     step="0.01"
                     value={modifyTradeForm().hedge_threshold_delta}
                     onInput={(event) => setModifyTradeForm((form) => ({ ...form, hedge_threshold_delta: event.currentTarget.value }))}
-                    style={{ padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                    style={formInput}
                   />
                 </label>
 
-                <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
+                <label style={formLabel}>
                   Straddle Divisor
                   <input
                     type="text" inputmode="decimal"
@@ -2594,11 +2540,11 @@ function App() {
                     step="0.01"
                     value={modifyTradeForm().straddle_div}
                     onInput={(event) => setModifyTradeForm((form) => ({ ...form, straddle_div: event.currentTarget.value }))}
-                    style={{ padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                    style={formInput}
                   />
                 </label>
 
-                <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
+                <label style={formLabel}>
                   Min Hedge Threshold (bps of spot)
                   <input
                     type="text" inputmode="decimal"
@@ -2606,11 +2552,11 @@ function App() {
                     step="0.1"
                     value={modifyTradeForm().hedge_min_threshold_bps}
                     onInput={(event) => setModifyTradeForm((form) => ({ ...form, hedge_min_threshold_bps: event.currentTarget.value }))}
-                    style={{ padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                    style={formInput}
                   />
                 </label>
 
-                <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px" }}>
+                <label style={formLabel}>
                   Hedge Divisor
                   <input
                     type="text" inputmode="decimal"
@@ -2618,7 +2564,7 @@ function App() {
                     step="0.01"
                     value={modifyTradeForm().hedge_div}
                     onInput={(event) => setModifyTradeForm((form) => ({ ...form, hedge_div: event.currentTarget.value }))}
-                    style={{ padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                    style={formInput}
                   />
                 </label>
 
@@ -2629,7 +2575,7 @@ function App() {
                     placeholder="15:15"
                     value={modifyTradeForm().square_off_hard_time}
                     onInput={(event) => setModifyTradeForm((form) => ({ ...form, square_off_hard_time: event.currentTarget.value }))}
-                    style={{ padding: "9px", background: "#0f0f18", color: "#fff", border: "1px solid #44445a", "border-radius": "5px" }}
+                    style={formInput}
                   />
                 </label>
 

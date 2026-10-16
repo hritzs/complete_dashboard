@@ -1,4 +1,5 @@
 import { createSignal, onCleanup, onMount, Show, For } from 'solid-js';
+import { postJSON } from './api.js';
 
 // PORTFOLIO MTM SQUARE-OFF -- REAL ORDERS. Day MTM of the live account
 // (today's realized + open trades valued through the depth, wings out).
@@ -57,7 +58,7 @@ export default function PortfolioMTMPanel() {
     if ((p !== null || l !== null) && !window.confirm(text)) return;
     setMsg('');
     try {
-      const x = await (await fetch('/api/portfolio/mtm-exit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ profit_level: p, loss_level: l }) })).json();
+      const x = await postJSON('/api/portfolio/mtm-exit', { profit_level: p, loss_level: l });
       if (!x.success) { setMsg(x.error || 'failed'); return; }
       setDirty(false);
       apply(x);
@@ -70,7 +71,7 @@ export default function PortfolioMTMPanel() {
     if (running && !window.confirm('A portfolio square-off is running. Disarm stops it before its next lot (orders already sent finish). Open trades stay monitored by their own rules.\n\nDisarm?')) return;
     setMsg('');
     try {
-      const x = await (await fetch('/api/portfolio/mtm-exit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ disarm: true }) })).json();
+      const x = await postJSON('/api/portfolio/mtm-exit', { disarm: true });
       if (!x.success) { setMsg(x.error || 'failed'); return; }
       apply(x);
       setMsg('disarmed — levels kept; Save & arm to use them again');
@@ -84,7 +85,7 @@ export default function PortfolioMTMPanel() {
     if (!window.confirm(`EMERGENCY — SQUARE OFF ALL (real orders, now)\n\nNormal Full Exit on every trade holding a position (${open.length}):\n${list}\n\nDay MTM ${money(view().day_mtm)}. Straddle Build rules still waiting to sell and the LUT build are NOT stopped.\n\nSquare off everything?`)) return;
     setMsg('');
     try {
-      const x = await (await fetch('/api/portfolio/square-off-all', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: 'SQUARE OFF ALL' }) })).json();
+      const x = await postJSON('/api/portfolio/square-off-all', { confirm: 'SQUARE OFF ALL' });
       if (!x.success) { setMsg(x.error || 'failed'); return; }
       setMsg(`square off ALL sent: ${Object.entries(x.trades || {}).map(([u, r]) => `${u.slice(-10)} ${r}`).join(' · ') || 'nothing open'}`);
       load();

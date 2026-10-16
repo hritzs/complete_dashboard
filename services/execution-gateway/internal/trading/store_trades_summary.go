@@ -351,5 +351,5 @@ func (s *PostgresBackedStore) TradeOpenQuantities(ctx context.Context, tradeUID 
 	if err := rows.Err(); err != nil {
 		return 0, 0, err
 	}
-	return maxInt64(net["CE"], 0), maxInt64(net["PE"], 0), nil
+	return max(net["CE"], 0), max(net["PE"], 0), nil
 }

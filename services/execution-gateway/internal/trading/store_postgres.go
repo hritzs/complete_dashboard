@@ -980,8 +980,8 @@ func (s *PostgresBackedStore) validateTradeForRuntime(
 		}
 		return RuntimeEligibility{
 			TradeUID: tradeUID,
-			CEQty:    absInt64(ce.qty),
-			PEQty:    absInt64(pe.qty),
+			CEQty:    abs64(ce.qty),
+			PEQty:    abs64(pe.qty),
 			CEEntry:  ce.entry,
 			PEEntry:  pe.entry,
 		}, nil
@@ -1017,18 +1017,11 @@ func (s *PostgresBackedStore) validateTradeForRuntime(
 	// quantities, inverting its greeks/PnL and making SquareOff refuse it.
 	return RuntimeEligibility{
 		TradeUID: tradeUID,
-		CEQty:    absInt64(ce.qty),
-		PEQty:    absInt64(pe.qty),
+		CEQty:    abs64(ce.qty),
+		PEQty:    abs64(pe.qty),
 		CEEntry:  ce.entry,
 		PEEntry:  pe.entry,
 	}, nil
-}
-
-func absInt64(v int64) int64 {
-	if v < 0 {
-		return -v
-	}
-	return v
 }
 
 // ActivePortfolioTrade is the DB-authoritative UI representation of one

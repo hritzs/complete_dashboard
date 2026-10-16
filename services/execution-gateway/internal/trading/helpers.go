@@ -6,6 +6,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -122,12 +123,45 @@ func GetFallbackLotSize(symbol string) int {
 	}
 }
 
+// istLoc: Asia/Kolkata, loaded once; a fixed +05:30 zone if the tz database
+// is missing (IST has no DST, so the two never differ).
+var istLoc = sync.OnceValue(func() *time.Location {
+	if loc, err := time.LoadLocation("Asia/Kolkata"); err == nil {
+		return loc
+	}
+	return time.FixedZone("IST", 5*3600+1800)
+})
+
+// parseClockToday parses value with the first layout that fits and puts that
+// clock time on now's IST date.
+func parseClockToday(value string, now time.Time, layouts ...string) (time.Time, bool) {
+	loc := istLoc()
+	for _, layout := range layouts {
+		if parsed, err := time.ParseInLocation(layout, value, loc); err == nil {
+			now = now.In(loc)
+			return time.Date(now.Year(), now.Month(), now.Day(), parsed.Hour(), parsed.Minute(), parsed.Second(), 0, loc), true
+		}
+	}
+	return time.Time{}, false
+}
+
+func absInt(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
+func abs64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
 // CreatedTodayIST reports whether t falls on today's date in IST.
 func CreatedTodayIST(t time.Time) bool {
-	loc, err := time.LoadLocation("Asia/Kolkata")
-	if err != nil {
-		loc = time.FixedZone("IST", 5*3600+1800)
-	}
+	loc := istLoc()
 	now := time.Now().In(loc)
 	tt := t.In(loc)
 	return tt.Year() == now.Year() && tt.YearDay() == now.YearDay()

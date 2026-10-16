@@ -27,22 +27,12 @@ type BuildRiskConfig struct {
 
 // ParseClockTodayIST parses "HH:MM" or "HH:MM:SS" as a time today in IST.
 func ParseClockTodayIST(value string, now time.Time) (time.Time, error) {
-	loc, err := time.LoadLocation("Asia/Kolkata")
-	if err != nil {
-		return time.Time{}, fmt.Errorf("load Asia/Kolkata timezone: %w", err)
-	}
 	value = strings.TrimSpace(value)
-	var parsed time.Time
-	for _, layout := range []string{"15:04:05", "15:04"} {
-		if parsed, err = time.ParseInLocation(layout, value, loc); err == nil {
-			break
-		}
-	}
-	if err != nil {
+	at, ok := parseClockToday(value, now, "15:04:05", "15:04")
+	if !ok {
 		return time.Time{}, fmt.Errorf("invalid time %q: expected HH:MM or HH:MM:SS", value)
 	}
-	now = now.In(loc)
-	return time.Date(now.Year(), now.Month(), now.Day(), parsed.Hour(), parsed.Minute(), parsed.Second(), 0, loc), nil
+	return at, nil
 }
 
 // Validate checks the config against the entry time, so a bad exit time is

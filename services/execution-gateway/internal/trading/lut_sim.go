@@ -35,12 +35,7 @@ func lutEnv(key, def string) string {
 	return def
 }
 
-func lutIST() *time.Location {
-	if loc, err := time.LoadLocation("Asia/Kolkata"); err == nil {
-		return loc
-	}
-	return time.FixedZone("IST", 5*3600+1800)
-}
+func lutIST() *time.Location { return istLoc() }
 
 func lutParseExpiry(s string) (time.Time, error) {
 	s = strings.TrimSpace(s)

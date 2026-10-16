@@ -449,7 +449,7 @@ func recomputeTradeLegFromPersistedFills(
 	}
 
 	netQty := buyQty - sellQty
-	matchedQty := minInt64(buyQty, sellQty)
+	matchedQty := min(buyQty, sellQty)
 
 	realizedPnL := 0.0
 	if matchedQty > 0 {
@@ -497,7 +497,7 @@ func recomputeTradeLegFromPersistedFills(
 	`,
 		tradeID,
 		contractID,
-		maxInt64(buyQty, sellQty),
+		max(buyQty, sellQty),
 		netQty,
 		entryPrice,
 		exitPrice,
@@ -514,18 +514,4 @@ func recomputeTradeLegFromPersistedFills(
 	}
 
 	return nil
-}
-
-func minInt64(a, b int64) int64 {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func maxInt64(a, b int64) int64 {
-	if a > b {
-		return a
-	}
-	return b
 }

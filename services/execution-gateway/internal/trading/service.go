@@ -1170,9 +1170,9 @@ func partialFilledStraddles(lots, lotSize, ceQty, peQty, reqCE, reqPE int) int {
 	if lotSize <= 0 {
 		return 0
 	}
-	filledQty := minInt(ceQty, peQty)
+	filledQty := min(ceQty, peQty)
 	if filledQty == 0 {
-		filledQty = maxInt(ceQty, peQty)
+		filledQty = max(ceQty, peQty)
 	}
 	return filledQty / lotSize
 }
@@ -1188,7 +1188,7 @@ func partialFilledStraddles(lots, lotSize, ceQty, peQty, reqCE, reqPE int) int {
 func slThresholdForTrade(trade StoredTrade) (originalLotsOpen float64, threshold float64) {
 	originalLotsOpen = float64(trade.Lots)
 	if originalLotsOpen <= 0 {
-		originalLotsOpen = float64(trade.CEQty+trade.PEQty) / (2.0 * float64(maxInt(1, trade.LotSize)))
+		originalLotsOpen = float64(trade.CEQty+trade.PEQty) / (2.0 * float64(max(1, trade.LotSize)))
 	}
 	threshold = -trade.Config.SLPointsPerLot * originalLotsOpen
 	return originalLotsOpen, threshold
@@ -1561,7 +1561,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 	// quantities, which can become unequal after hedges, rolls, or exits.
 	straddleQuantity := int64(trade.Lots) * int64(trade.LotSize)
 	if straddleQuantity <= 0 {
-		straddleQuantity = int64(minInt(trade.CEQty, trade.PEQty))
+		straddleQuantity = int64(min(trade.CEQty, trade.PEQty))
 	}
 
 	pnlPerStraddle := 0.0

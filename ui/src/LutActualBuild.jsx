@@ -1,4 +1,6 @@
 import { createSignal, onCleanup, onMount, Show, For } from 'solid-js';
+import { postJSON } from './api.js';
+import { box, muted } from './styles.js';
 
 // LUT ACTUAL BUILD -- REAL ORDERS. When ARMED, the LUT's first YES of the
 // day fires the same build as an Automation entry (delta-neutral, full size,
@@ -6,8 +8,6 @@ import { createSignal, onCleanup, onMount, Show, For } from 'solid-js';
 // expiry the LUT evaluated. Once per day; arming asks one OK/Cancel question.
 // Backend: services/execution-gateway/internal/trading/lut_build.go
 
-const box = { border: '1px solid rgba(255,255,255,0.10)', 'border-radius': '8px', padding: '10px 12px', margin: '10px 0' };
-const muted = { opacity: 0.65, 'font-size': '12px' };
 
 const FIELDS = [
   ['lots', 'Size (qty)', 'number'],
@@ -81,7 +81,7 @@ export default function LutActualBuild() {
     const b = body();
     if (b == null) return false;
     try {
-      const d = await (await fetch('/api/lut/build', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...b, ...extra }) })).json();
+      const d = await postJSON('/api/lut/build', { ...b, ...extra });
       if (!d.success) { setMsg(d.error || 'failed'); return false; }
       setDirty(false);
       setSt(d);
@@ -115,7 +115,7 @@ export default function LutActualBuild() {
     if (!window.confirm(`TEST FIRE -- REAL ORDERS NOW: a delta-neutral NIFTY straddle of ${form()?.lots} qty per leg (${(Number(form()?.lots) || 0) / lot()} lot(s)) at the LUT's current strike on ${form()?.broker_name}/${form()?.account_id}, exactly as a LUT YES would.\n\nSell now?`)) return;
     setMsg('');
     try {
-      const d = await (await fetch('/api/lut/build/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: confirmText() }) })).json();
+      const d = await postJSON('/api/lut/build/test', { confirm: confirmText() });
       setMsg(d.success ? `TEST fired at ${d.test?.fired_at}: ${d.test?.expiry} ${d.test?.strike} ${(d.test?.lots || 0) * lot()} qty -- watch the status below / Portfolio` : (d.error || 'failed'));
       load();
     } catch (e) { setMsg(String(e)); }

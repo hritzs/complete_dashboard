@@ -1,21 +1,13 @@
 import { createSignal, createRoot, Show, For, Index } from 'solid-js';
+import { fmt, sgn, pnlCls } from './format.js';
+import { mutedDim as muted, capsLabel as label } from './styles.js';
+import { postJSON } from './api.js';
 
 // Straddle-build positions as NORMAL rows of the Portfolio table (same
 // columns as every other trade); click a row for its details, legs and
 // Pause / Resume / Stop building / Square off. Data: /api/sbuild/shadow/state
 // and the "sbuild_update" push (one shared store for the whole app).
 
-const fmt = (v, d = 2) => {
-  const n = Number(v);
-  return Number.isFinite(n) ? n.toFixed(d) : '—';
-};
-const sgn = (v, d = 2) => {
-  const n = Number(v);
-  return Number.isFinite(n) ? `${n >= 0 ? '+' : ''}${n.toFixed(d)}` : '—';
-};
-const pnlCls = (v) => ((Number(v) || 0) >= 0 ? 'positive' : 'negative');
-const muted = { color: 'rgba(255,255,255,0.55)', 'font-size': '12px' };
-const label = { color: 'rgba(255,255,255,0.5)', 'font-size': '11px', 'text-transform': 'uppercase', 'letter-spacing': '0.04em' };
 const td = { padding: '10px' };
 
 // A run that holds (or may hold) a real or simulated position.
@@ -46,7 +38,7 @@ const rowBtn = { padding: '3px 7px', 'font-size': '11px', 'min-width': '0' };
 
 const post = async (url, body) => {
   try {
-    const d = await (await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
+    const d = await postJSON(url, body);
     if (!d.success) { window.alert(d.error || 'failed'); return false; }
     sbStore.load();
     return true;

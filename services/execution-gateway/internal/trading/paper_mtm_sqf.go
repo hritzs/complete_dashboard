@@ -87,13 +87,6 @@ func (b *simBook) buildLots(lot int64) int64 {
 	return n
 }
 
-func abs64(v int64) int64 {
-	if v < 0 {
-		return -v
-	}
-	return v
-}
-
 // closeOneLot closes one lot of every BUILD leg at executable prices and
 // the matching share of every hedge (the rest of them on the last lot).
 func (b *simBook) closeOneLot(m simMinute, lot int64) {

@@ -70,31 +70,14 @@ func (s *BuildScheduler) Cancel(id string) bool {
 	return true
 }
 
+// ParseTodayIST parses an entry_time "HH:MM:SS" (seconds required) as a
+// time today in IST. ParseClockTodayIST is the lenient HH:MM[:SS] form.
 func ParseTodayIST(value string, now time.Time) (time.Time, error) {
-	loc, err := time.LoadLocation("Asia/Kolkata")
-	if err != nil {
-		return time.Time{}, fmt.Errorf("load Asia/Kolkata timezone: %w", err)
+	at, ok := parseClockToday(value, now, "15:04:05")
+	if !ok {
+		return time.Time{}, fmt.Errorf("invalid entry_time %q: expected HH:MM:SS", value)
 	}
-
-	now = now.In(loc)
-	parsed, err := time.ParseInLocation("15:04:05", value, loc)
-	if err != nil {
-		return time.Time{}, fmt.Errorf(
-			"invalid entry_time %q: expected HH:MM:SS",
-			value,
-		)
-	}
-
-	return time.Date(
-		now.Year(),
-		now.Month(),
-		now.Day(),
-		parsed.Hour(),
-		parsed.Minute(),
-		parsed.Second(),
-		0,
-		loc,
-	), nil
+	return at, nil
 }
 
 // EffectiveRunAt resolves a requested entry time against now: if it is still

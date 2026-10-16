@@ -1029,10 +1029,7 @@ func (h *Handlers) PortfolioToday(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	loc, err := time.LoadLocation("Asia/Kolkata")
-	if err != nil {
-		loc = time.Local
-	}
+	loc := istLoc()
 	day := time.Now().In(loc)
 	if raw := strings.TrimSpace(r.URL.Query().Get("date")); raw != "" {
 		parsed, perr := time.ParseInLocation("2006-01-02", raw, loc)

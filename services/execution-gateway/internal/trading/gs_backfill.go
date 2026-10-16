@@ -105,7 +105,7 @@ func (s *Service) gsBackfillSet(p MinuteCloseProvider, now time.Time, set string
 	nearest := func(t string) lutChainMinute {
 		best, bd := lutChainMinute{}, math.MaxInt
 		for _, r := range recorded {
-			if d := absInt(lutHHMMMinutes(r) - lutHHMMMinutes(t)); d < bd {
+			if d := absInt(lutMinutesOfDay(r) - lutMinutesOfDay(t)); d < bd {
 				best, bd = have[r], d
 			}
 		}
@@ -277,15 +277,8 @@ func lutAppendJSON(path string, v interface{}) error {
 	return lutAppend(path, append(b, '\n'))
 }
 
-func absInt(x int) int {
-	if x < 0 {
-		return -x
-	}
-	return x
-}
-
-// lutHHMMMinutes: "HH:MM" -> minutes since midnight.
-func lutHHMMMinutes(t string) int {
+// lutMinutesOfDay: "HH:MM" -> minutes since midnight.
+func lutMinutesOfDay(t string) int {
 	var h, m int
 	fmt.Sscanf(t, "%d:%d", &h, &m)
 	return h*60 + m
@@ -347,7 +340,7 @@ func gsBackfillRef(day, set, t string) float64 {
 	rec := lutLoadChainFile(lutChainFile(day, set))
 	ref, bd := 0.0, 6
 	for rt, m := range rec {
-		if d := absInt(lutHHMMMinutes(rt) - lutHHMMMinutes(t)); d < bd && m.Future > 0 {
+		if d := absInt(lutMinutesOfDay(rt) - lutMinutesOfDay(t)); d < bd && m.Future > 0 {
 			ref, bd = m.Future, d
 		}
 	}

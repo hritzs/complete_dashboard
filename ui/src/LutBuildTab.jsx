@@ -1,5 +1,8 @@
 import { createSignal, onCleanup, onMount, Show, For } from 'solid-js';
+import { postJSON } from './api.js';
+import { box, muted } from './styles.js';
 import LutActualBuild from './LutActualBuild.jsx';
+import { fmt } from './format.js';
 
 // LUT Entry Check, always on. The gateway re-evaluates on every chain update
 // (100ms) and pushes a "lut_update" over the UI websocket; this tab renders
@@ -7,10 +10,6 @@ import LutActualBuild from './LutActualBuild.jsx';
 // (LutActualBuild.jsx), when ARMED, turns the day's first YES into a real
 // build.
 
-const fmt = (v, d = 2) => {
-  const n = Number(v);
-  return Number.isFinite(n) ? n.toFixed(d) : '—';
-};
 const sgn = (v, d = 1) => {
   const n = Number(v);
   if (!Number.isFinite(n)) return '—';
@@ -47,9 +46,7 @@ const MANUAL_FIELDS = [
   { k: 'norm_adj_chg', g: 'day', label: 'Norm adj IV change' },
 ];
 
-const box = { border: '1px solid rgba(255,255,255,0.10)', 'border-radius': '8px', padding: '10px 12px', margin: '10px 0' };
 const grid = { display: 'grid', 'grid-template-columns': 'repeat(auto-fit, minmax(230px, 1fr))', gap: '6px 16px' };
-const muted = { opacity: 0.65, 'font-size': '12px' };
 
 function KV(props) {
   return (
@@ -86,7 +83,7 @@ export default function LutBuildTab() {
   };
   const toggleShowOld = async (on) => {
     try {
-      const d = await (await fetch('/api/lut/logic', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ show_old: on }) })).json();
+      const d = await postJSON('/api/lut/logic', { show_old: on });
       setShowOld(!!d.show_old);
       if (!d.show_old && tset() === 'alt') switchSet('main');
     } catch (_) { /* restarting */ }
@@ -164,12 +161,7 @@ export default function LutBuildTab() {
     setMsg('');
     try {
       const m = manualOverride || man();
-      const res = await fetch('/api/lut/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lots: Number(lots()) || 1, expiry: expiry().trim(), underlying_0916: Number(og0916()) || 0, manual: manualBody(m) })
-      });
-      const data = await res.json();
+      const data = await postJSON('/api/lut/config', { lots: Number(lots()) || 1, expiry: expiry().trim(), underlying_0916: Number(og0916()) || 0, manual: manualBody(m) });
       setMsg(data.success ? (Object.keys(manualBody(m)).length ? 'Saved — manual what-if shown (nothing recorded from it)' : 'Saved — live values') : (data.error || 'failed'));
       return data.success;
     } catch (err) { setMsg(String(err)); return false; }

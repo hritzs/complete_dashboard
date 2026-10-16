@@ -1,19 +1,13 @@
 import { createSignal, createMemo, createEffect, on, onCleanup, onMount, Show, For } from 'solid-js';
+import { fmt, sgn, pnlCls } from './format.js';
+import { postJSON } from './api.js';
+import { mutedDim, capsLabel } from './styles.js';
 
 // Paper Sim -- PAPER ONLY. Sells the ATM straddle at 09:16-09:19 (and any
 // "Start now" minute) off the stored minute data of the current or next
 // expiry, then replays every minute: SL / TP / exit and the hedge rule.
 // Never places an order.
 
-const fmt = (v, d = 2) => {
-  const n = Number(v);
-  return Number.isFinite(n) ? n.toFixed(d) : '—';
-};
-const sgn = (v, d = 2) => {
-  const n = Number(v);
-  return Number.isFinite(n) ? `${n >= 0 ? '+' : ''}${n.toFixed(d)}` : '—';
-};
-const pnlCls = (v) => ((Number(v) || 0) >= 0 ? 'positive' : 'negative');
 const toMin = (t) => {
   const [h, m] = String(t || '0:0').split(':').map(Number);
   return h * 60 + m;
@@ -23,8 +17,8 @@ const SERIES = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300'
 const SRC = { chain: 'recorded', import: 'imported', ltp: 'ATM LTP', bs: 'model (BS)' };
 
 const S = {
-  muted: { color: 'rgba(255,255,255,0.55)', 'font-size': '12px' },
-  label: { color: 'rgba(255,255,255,0.5)', 'font-size': '11px', 'text-transform': 'uppercase', 'letter-spacing': '0.04em' },
+  muted: mutedDim,
+  label: capsLabel,
   panel: { border: '1px solid rgba(255,255,255,0.08)', 'border-radius': '10px', background: 'rgba(255,255,255,0.015)', padding: '14px 16px', margin: '12px 0' },
   seg: { display: 'inline-flex', border: '1px solid rgba(255,255,255,0.12)', 'border-radius': '8px', overflow: 'hidden' },
   segBtn: (on) => ({ padding: '6px 12px', 'font-size': '12px', cursor: 'pointer', border: 'none', color: on ? '#fff' : 'rgba(255,255,255,0.65)', background: on ? 'rgba(57,135,229,0.35)' : 'transparent' }),
@@ -406,9 +400,7 @@ export default function PaperSimTab(props) {
   const startNow = async () => {
     setMsg('');
     try {
-      const res = await fetch('/api/paper/start', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entry: startAt().trim(), lots: Math.max(1, Number(size()) || 1), view: view() === 'next' ? 'next' : '' }) });
-      const d = await res.json();
+      const d = await postJSON('/api/paper/start', { entry: startAt().trim(), lots: Math.max(1, Number(size()) || 1), view: view() === 'next' ? 'next' : '' });
       if (!d.success) { setMsg(d.error || 'failed'); return; }
       setMsg(`Paper entry at ${d.paper.entry}`);
       await load();
@@ -418,12 +410,12 @@ export default function PaperSimTab(props) {
   const remove = async (id) => {
     const s = simById(id);
     if (!window.confirm(`Remove simulation "${s ? label(s) : id}"?`)) return;
-    await fetch('/api/paper/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, view: view(), day: day() }) });
+    await postJSON('/api/paper/remove', { id, view: view(), day: day() });
     setSel('overview');
     load();
   };
   const restoreHidden = async () => {
-    await fetch('/api/paper/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ restore: true, view: view(), day: day() }) });
+    await postJSON('/api/paper/remove', { restore: true, view: view(), day: day() });
     load();
   };
 

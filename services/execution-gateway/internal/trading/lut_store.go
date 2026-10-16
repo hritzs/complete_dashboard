@@ -168,7 +168,8 @@ func lutLoadDayFrom(stem, day string) ([]LUTEvaluation, lutDayState) {
 	return mins, st
 }
 
-// lutHHMM parses "HH:MM" (0 if not).
+// lutHHMM parses "HH:MM" into the clock number h*100+m ("09:15" -> 915;
+// 0 if not). For minutes since midnight use lutMinutesOfDay.
 func lutHHMM(s string) int {
 	var h, m int
 	if _, err := fmt.Sscanf(s, "%d:%d", &h, &m); err != nil {

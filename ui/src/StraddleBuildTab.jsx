@@ -1,22 +1,16 @@
 import { createSignal, createMemo, onCleanup, onMount, Show, For } from 'solid-js';
+import { fmt, sgn, pnlCls } from './format.js';
+import { mutedDim, capsLabel } from './styles.js';
+import { postJSON } from './api.js';
 
 // Straddle Build -- sell the ATM straddle at or above a target, sized off
 // L1-L5 depth. Several rules can run at once; each has its own build, PMS,
 // risk and audit trail. SHADOW = simulated fills; LIVE = real orders behind
 // an OK/Cancel confirm. Live state arrives as "sbuild_update" ({runs}).
 
-const fmt = (v, d = 2) => {
-  const n = Number(v);
-  return Number.isFinite(n) ? n.toFixed(d) : '—';
-};
-const sgn = (v, d = 2) => {
-  const n = Number(v);
-  return Number.isFinite(n) ? `${n >= 0 ? '+' : ''}${n.toFixed(d)}` : '—';
-};
-const pnlCls = (v) => ((Number(v) || 0) >= 0 ? 'positive' : 'negative');
 const S = {
-  muted: { color: 'rgba(255,255,255,0.55)', 'font-size': '12px' },
-  label: { color: 'rgba(255,255,255,0.5)', 'font-size': '11px', 'text-transform': 'uppercase', 'letter-spacing': '0.04em' },
+  muted: mutedDim,
+  label: capsLabel,
   panel: { border: '1px solid rgba(255,255,255,0.08)', 'border-radius': '10px', background: 'rgba(255,255,255,0.015)', padding: '14px 16px', 'margin-bottom': '12px' },
   seg: { display: 'inline-flex', border: '1px solid rgba(255,255,255,0.12)', 'border-radius': '8px', overflow: 'hidden' },
   segBtn: (on) => ({ padding: '6px 12px', 'font-size': '12px', cursor: 'pointer', border: 'none', color: on ? '#fff' : 'rgba(255,255,255,0.65)', background: on ? 'rgba(57,135,229,0.35)' : 'transparent' }),
@@ -165,8 +159,7 @@ export default function StraddleBuildTab() {
   const call = async (url, payload) => {
     setMsg('');
     try {
-      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload || {}) });
-      const d = await res.json();
+      const d = await postJSON(url, payload || {});
       if (!d.success) { setMsg(d.error || 'failed'); return false; }
       return d;
     } catch (err) { setMsg(String(err)); return false; }
