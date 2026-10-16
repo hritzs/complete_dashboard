@@ -1,9 +1,10 @@
 # What controls boosts, cuts and restrictions
 
 These are research algorithms, not a statement that a new sizing model is
-active in live execution. This reporting change does not retrain any model or
-change a strategy. Existing results did not justify adopting the latest annual
-higher-tax overlay or tick-entry filters over flat size 1.
+active in live execution. The original reporting replay does not refit archived
+models. The separate annual rerun15/16 below refits sizing models using prior
+years only, with no live change. Earlier annual higher-tax and tick-entry
+results did not justify adoption over flat size1.
 
 ## Latest annual higher-tax rule: order matters
 
@@ -148,3 +149,46 @@ each family. `Algo_Policy_Map` links all saved policy IDs to these families.
 annual sizing branches; `Algo_Opt_Replay` replays continuous allocations and
 contains executable Excel raw-size and clipping formulas. The existing master
 workbook retains all trade and period PnL comparisons.
+
+## Annual rerun of maximum-profit iterations10/11
+
+Ledger15/16 repair the sizing fit: 2021 is warmup at size1; for each later
+calendar year, fit all imputations, scales, S1/S2 scores, risk models,
+percentile references and allocation coefficients using completed prior years.
+Rebuild intraday inputs strictly before entry, using fresh quotes and backward
+as-of snapshots. Missing CW instability forces a risk flag; other imputation
+medians come from that fold's training rows. The fixed 40/40/20 score remains.
+
+The continuous rule is `raw=1+X*b`. A bounded piecewise-linear projection finds
+an offset giving training mean1. Save that offset with the model and keep it
+unchanged for the scored year: `size=clip(raw+saved_offset,.75,cap)`. Do not
+recalculate an offset from the scored year's trades. Its actual mean can be
+below or above1; exact future mean1 is not guaranteed. An ex-post flat book
+scaled by the actual mean is a diagnostic only, never a live rule.
+
+WF10 fits34 allocation inputs for maximum prior profit. WF11 fits38, adding
+prior flat-book drawdown/streak and risk predictions. The two searches use
+their declared seeds/starts/steps, coefficients bounded[-1,1], and no archived
+full-history weights or warm starts. The full settings were fixed in
+`WALKFORWARD_SIZING_SPEC.md` before inspecting new candidate PnL.
+
+Bounds retain the archived floor.75, global cap1.15 and09:16 CW cap1 for this
+specific rerun. WF11 additionally caps every dicey entry at.85, and requires
+training profit>=flat, MDD<=flat and worst day>=flat. If mean-one constraints
+are infeasible or search finds no qualifying fit, use explicit risk-only
+fallback: size.85 on dicey entries and1 otherwise. No future normalization and
+no relaxation of the risk cap occurs. Training qualifications do not constrain
+future realized DD or profit. WF10 has no mandatory dicey cap.
+
+`Algo_WF_Folds` gives each training cutoff, status and frozen offset;
+`Algo_WF_Inputs` and `Algo_WF_Coefs` retain each scoring row and annual weights;
+`Algo_WF_Replay` uses executable SUMPRODUCT and clipping formulas to replay all
+617 scoring entries for both policies. Warmup182 entries remain flat. Saved
+JSON models also retain risk/scoring transformations and percentile samples;
+`audit_walkforward_sizing.py` replays these independently without fitting.
+
+This isolates the sizing correction on the existing entry book. Legacy base
+LUT construction and fill assumptions still prevent an end-to-end unbiased
+claim. Previously researched historical years are not an untouched holdout.
+These two reruns do not add iteration12 conviction gates or iteration13
+higher-tax boosts, and do not change the live system.

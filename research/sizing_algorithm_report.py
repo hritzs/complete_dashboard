@@ -27,12 +27,15 @@ CATALOG=[
  ('A17','Higher-tax monotone maximum closure','Prior-year cell post-cost profit P, weighted count N, implications','weight=round(100*(P-N*tax)); maximum closure via min-cut / iterative Dinic; anchor count>=1; stage cascade','Boolean higher-hurdle CW cell membership','Prior years; extra tax +2/+4','Tax is a selection hurdle, not deducted PnL or calibrated probability','lut_tax_closure.py:solve; higher_tax_sizing.py:fit_masks'),
  ('A18','Annual risk-first sizing branch','Warmup flag, dicey, CW higher-tax mask, fixed boost','warmup ->1; else dicey ->.85; else stronger CW ->1.05/1.10; else1','Final modest boost/cut; risk overrides conviction','Prior-year model and masks;2021 warmup','09:16 boost allowed only under original13 plus15/17; no future normalization; no candidate adopted','higher_tax_sizing.py:assign_sizes'),
  ('A19','Tick percentile / residual entry filters','Strict pre-entry premium rank, residual, spread/range/change','Eight fixed skip/delay rules; see TICK_ENTRY_SPEC.md','Entry rejection or one-minute delay, not size boost','Within-day prefix; prior-year across-day cutoffs','None met profit+ratio qualification; not executable stat arb','tick_entry_features.py; tick_entry_eval.py'),
- ('A20','Relaxed later entry','Time cutoff and YES-neighbor support of09:20+ NO cell','R1/R2/R3/R4 fixed windows and support; entry size1 or.75','Alternative entry set and timing','Fixed candidate evaluation on saved counterfactuals','Not simply sizing original entry; legacy LUT bias remains','entry_relax_eval.py')
+ ('A20','Relaxed later entry','Time cutoff and YES-neighbor support of09:20+ NO cell','R1/R2/R3/R4 fixed windows and support; entry size1 or.75','Alternative entry set and timing','Fixed candidate evaluation on saved counterfactuals','Not simply sizing original entry; legacy LUT bias remains','entry_relax_eval.py'),
+ ('A21','Annual frozen allocation rerun','Prior-year S1/S2, numeric scalers, risk models/references, allocation b and training offset','Fit prior years only; size=clip(1+X*b+frozen_offset,.75,cap); cap1.15, early CW1, WF11 dicey.85','Forward continuous size; actual future mean is reported','2021 warmup; annual expanding fit2022–2026; no old full-history weights','Training mean1 uses breakpoint projection; never normalize scored year; strict tick prefixes; legacy base LUT/fill bias remains','walkforward_sizing.py; WALKFORWARD_SIZING_SPEC.md')
 ]
 
 
 def families(iteration,name):
     if name=='Flat size 1': return 'A00'
+    if iteration=='15': return 'A02,A03,A13,A14,A21'
+    if iteration=='16': return 'A02,A03,A09,A10,A11,A12,A13,A14,A21'
     if iteration=='13': return 'A09,A10,A11,A12,A17,A18'
     if iteration=='14': return 'A19'
     if iteration=='12': return 'A09,A10,A11,A12,A13,A14,A15'+('' if name.startswith('Previous') else ',A16')
@@ -63,7 +66,9 @@ def add_sheets(book,table,policy_map):
             '11':'Mandatory dicey ceilings.90/.85/.75; three constrained objectives each',
             '12':'S1/S2 priority gate; dicey<=.85; ordinary<=1.10; early<=1; Gentle infeasible',
             '13':'Prior-year risk+tax gates;09:16 boosts allowed; risk.85 overrides; no future balancing',
-            '14':'Strict tick prefixes; entry skip/delay; fixed multiplier1'}.get(c['id'],'Earlier split-based research; original restrictions and precise parameters in source tables')
+            '14':'Strict tick prefixes; entry skip/delay; fixed multiplier1',
+            '15':'Rebuild strict intraday inputs; all score/scaler/optimizer fits prior-year only; freeze training offset; actual mean',
+            '16':'Same annual frozen protocol plus prior-year risk/percentile gates; dicey<=.85; explicit risk-only fallback'}.get(c['id'],'Earlier split-based research; original restrictions and precise parameters in source tables')
         changes.append({'Iteration':c['id'],'Name':c['name'],'Change':change,'Protocol':c['protocol'],'Coverage':c['coverage']})
     table(book,'Algo_Changes',pd.DataFrame(changes))
     for row in policy_map: row['Algorithms']=families(row['Iteration'],row['Policy_name'])
@@ -152,6 +157,36 @@ def add_sheets(book,table,policy_map):
                     'Size_Excel':f'=MAX(I{rr},MIN(J{rr},P{rr}+H{rr}))','Excel_error':f'=Q{rr}-L{rr}'})
     table(book,'Algo_Opt_Coefs',pd.DataFrame(coefficient_rows)); table(book,'Algo_Opt_Replay',pd.DataFrame(replay))
     table(book,'Algo_Opt_Checks',pd.DataFrame(checks))
+    # Conditional walk-forward reruns: saved fold coefficients, never a refit.
+    wf=load('walkforward_sizing/walkforward_comparison.xlsx')
+    wf_inputs=wf['Model_inputs']; wf_names=list(dict.fromkeys(wf['Coefficients'].Feature))
+    wf_coefs=[];wf_rows=[];wf_input_rows=[]
+    wf_trade=wf['Trade_comparison'].set_index('Date')
+    for (year,candidate),group in wf['Coefficients'].groupby(['Year','Candidate'],sort=False):
+        policy_id='15_P01' if candidate.startswith('WF10') else '16_P01'
+        beta=group.set_index('Feature').Coefficient.reindex(wf_names,fill_value=0).to_numpy(float)
+        assert group.Frozen_offset.nunique()==1
+        offset=float(group.Frozen_offset.iloc[0]);cr=len(wf_coefs)+2
+        wf_coefs.append({'Year':int(year),'Policy':policy_id,**dict(zip(wf_names,beta)),'Offset':offset})
+        selected=wf_inputs[wf_inputs.Year.eq(year)&wf_inputs.Policy.eq(candidate)]
+        matrix=selected[wf_names].fillna(0).to_numpy(float);raw=1+matrix@beta
+        last=get_column_letter(len(wf_names)+2)
+        for i,date in enumerate(selected.Date):
+            source=wf_trade.loc[date];early=source.Leg=='CW' and source.Stage=='09:16';dice=bool(source.Dicey)
+            cap=min(1. if early else 1.15,.85 if policy_id=='16_P01' and dice else 1.15)
+            predicted=float(np.clip(raw[i]+offset,.75,cap));archived=float(source[candidate+'_size'])
+            np.testing.assert_allclose(predicted,archived,atol=1e-10,rtol=0)
+            ir=len(wf_input_rows)+2;rr=len(wf_rows)+2
+            wf_input_rows.append({'Date':date,'Policy':policy_id,**dict(zip(wf_names,matrix[i]))})
+            wf_rows.append({'Date':date,'Year':int(year),'Policy':policy_id,'Candidate':candidate,'Dicey':dice,
+                'Early0916':early,'Raw_size':raw[i],'Offset':offset,'Lower':.75,'Upper':cap,
+                'Replayed_size':predicted,'Saved_size':archived,
+                'Raw_Excel':f'=1+SUMPRODUCT(Algo_WF_Inputs!C{ir}:{last}{ir},Algo_WF_Coefs!$C${cr}:${last}${cr})',
+                'Size_Excel':f'=MAX(I{rr},MIN(J{rr},M{rr}+H{rr}))','Excel_error':f'=N{rr}-L{rr}'})
+    table(book,'Algo_WF_Inputs',pd.DataFrame(wf_input_rows));table(book,'Algo_WF_Coefs',pd.DataFrame(wf_coefs))
+    table(book,'Algo_WF_Replay',pd.DataFrame(wf_rows));table(book,'Algo_WF_Folds',wf['Training_cutoffs'])
+    paths.update([ROOT/'WALKFORWARD_SIZING_SPEC.md',ROOT/'walkforward_sizing.py',ROOT/'audit_walkforward_sizing.py'])
     return paths,{'Algorithms':len(CATALOG),'Mapped_policies':len(policy_map),'Conviction_rows':len(gate),
         'Strong':int(strong.sum()),'Eligible':int(eligible.sum()),'Annual_sizing_rows':len(annual_rows),
-        'Optimized_policies':len(checks),'Optimized_trade_rows':len(replay),'Maximum_size_replay_error':max(c['Maximum_error'] for c in checks)}
+        'Optimized_policies':len(checks),'Optimized_trade_rows':len(replay),'Maximum_size_replay_error':max(c['Maximum_error'] for c in checks),
+        'Walkforward_sizing_rows':len(wf_rows),'Walkforward_folds':len(wf_coefs)}

@@ -1,0 +1,100 @@
+{
+  "Status": "PASS",
+  "Strict_valid_inputs": 746,
+  "Entries": 799,
+  "Scored_entries": 617,
+  "Maximum_replay_error": 4.440892098500626e-16,
+  "Folds": [
+    {
+      "Year": 2022,
+      "Policy": "WF10",
+      "Status": "Optimized on prior years",
+      "Training_mean": 1.0000000000000002,
+      "Scored_mean": 1.0400171740920483,
+      "Entries": 175
+    },
+    {
+      "Year": 2022,
+      "Policy": "WF11",
+      "Status": "Optimized on prior years",
+      "Training_mean": 1.0,
+      "Scored_mean": 0.9691466798882771,
+      "Entries": 175
+    },
+    {
+      "Year": 2023,
+      "Policy": "WF10",
+      "Status": "Optimized on prior years",
+      "Training_mean": 1.0000000000000002,
+      "Scored_mean": 0.8844003019896483,
+      "Entries": 82
+    },
+    {
+      "Year": 2023,
+      "Policy": "WF11",
+      "Status": "Optimized on prior years",
+      "Training_mean": 0.9999999999999999,
+      "Scored_mean": 0.9333821337873578,
+      "Entries": 82
+    },
+    {
+      "Year": 2024,
+      "Policy": "WF10",
+      "Status": "Optimized on prior years",
+      "Training_mean": 1.0000000000000002,
+      "Scored_mean": 0.9398158050873823,
+      "Entries": 165
+    },
+    {
+      "Year": 2024,
+      "Policy": "WF11",
+      "Status": "Optimized on prior years",
+      "Training_mean": 1.0000000000000004,
+      "Scored_mean": 0.9534046975371964,
+      "Entries": 165
+    },
+    {
+      "Year": 2025,
+      "Policy": "WF10",
+      "Status": "Optimized on prior years",
+      "Training_mean": 1.0,
+      "Scored_mean": 0.9577799461560753,
+      "Entries": 115
+    },
+    {
+      "Year": 2025,
+      "Policy": "WF11",
+      "Status": "Optimized on prior years",
+      "Training_mean": 0.9999999999999997,
+      "Scored_mean": 0.9617060761731484,
+      "Entries": 115
+    },
+    {
+      "Year": 2026,
+      "Policy": "WF10",
+      "Status": "Optimized on prior years",
+      "Training_mean": 1.0000000000000002,
+      "Scored_mean": 1.0343661410565956,
+      "Entries": 80
+    },
+    {
+      "Year": 2026,
+      "Policy": "WF11",
+      "Status": "Optimized on prior years",
+      "Training_mean": 0.9999999999999997,
+      "Scored_mean": 0.9475783748858959,
+      "Entries": 80
+    }
+  ],
+  "Checks": [
+    "SHA256 inputs and outputs",
+    "strict tick and daily reference cutoffs",
+    "valid source size and mtime fingerprints",
+    "sequential prior DD and streak",
+    "training/scoring separation",
+    "saved percentile references and Q75",
+    "frozen coefficients, scalers, offset and bounds replay",
+    "no scoring-period normalization",
+    "saved standardized inputs and PnL"
+  ]
+}

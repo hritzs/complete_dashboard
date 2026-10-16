@@ -149,7 +149,7 @@ def summaries(config,d,policies,grouping):
         'FY':pd.Series(np.where(dates.dt.month.ge(4),year,year-1)).map(lambda y:f'FY{y}-{y+1}')}
     if grouping=='Overview':
         selections={'All_history':np.ones(len(d),bool)}
-        if config['kind'] in ('tax','tick'):
+        if config['kind'] in ('tax','tick') or config.get('warmup_year')==2021:
             selections.update(Warmup_2021=year.eq(2021).to_numpy(),Scored_2022plus=year.ge(2022).to_numpy())
         elif 'Part' in d:
             selections.update({str(k):d.Part.eq(k).to_numpy() for k in d.Part.dropna().unique()})
@@ -367,11 +367,12 @@ def main():
                     if mask.any(): group_rows.append({'Policy':k,'Grouping':typ,'Group':value,
                         **stats(p['pnl'][mask],p['active'][mask],p['size'][mask],base[mask])})
         table(book,prefix+'_Trades',pd.DataFrame(trade_columns)[union]); table(book,prefix+'_Daily',pd.DataFrame(daily_columns))
-        representative={'11':'Dicey<=0.85: Minimum DD','13':'Tax+2 boost1.1','14':'Delaycheap'}.get(prefix)
+        representative={'11':'Dicey<=0.85: Minimum DD','13':'Tax+2 boost1.1','14':'Delaycheap',
+            '15':'WF10 maximum profit','16':'WF11 dicey0.85 maximum profit'}.get(prefix)
         selected=next((j for j,p in enumerate(policies) if p['name']==representative),None)
         if selected is not None:
             from openpyxl.chart import LineChart, Reference
-            daily_ws=book[prefix+'_Daily']; rowbase={'11':2,'13':30,'14':58}[prefix]
+            daily_ws=book[prefix+'_Daily']; rowbase={'11':2,'13':30,'14':58,'15':86,'16':114}[prefix]
             for metric,basecol,anchor in [('Equity',5,'A'),('DD',6,'Q')]:
                 chart=LineChart(); chart.title=c['name']+' — '+metric; chart.width=25; chart.height=13
                 chart.y_axis.title='Normalized PnL'; chart.x_axis.title='Trading day'; chart.style=13

@@ -1,7 +1,7 @@
 {
   "Status": "PASS",
-  "Iterations": 14,
-  "Daily_policy_paths": 189,
+  "Iterations": 16,
+  "Daily_policy_paths": 193,
   "Periodic_reconciliation": [
     {
       "Iteration": "01",
@@ -100,6 +100,20 @@
       "Days": 1430,
       "Trade_rows": 799,
       "Periodic_reconciliation": "PASS"
+    },
+    {
+      "Iteration": "15",
+      "Policies": 2,
+      "Days": 1430,
+      "Trade_rows": 799,
+      "Periodic_reconciliation": "PASS"
+    },
+    {
+      "Iteration": "16",
+      "Policies": 2,
+      "Days": 1430,
+      "Trade_rows": 799,
+      "Periodic_reconciliation": "PASS"
     }
   ],
   "Risk_replay": {
@@ -116,15 +130,17 @@
     "Dicey": 175
   },
   "Algorithms": {
-    "Algorithms": 21,
-    "Mapped_policies": 189,
+    "Algorithms": 22,
+    "Mapped_policies": 193,
     "Conviction_rows": 799,
     "Strong": 166,
     "Eligible": 32,
     "Annual_sizing_rows": 3196,
     "Optimized_policies": 15,
     "Optimized_trade_rows": 11985,
-    "Maximum_size_replay_error": 8.881784197001252e-16
+    "Maximum_size_replay_error": 8.881784197001252e-16,
+    "Walkforward_sizing_rows": 1234,
+    "Walkforward_folds": 10
   },
   "Excel_formulas": "Recalculate on open; static replay values also provided"
 }

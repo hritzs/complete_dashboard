@@ -2,8 +2,10 @@
   "Stage": "verified",
   "Input_sha256": {
     "RISK_FORMULAS.md": "ebd8651d8ce6a4325c061821924d4460eb5ef6eccd202b41647b523dbefac54b",
-    "SIZING_ALGORITHMS.md": "08c74555883d18d83908d3587189fe8e1ba85d96128cc89321e6d92bd6667b9b",
-    "build_research_ledger.py": "ef4023397da1191691555c5867d518435a08be8623082135a5030c4256e63326",
+    "SIZING_ALGORITHMS.md": "85549b942ef39acc6e1f3285da45ee52b66a04e9d3271afdba629d8c1dd1cc5c",
+    "WALKFORWARD_SIZING_SPEC.md": "b3d97d18350ccf74ef8f98ac338801701dafa214854572bdc610861a58312286",
+    "audit_walkforward_sizing.py": "5ddc35ac75b09c0b4cc5823e69826160be03923cbf9690dba3cfa04627f7fb14",
+    "build_research_ledger.py": "0e4717351211296fdaa7f6517a36205b1a256c7be1aba8384f938c9ec8541393",
     "output/backtest_relax/run_027bf0249b/days/2021-01-01.pkl": "86048a37fd271d5e4679db158b241d5fd25c0f03fc7055493dd8f8db750cadd3",
     "output/backtest_relax/run_027bf0249b/days/2021-01-04.pkl": "28351d9d5bca8b194bd4fa0ed56d592f321e579c535bc936a629884ce172593c",
     "output/backtest_relax/run_027bf0249b/days/2021-01-05.pkl": "5504056bd40cafe4545fe96fd6e8a483a30dbb38d4601f4c5411281414ded472",
@@ -1456,21 +1458,25 @@
     "output/sizing_v6_borderline_report.xlsx": "9a7a0d2e3dc59d7045bb2e2a07939156106f9427a8742a5a4897b6c0dda47486",
     "output/sizing_vrp_report.xlsx": "534941467d36edd7c1dd6a4f9d27b78e4009109afde5afcaef4ecccf8de87ec8",
     "output/tick_entry_study/tick_entry_comparison.xlsx": "747d04f526d6721e1b2d2f94cd72de4396070e6da271f2d4143d9b5c4dec23d0",
-    "research_iterations.json": "63b9841f3a5c6c7f626e695673097431ea702885d1ee180e05fd82fd4b0c0174",
-    "sizing_algorithm_report.py": "c5ddc78caf94b2e44de7cd05af38c93cc3830fd57de608301b728f1314f773e9",
+    "output/walkforward_sizing/walkforward_comparison.xlsx": "abc2797384aff05dcba634e6e1a356d70724ac31ea5f506a87a6fe4538a59e11",
+    "output/walkforward_sizing/wf10.xlsx": "9e8e3fec63291b05781c49e22b575e9a3f9e8fe294615408efbdf4292900b87a",
+    "output/walkforward_sizing/wf11.xlsx": "f375732d5794ec90bf8c99965e5f2cf38d6adee1f1544934c7e84c022a408908",
+    "research_iterations.json": "fd401fa6bd5d293ee374eb97415cb32baf37c4739a19642e5b45888942c4aba4",
+    "sizing_algorithm_report.py": "f7ade6f8f40fb5c18558855607ab215f7e694c8dee7663031dbe52d9f01e28f5",
+    "walkforward_sizing.py": "cf1a1bd1433f7b2b857ced428252a571e6e83cf9504ea7795a5a2e040af62ec2",
     "/mnt/shared/Hardik/Project_Codes/GammaShortDailyProcess/GammaShortDailydata.csv": "70b3293e8ef0b67910535cae7cb9190b26975b3a36b6ed625471c855efe0ea07",
-    "verify_research_ledger.py": "be58bec6f66f6009259dcd3d5ae6f35e37b4d48579ba4cb9dbae62bb500d97bb"
+    "verify_research_ledger.py": "3a5d0997a7f20410ce58e0d436279905d71c1c07e6800e11449c9f435bc5160f"
   },
   "Output_sha256": {
-    "audit.json": "2368c5e00a5f497ffc7cdc4f5b7efbc8dad0b2e0dbdcb10d399dd2fbb63848f9",
-    "Sizing_Algorithms_Explained.xlsx": "07267a9317d91d39e436cbe02da243f059c06f96be9cd2a14fd1ebeda7a30e06",
+    "audit.json": "5bcaca3e666afe06e024ead8a9b18c494625b6d082d261ab16d0eee2839ad669",
+    "Sizing_Algorithms_Explained.xlsx": "0b5a0139d5e21e10ec02e3b553112b0c5e5a964f783b2629c4cd3f87d360fc42",
     "Risk_Formulas_Calculated.xlsx": "bfb7a5015236650c25b6b372994011e83828bdcf8945ce6f812246c3943963c4",
-    "Risk_Formulas.xlsx": "efc2bf4ee11ece5ddfeb10e81046f671e0880ba42e24d5aeefa546b9ddad6975",
-    "iteration_index.csv": "19127f5eb9d4368e919914cba219bb318ab3368844bfe03f2fdd978ca779249a",
-    "verification.json": "d430f15105f49c47eac0c5b3d79a781970a38c59d0745651b580f0cdef3cdd1d",
-    "GammaShort_Research_Ledger.xlsx": "d5d54ede8822f76b4d38fef4e89a2e46b2d84c7100f4fdd0777f08cbec23f1b3",
-    "Sizing_Algorithms_Calculated.xlsx": "001e65d87eda07b83eac9aa927760b1ad91c803d841e033829c76f29f116e399",
-    "all_iterations_summary.csv": "9ccd58c40e261254e7c4cf4d05ac52f175eae95aebcddcc1f9231763061f476f",
-    "README.md": "07d186160322bfd706cfb2b244c938b52b1ab17f5fdda6d22abfcedb58c666d9"
+    "Risk_Formulas.xlsx": "764721eba362011b9fb9a1a84bc6bb81116aca611d33795f75a72d257d22a7b2",
+    "iteration_index.csv": "d7c40db5654c0e29ccdc099eb7bb787ffe7b99f80ed8dda9823be4f4801d6b5d",
+    "verification.json": "13807680e1fe72242a302b1ee2197e341f67036eb3f13d85cd2efe092c6e8d84",
+    "GammaShort_Research_Ledger.xlsx": "b1f2a2a16855945a9c5e3f794e01ebe2702c889e72b7e1bbb243400f31d99634",
+    "Sizing_Algorithms_Calculated.xlsx": "58d015f798f7d6a3eac08400045650e841bd098589f586ae9c5219263b5ffd25",
+    "all_iterations_summary.csv": "f8d6c508b40da309d5fa31452e577706a93061d48477dce6bddddfc7e68921f3",
+    "README.md": "218af50403f082258a07e3e45a7671fe92a91e49c7699ca18a7ab32cd22e8d82"
   }
 }

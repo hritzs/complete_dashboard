@@ -1,14 +1,14 @@
 # GammaShort research ledger
 
-Open `GammaShort_Research_Ledger.xlsx`. This combines 14 saved research iterations
-and 189 daily policy paths. It does not refit strategies or change live trading.
+Open `GammaShort_Research_Ledger.xlsx`. This combines 16 saved research iterations
+and 193 daily policy paths. It does not refit strategies or change live trading.
 The original source workbooks remain unchanged.
 
 ## Workbook navigation
 
 - **START_HERE**: iteration index, dates, coverage, research protocol and source.
 - **All_Iterations**: overall and saved split/warmup/scored-period metrics.
-- **01_… through 14_…**: separate sheets for each iteration, described below.
+- **01_… through 16_…**: separate sheets for each iteration, described below.
 - **Risk_Trade_Replay**: all 799 original risk predictions, raw instability
   readings, component ranks, realized outcomes, flags and verified replay.
 - **Risk_Excel_Formulas**: executable Excel formulas for those 799 trades.
@@ -128,3 +128,25 @@ For a new iteration, append a new ID/source/protocol/coverage entry to
 and verify the ledger. Add a loader if its daily artifact schema is new. Report
 an iteration as complete only after its trade and period outputs are included.
 The registry and this convention preserve the owner's request for future work.
+
+
+## Annual reruns15/16
+
+The separate past-only reruns preserve the old10/11 archives. Annual models
+fit completed prior years;2021 warmup stays1. Strict-prefix inputs and frozen
+training offsets replace entry-window and future mean balancing. Scoring
+mean is reported as observed. Original taxes and archived09:16 CW cap1 remain;
+WF11 dicey cap.85 overrides all optimized boosts. See15_/16_Trades and their
+quarterly/yearly/monthly/FY sheets; Source_tables retains scalers, S1/S2/risk
+coefficients, references and formula definitions. `Algo_WF_Folds`,
+`Algo_WF_Inputs`, `Algo_WF_Coefs` and `Algo_WF_Replay` retain annual settings
+and1,234 executable sizing replays. The separate rerun workbook contains
+2022+ equity/DD charts. All remain conditional on legacy base LUT/fill bias.
+
+| Policy | Net | MDD | Worst day | Net/DD | Mean size |
+|---|---:|---:|---:|---:|---:|
+| Flat size 1 | 7,593.21 | 144.37 | -61.28 | 52.60 | 1.000000 |
+| WF10 maximum profit | 7,547.88 | 152.63 | -70.47 | 49.45 | 0.976479 |
+| WF11 dicey0.85 maximum profit | 7,435.66 | 138.66 | -53.87 | 53.63 | 0.956000 |
+
+Neither rerun passes the declared forward qualification (higher net, higher net/DD and no worse worst day).

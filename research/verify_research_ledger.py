@@ -79,19 +79,23 @@ def main():
         assert original.columns.tolist()==calculated.columns.tolist()
         pd.testing.assert_frame_equal(original,calculated,check_dtype=False,atol=1e-12,rtol=1e-12)
     algorithms=load_workbook(OUT/'Sizing_Algorithms_Calculated.xlsx',read_only=True,data_only=True)
-    annual=frame(algorithms,'Algo_Annual'); opt=frame(algorithms,'Algo_Opt_Replay')
+    annual=frame(algorithms,'Algo_Annual'); opt=frame(algorithms,'Algo_Opt_Replay'); wf=frame(algorithms,'Algo_WF_Replay')
     algorithm_errors={}
     for df,key,expected in [(annual,'Size_Excel','Saved_size'),(opt,'Raw_Excel','Raw_size'),(opt,'Size_Excel','Saved_size')]:
         actual=pd.to_numeric(df[key],errors='raise').to_numpy(float); target=df[expected].to_numpy(float)
         np.testing.assert_allclose(actual,target,atol=1e-9,rtol=0)
         algorithm_errors[('Annual_' if df is annual else 'Optimized_')+key]=float(np.max(abs(actual-target)))
-    for name in ('Algo_Opt_Inputs','Algo_Opt_Coefs'):
+    for key,target in [('Raw_Excel','Raw_size'),('Size_Excel','Saved_size')]:
+        actual=pd.to_numeric(wf[key],errors='raise').to_numpy(float)
+        np.testing.assert_allclose(actual,wf[target].to_numpy(float),atol=1e-9,rtol=0)
+        algorithm_errors['Walkforward_'+key]=float(np.max(abs(actual-wf[target].to_numpy(float))))
+    for name in ('Algo_Opt_Inputs','Algo_Opt_Coefs','Algo_WF_Inputs','Algo_WF_Coefs','Algo_WF_Folds'):
         pd.testing.assert_frame_equal(frame(book,name),frame(algorithms,name),check_dtype=False,atol=1e-12,rtol=1e-12)
     gate=frame(book,'Algo_Conviction')
     expected=gate.Leg.eq('CW')&~gate.Dicey.astype(bool)&gate.S1.ge(gate.S1_cutoff)&gate.S2.ge(gate.S2_cutoff)&gate.Loss_probability.le(gate.Loss_cutoff)
     np.testing.assert_array_equal(expected,gate.Strong)
     np.testing.assert_array_equal(expected&~gate.Early0916.astype(bool),gate.Boost_eligible)
-    for sheet in ('Algo_Annual','Algo_Opt_Replay'):
+    for sheet in ('Algo_Annual','Algo_Opt_Replay','Algo_WF_Replay'):
         static=frame(book,sheet); calculated=frame(algorithms,sheet)
         for col in ('Date','Saved_size'):
             pd.testing.assert_series_equal(static[col],calculated[col],check_dtype=False,atol=1e-12,rtol=1e-12)
@@ -101,6 +105,7 @@ def main():
         'Sheets':sheet_count,'Spreadsheet_engine':'LibreOffice headless; stored cached formula results verified',
         'Spreadsheet_risk_rows':len(engine),'Maximum_formula_errors':errors,
         'Annual_sizing_formula_rows':len(annual),'Optimized_sizing_formula_rows':len(opt),
+        'Walkforward_sizing_formula_rows':len(wf),
         'Maximum_algorithm_formula_errors':algorithm_errors,
         'Checks':['input/output hashes','every daily equity/DD','trade totals and execution counts',
             'every quarterly/yearly/monthly/FY net and reset DD','actual spreadsheet formulas and flags',

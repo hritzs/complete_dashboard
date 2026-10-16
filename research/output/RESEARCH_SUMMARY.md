@@ -2,7 +2,58 @@
 
 Updated 2026-10-15. This is offline research; it contains no authorization to change live trading behavior.
 
-## Latest: what controls boosts, cuts, restrictions and allocation
+## Latest: annual past-only maximum-profit sizing rerun
+
+Completed the preregistered past-only maximum-profit reruns, stored separately as
+ledger15 (WF10) and16 (WF11 dicey ceiling0.85). Original10/11 archives remain
+in sample and unchanged. Specification: `../WALKFORWARD_SIZING_SPEC.md`; basic to
+detailed explanation: `../WALKFORWARD_EXPLAINED.md`.
+
+2021 has182 warmup entries at size1. Annual expanding fits score617 entries
+from2022–2026. Strict pre-entry extraction is valid for746/799 entries;
+missing CW instability forces dicey, and other missing values use training
+medians. Every fitted scaler, S1/S2/risk model, percentile reference, cutoff,
+allocation coefficient and mean-one training offset is frozen before its
+scoring year. Actual forward mean is reported; no future renormalization.
+Original taxes13/5/2/2/6 and archived09:16 CW cap1 remain for these two reruns.
+WF11 dicey<=0.85 is mandatory; WF10 has no dicey cap. The prior-fitted gate
+flags232/617 scored entries; their WF11 mean is0.829738,
+versus1.032086 for non-dicey entries.
+
+Scored2022+ (same617 original entries, warmup excluded):
+
+| Policy | Net | MDD | Worst day | Net/DD | Mean size |
+|---|---:|---:|---:|---:|---:|
+| Flat size 1 | 7,593.21 | 144.37 | -61.28 | 52.60 | 1.000000 |
+| WF10 maximum profit | 7,547.88 | 152.63 | -70.47 | 49.45 | 0.976479 |
+| WF11 dicey0.85 maximum profit | 7,435.66 | 138.66 | -53.87 | 53.63 | 0.956000 |
+
+- WF10 maximum profit: net change -0.60%; MDD change +5.72%; 239 cuts/267 boosts; extra versus ex-post same-mean flat +133.27.
+- WF11 dicey0.85 maximum profit: net change -2.07%; MDD change -3.95%; 317 cuts/205 boosts; extra versus ex-post same-mean flat +176.55.
+
+Neither rerun passes the declared forward qualification (higher net, higher net/DD and no worse worst day). Every annual fold found a qualifying training fit; no fallback was used. No live policy is adopted by this research.
+WF11 sacrifices2.07% net for3.95% lower DD. Its mean0.956 also reduces activity.
+Against an ex-post uniformly scaled flat book at that same mean, WF11 gains
+176.55 net but has DD138.66 versus138.01. This is not evidence of a large
+profit increase at unchanged exposure; arithmetic mean is an activity proxy.
+No settings were retuned after viewing scored performance.
+The next requirement for an end-to-end test is a prior-year rebuild of the
+base entry LUTs and a causal execution/fill audit, with untouched later data.
+These overlay results remain conditional on the legacy broad-history entry
+book and fills; previously researched years are not an untouched holdout.
+
+`walkforward_sizing/walkforward_comparison.xlsx` stores all trades,
+daily sizes/PnL, quarterly/yearly comparisons, models, scalers, S1 buckets,
+S2/risk coefficients, percentile samples, formulas and equity/DD charts.
+Master ledger15_/16_ adds monthly/financial-year/group reports. `Algo_WF_*`
+sheets replay1,234 scoring sizes using saved annual coefficients and executable
+SUMPRODUCT/clipping formulas. Independent frozen-model replay and source
+cutoff/fingerprint checks pass; five focused tests pass. The master now has
+16 iterations/193 policy paths/211 sheets;
+20,651 period rows reconcile, alongside the original spreadsheet
+checks and1,234 new spreadsheet-engine sizing calculations.
+
+## Previous: what controls boosts, cuts, restrictions and allocation
 
 `../SIZING_ALGORITHMS.md` documents the exact research algorithms and their
 version-specific priorities. The master ledger now has185 sheets, including12

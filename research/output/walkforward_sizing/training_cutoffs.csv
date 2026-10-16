@@ -1,0 +1,11 @@
+Year,Policy,Train_until,Last_training_entry,First_scored_entry,Training_entries,Scored_entries,Status,Feasible_mean_one,Qualified_training,Frozen_offset,Evaluations
+2022,WF10 maximum profit,2021-12-31,2021-12-31,2022-01-04,182,175,Optimized on prior years,True,True,1.4407540064497237,2613
+2022,WF11 dicey0.85 maximum profit,2021-12-31,2021-12-31,2022-01-04,182,175,Optimized on prior years,True,True,1.1740179814212428,2417
+2023,WF10 maximum profit,2022-12-31,2022-12-29,2023-01-02,357,82,Optimized on prior years,True,True,1.1071192724148515,2545
+2023,WF11 dicey0.85 maximum profit,2022-12-31,2022-12-29,2023-01-02,357,82,Optimized on prior years,True,True,1.1797428399507592,2417
+2024,WF10 maximum profit,2023-12-31,2023-12-29,2024-01-02,439,165,Optimized on prior years,True,True,1.242618962178735,2613
+2024,WF11 dicey0.85 maximum profit,2023-12-31,2023-12-29,2024-01-02,439,165,Optimized on prior years,True,True,1.1558571828161275,2417
+2025,WF10 maximum profit,2024-12-31,2024-12-31,2025-01-01,604,115,Optimized on prior years,True,True,0.6061270034978651,2613
+2025,WF11 dicey0.85 maximum profit,2024-12-31,2024-12-31,2025-01-01,604,115,Optimized on prior years,True,True,1.3942897304573822,2265
+2026,WF10 maximum profit,2025-12-31,2025-12-18,2026-01-01,719,80,Optimized on prior years,True,True,0.854299075814164,2613
+2026,WF11 dicey0.85 maximum profit,2025-12-31,2025-12-18,2026-01-01,719,80,Optimized on prior years,True,True,1.2574993245350412,2417
