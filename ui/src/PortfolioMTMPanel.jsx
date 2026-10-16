@@ -91,8 +91,21 @@ export default function PortfolioMTMPanel() {
     } catch (e) { setMsg(String(e)); }
   };
 
+  // Collapsed by default: the header (status, day MTM, Square off ALL) stays
+  // live on a slow poll; opening it refreshes at once and polls every second.
+  // The book / SL rule runs on the server either way -- this is display only.
+  const [open, setOpen] = createSignal(false);
   let timer;
-  onMount(() => { load(); timer = setInterval(() => { if (!document.hidden) load(); }, 1000); });
+  let ticks = 0;
+  const toggle = () => { const o = !open(); setOpen(o); if (o) load(); };
+  onMount(() => {
+    load();
+    timer = setInterval(() => {
+      ticks++;
+      if (document.hidden) return;
+      if (open() || ticks % 5 === 0) load();
+    }, 1000);
+  });
   onCleanup(() => clearInterval(timer));
 
   const st = () => d()?.state || {};
@@ -118,12 +131,19 @@ export default function PortfolioMTMPanel() {
     <div style={{ margin: '0 0 14px', padding: '12px 14px', border: `1px solid ${exiting() ? '#c98500' : st().status === 'ARMED' ? 'rgba(46,125,50,0.6)' : 'rgba(255,255,255,0.10)'}`, 'border-radius': '10px', background: exiting() ? 'rgba(201,133,0,0.06)' : 'rgba(255,255,255,0.015)' }}>
       {/* header */}
       <div style={{ display: 'flex', gap: '12px', 'align-items': 'center', 'flex-wrap': 'wrap' }}>
-        <strong style={{ 'font-size': '15px' }}>Portfolio — complete position</strong>
+        <strong style={{ 'font-size': '15px', cursor: 'pointer', 'user-select': 'none' }} onClick={toggle}
+          title={open() ? 'Hide the complete position' : 'Show the complete position'}>
+          {open() ? '▾' : '▸'} Portfolio — complete position
+        </strong>
         <span style={{ padding: '1px 8px', 'border-radius': '8px', 'font-size': '12px', background: STATUS_BG[st().status] || '#455a64' }}>{st().status || '…'}</span>
+        <Show when={!open()}>
+          <span style={{ 'font-size': '13px' }}>Day MTM <strong class={cls(view().day_mtm)}>{money(view().day_mtm)}</strong></span>
+        </Show>
         <span style={{ opacity: 0.6, 'font-size': '12px' }}>{cfg().broker_name}/{cfg().account_id} · live {view().at || '…'} · {openTrades().length} open trade(s) · {(view().trades || []).length} today</span>
         <button class="dashboard-btn red" style={{ 'margin-left': 'auto', 'font-weight': 700 }} onClick={squareOffAll}
           title="Emergency: normal Full Exit on every trade holding a position, now">Square off ALL</button>
       </div>
+      <Show when={open()}>
 
       {/* KPIs */}
       <div style={{ display: 'flex', gap: '18px', 'flex-wrap': 'wrap', 'margin-top': '10px', 'align-items': 'flex-end' }}>
@@ -243,6 +263,8 @@ export default function PortfolioMTMPanel() {
         </Show>
         <span style={{ 'font-size': '12px', opacity: 0.8 }}>{msg()}</span>
       </div>
+      </Show>
+      <Show when={!open() && msg()}><div style={{ 'font-size': '12px', opacity: 0.8, 'margin-top': '4px' }}>{msg()}</div></Show>
     </div>
   );
 }

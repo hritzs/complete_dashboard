@@ -3,8 +3,10 @@ package trading
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 	"trading-platform/libs/contracts"
 )
 
@@ -236,6 +238,85 @@ func TestManualHedgeLots_SplitsAcrossMultipleTranchesWhenAboveFreezeLimit(t *tes
 	// CE side BUY: 4000 - 3445 = 555. PE side SELL: 4000 + 3445 = 7445.
 	if got.CEQty != 555 || got.PEQty != 7445 {
 		t.Fatalf("CE/PE after hedge = %d/%d, want 555/7445 (the full 3445 qty applied across both tranches)", got.CEQty, got.PEQty)
+	}
+}
+
+// restingCEHedgeExecutor rests the first CE order with nothing filled until
+// it is re-priced; PE orders fill at once. Records the call sequence.
+type restingCEHedgeExecutor struct {
+	mu       sync.Mutex
+	registry *OrderEventRegistry
+	calls    []string
+	uidByID  map[string]string
+	nextID   int
+}
+
+func (e *restingCEHedgeExecutor) ExecuteOrderIntent(ctx context.Context, in OrderIntent) (*ExecutionResult, error) {
+	e.mu.Lock()
+	e.nextID++
+	id := fmt.Sprintf("R%d", e.nextID)
+	e.calls = append(e.calls, "submit "+in.LegType)
+	e.uidByID[id] = in.TradeUID
+	e.mu.Unlock()
+	if in.LegType == "PE" {
+		e.registry.Publish(contracts.OrderUpdate{TradeID: in.TradeUID, BrokerOrderID: id, Status: "FILLED", FilledQty: in.Quantity})
+	} else {
+		e.registry.Publish(contracts.OrderUpdate{TradeID: in.TradeUID, BrokerOrderID: id, Status: "ACKED"})
+	}
+	return &ExecutionResult{IntentID: in.IntentID, BrokerOrderID: id, Status: "SUBMITTED"}, nil
+}
+
+func (e *restingCEHedgeExecutor) GetVerifiedFills(ctx context.Context) ([]BrokerFill, error) {
+	return nil, nil
+}
+
+func (e *restingCEHedgeExecutor) ModifyOrderPrice(ctx context.Context, brokerOrderID string, price float64, quantity int64, lotSize int) error {
+	e.mu.Lock()
+	e.calls = append(e.calls, "modify "+brokerOrderID)
+	uid := e.uidByID[brokerOrderID]
+	e.mu.Unlock()
+	e.registry.Publish(contracts.OrderUpdate{TradeID: uid, BrokerOrderID: brokerOrderID, Status: "FILLED", FilledQty: quantity})
+	return nil
+}
+
+func (e *restingCEHedgeExecutor) CancelOrder(ctx context.Context, brokerOrderID string) error {
+	return nil
+}
+
+// TestHedgeTranche_SendsBothLegsBeforeWaiting: a resting CE must not hold
+// back the PE (the old loop waited up to 8s on CE before sending PE), and
+// the CE is re-priced after one short wait, not 8s.
+func TestHedgeTranche_SendsBothLegsBeforeWaiting(t *testing.T) {
+	tr := newTestSquareOffTrade("TRD_HEDGE_PARALLEL")
+	store := NewMemoryStore()
+	store.SaveTrade(tr)
+	store.SaveSnapshot(TradeSnapshot{TradeUID: tr.TradeUID, NetDelta: -65})
+	registry := NewOrderEventRegistry()
+	registry.SetHealthy(true)
+	exec := &restingCEHedgeExecutor{registry: registry, uidByID: map[string]string{}}
+	svc := &Service{
+		Store:             store,
+		BrokerFactory:     &fakeBrokerFactory{executor: exec},
+		OrderEvents:       registry,
+		Snapshot:          fakeHedgeChainSnapshot{},
+		freezeQtyBySymbol: map[string]int64{"NIFTY": 1755},
+	}
+
+	start := time.Now()
+	if err := svc.ManualHedgeLots(context.Background(), tr.TradeUID, 1); err != nil {
+		t.Fatalf("ManualHedgeLots: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	// Both legs are sent concurrently (either may reach the broker first),
+	// and both before the resting CE is re-priced.
+	if len(exec.calls) != 3 || !strings.HasPrefix(exec.calls[2], "modify ") ||
+		map[string]bool{exec.calls[0]: true, exec.calls[1]: true}["submit CE"] != true ||
+		map[string]bool{exec.calls[0]: true, exec.calls[1]: true}["submit PE"] != true {
+		t.Fatalf("call sequence = %v, want both submits (any order) then one modify of the CE", exec.calls)
+	}
+	if elapsed > 3*time.Second {
+		t.Fatalf("hedge took %s, want about one 1.5s attempt wait", elapsed)
 	}
 }
 

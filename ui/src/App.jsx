@@ -775,7 +775,12 @@ function App() {
         t.gamma += Number(m.net_gamma ?? item.netGamma ?? 0) || 0;
         t.theta += Number(m.net_theta ?? item.netTheta ?? 0) || 0;
         t.vega += Number(m.net_vega ?? item.netVega ?? 0) || 0;
-        t.unrealized += Number(m.unrealized_pnl ?? item.unrealizedPnl ?? 0) || 0;
+        // The monitor's total_pnl is the trade's whole fill-based PnL
+        // (realized from hedges / exits included), so unrealized is that
+        // minus what exits booked -- realized + unrealized = total, once.
+        t.unrealized += m.total_pnl != null
+          ? (Number(m.total_pnl) || 0) - (Number(item.realizedPnl ?? 0) || 0)
+          : Number(m.unrealized_pnl ?? item.unrealizedPnl ?? 0) || 0;
         t.wing += Number(m.wing_pnl) || 0;
       }
       // Live straddle builds (their open trade row is shown from the build's PMS).
@@ -2853,7 +2858,9 @@ function App() {
                         const ceQty = () => qtyOf("CE", leg("CE")?.quantity ?? live().ce_quantity ?? item.ceQty ?? 0);
                         const peQty = () => qtyOf("PE", leg("PE")?.quantity ?? live().pe_quantity ?? item.peQty ?? 0);
                         const qtyText = (q) => (Number(q) < 0 ? `+${-Number(q)} long` : String(q));
-                        // "22750: 4680 · 22850: 650 long" when held at more than one strike.
+                        // "22750: 4680 · 22850: 650 long" when held at more than one strike;
+                        // hover tooltip only, so hedge strikes don't widen the row past
+                        // the Actions column.
                         const splitOf = (type) => (netLegs(type).length > 1
                           ? netLegs(type).map((p) => `${fmt(p.strike, 0)}: ${Math.abs(Number(p.quantity) || 0)}${String(p.action || "").toUpperCase() === "BUY" ? " long" : ""}`).join(" · ")
                           : "");
@@ -2865,7 +2872,12 @@ function App() {
                         // exits included); the live monitor only values the legs
                         // still open, so for an open trade total = realized + open MTM.
                         const rPnl = () => Number(item.realizedPnl ?? live().realized_pnl ?? 0) || 0;
-                        const uPnl = () => isClosed() ? 0 : (Number(live().unrealized_pnl ?? item.unrealizedPnl ?? 0) || 0);
+                        // Open: the monitor's total_pnl already holds every fill's
+                        // realized PnL (hedges, partial exits), so unrealized is the
+                        // rest of it.
+                        const uPnl = () => isClosed() ? 0 : (live().total_pnl != null
+                          ? (Number(live().total_pnl) || 0) - rPnl()
+                          : (Number(live().unrealized_pnl ?? item.unrealizedPnl ?? 0) || 0));
                         const totalPnl = () => (isClosed() ? rPnl() : rPnl() + uPnl());
 
                         // Closed: realized / (lots x lot size) from the summary.
@@ -2937,9 +2949,9 @@ function App() {
                                   </div>
                                 </Show>
                               </td>
-                              <td style={{ padding: "10px" }}>{qtyText(ceQty())}<Show when={splitOf("CE")}><div style={{ "font-size": "11px", opacity: 0.7 }}>{splitOf("CE")}</div></Show></td>
+                              <td style={{ padding: "10px" }} title={splitOf("CE")}>{qtyText(ceQty())}</td>
                               <td style={{ padding: "10px" }}>₹{fmt(ceLtp(), 2)}</td>
-                              <td style={{ padding: "10px" }}>{qtyText(peQty())}<Show when={splitOf("PE")}><div style={{ "font-size": "11px", opacity: 0.7 }}>{splitOf("PE")}</div></Show></td>
+                              <td style={{ padding: "10px" }} title={splitOf("PE")}>{qtyText(peQty())}</td>
                               <td style={{ padding: "10px" }}>₹{fmt(peLtp(), 2)}</td>
                               <td style={{ padding: "10px" }}>{fmt(netDelta(), 4)}</td>
                               <td style={{ padding: "10px" }}>{fmt(pointsOut(), 2)}</td>
@@ -3492,6 +3504,17 @@ function App() {
                                                   </tr>
                                                 )}
                                               </For>
+                                              <Show when={!isClosed() && Math.abs(Number(live().legs_realized_pnl) || 0) >= 0.01}>
+                                                <tr>
+                                                  <td colspan="6" title="PnL locked in by fills that closed part of a leg: a hedge on the same strike, a hedge strike gone flat, a partial exit. The legs above plus this = Total PnL.">
+                                                    Locked in (closed parts of legs)
+                                                  </td>
+                                                  <td class={Number(live().legs_realized_pnl) >= 0 ? "positive" : "negative"}>
+                                                    ₹{fmt(live().legs_realized_pnl, 2)}
+                                                  </td>
+                                                  <td colspan="2"></td>
+                                                </tr>
+                                              </Show>
                                             </tbody>
                                           </table>
                                         </div>

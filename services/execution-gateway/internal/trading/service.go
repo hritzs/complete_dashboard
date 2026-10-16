@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"trading-platform/libs/contracts"
 )
 
 type MemoryStore struct {
@@ -1138,12 +1140,8 @@ func (s *Service) PromotePartialTrade(ctx context.Context, trade StoredTrade) (S
 	// partial build the real "original" size is what filled. The smaller
 	// leg keeps it conservative (SL fires no later than it should).
 	if trade.LotSize > 0 {
-		// Both legs: the smaller one. One leg only: that leg.
-		filledQty := minInt(trade.CEQty, trade.PEQty)
-		if filledQty == 0 {
-			filledQty = maxInt(trade.CEQty, trade.PEQty)
-		}
-		filledLots := filledQty / trade.LotSize
+		filledLots := partialFilledStraddles(trade.Lots, trade.LotSize, trade.CEQty, trade.PEQty,
+			trade.Config.RequestedCEQty, trade.Config.RequestedPEQty)
 		if filledLots > 0 && (trade.Lots <= 0 || filledLots < trade.Lots) {
 			trade.Lots = filledLots
 		}
@@ -1153,6 +1151,30 @@ func (s *Service) PromotePartialTrade(ctx context.Context, trade StoredTrade) (S
 	log.Printf("[PARTIAL] trade=%s tracked as ACTIVE (partial): ce=%d pe=%d (requested ce=%d pe=%d) entry ce=%.2f pe=%.2f lots=%d -- monitors/hedge/exits run on the filled quantity",
 		trade.TradeUID, trade.CEQty, trade.PEQty, trade.Config.RequestedCEQty, trade.Config.RequestedPEQty, trade.CELtp, trade.PELtp, trade.Lots)
 	return trade, true
+}
+
+// partialFilledStraddles: the straddle count (lots) a partial build really
+// holds -- the given straddles scaled by the smaller leg's filled share of
+// its requested quantity. A delta-neutral build asks unequal legs for the
+// same straddles (192 straddles = CE 11635 / PE 13325), so the old
+// min(CE, PE) / lot size undercounted it (11635 / 65 = 179). Without
+// requested quantities: min(CE, PE), or the one leg, / lot size.
+func partialFilledStraddles(lots, lotSize, ceQty, peQty, reqCE, reqPE int) int {
+	if lots > 0 && reqCE > 0 && reqPE > 0 {
+		share := math.Min(float64(ceQty)/float64(reqCE), float64(peQty)/float64(reqPE))
+		if ceQty == 0 || peQty == 0 {
+			share = math.Max(float64(ceQty)/float64(reqCE), float64(peQty)/float64(reqPE))
+		}
+		return int(math.Floor(float64(lots)*math.Min(share, 1) + 1e-9))
+	}
+	if lotSize <= 0 {
+		return 0
+	}
+	filledQty := minInt(ceQty, peQty)
+	if filledQty == 0 {
+		filledQty = maxInt(ceQty, peQty)
+	}
+	return filledQty / lotSize
 }
 
 // slThresholdForTrade computes the stop-loss lot count and rupee
@@ -1465,6 +1487,23 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 			}
 		}
 	}
+	// PnL already locked in by fills that closed part of a leg: open MTM
+	// alone dropped it. Live 2026-10-16: a hedge on the build strike bought
+	// back 1105 CE (+30.8k) and a later hedge flattened an earlier hedge's
+	// strike (+43.8k, the legs then left the open-legs list) -- the trade
+	// showed ~75k worse than the broker. Same fill-based total as the
+	// complete-position view. Exits are in it too; the UI shows unrealized
+	// as this total minus what exits booked.
+	legsRealized := 0.0
+	if pg, ok := s.Store.(*PostgresBackedStore); ok {
+		if realized, err := pg.LoadLegsRealized(tradeUID, trade.Config.RiskExcludedTokens); err != nil {
+			log.Printf("⚠️ legs realized failed for %s (total without it this tick): %v", tradeUID, err)
+		} else {
+			legsRealized = realized
+			totalPNL += realized
+		}
+	}
+
 	if trade.Config.WingPct > 0 && (wingNetCE != 0 || wingNetPE != 0) && trade.Status == "ACTIVE" && time.Now().Second() == 0 {
 		// Only reported: never auto-corrected with an order (a lagging
 		// fill or an in-flight action looks the same for a moment).
@@ -1586,6 +1625,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 		Underlying:            chooseUnderlying(*chain),
 		TotalPNL:              totalPNL,
 		PnLPerStraddle:        pnlPerStraddle,
+		LegsRealizedPNL:       legsRealized,
 		StraddleQuantity:      straddleQuantity,
 		MTMExitFloor:          mtmFloorPtr,
 		MTMExecPNL:            mtmExecPtr,
@@ -3274,6 +3314,47 @@ type hedgeLegState struct {
 
 func (l *hedgeLegState) totalFilled() int64 { return l.filledBeforeCurrent + l.currentOrderFilled }
 
+// sendHedgeLeg places a fresh order for the leg's remainder, or re-prices
+// its resting order, and reports whether the leg has an order working.
+// Touches only l, so the CE and PE legs can be sent concurrently.
+func (s *Service) sendHedgeLeg(ctx context.Context, executor Executor, modifier OrderModifier, tr StoredTrade,
+	tradeUID string, trancheIdx int, group string, attempt int, l *hedgeLegState, price float64, remaining int64) bool {
+	if l.brokerOrderID == "" {
+		// Fresh order (first attempt for this leg, or restarted after a
+		// prior order on this leg went terminal short) targets exactly the
+		// real remainder.
+		l.orderTargetQty = remaining
+		l.currentOrderFilled = 0
+		intentID := fmt.Sprintf("%s_%s_%d", group, l.leg, attempt)
+		intent := OrderIntent{
+			IntentID: intentID, TradeUID: tradeUID, Token: l.token,
+			Symbol: strings.TrimSpace(tr.Symbol), ExchangeSegment: tr.ExchangeSegment,
+			Side: l.side, Quantity: l.orderTargetQty, LotSize: int64(tr.LotSize),
+			OrderType: "LIMIT", LimitPrice: &price, ProductType: tr.ProductType,
+			LegType: l.leg, Phase: "HEDGE", HedgeGroupID: group, OrderUID: intentID,
+			BrokerName: tr.BrokerName, AccountID: tr.AccountID,
+		}
+		brokerOrderID, _, err := s.submitOrderIntent(ctx, executor, tradeUID, intent)
+		if err != nil {
+			log.Printf("[HEDGE] trade=%s tranche=%d leg=%s: submit failed: %v", tradeUID, trancheIdx, l.leg, err)
+			return false
+		}
+		l.brokerOrderID = brokerOrderID
+		return true
+	}
+	if modifier == nil {
+		return true
+	}
+	// Same resting order, re-priced more aggressively, SAME quantity it was
+	// created with -- never a second order, never a shrunk one (the
+	// exchange already knows what's still pending on it).
+	if err := modifier.ModifyOrderPrice(ctx, l.brokerOrderID, price, l.orderTargetQty, int(tr.LotSize)); err != nil {
+		log.Printf("[HEDGE] trade=%s tranche=%d leg=%s: modify failed: %v", tradeUID, trancheIdx, l.brokerOrderID, err)
+		return false
+	}
+	return true
+}
+
 // executeHedgeTranche submits one LIMIT order per leg (CE, PE) targeting
 // trancheQty in total, live-verifies each via the real-time IRIS event
 // feed, and -- if a leg's order is still resting but short -- modifies
@@ -3301,7 +3382,13 @@ func (s *Service) executeHedgeTranche(
 	trancheQty int64,
 ) (filledCE, filledPE int64, complete bool) {
 	const maxAttempts = 3 // buffer schedule: 1 (initial), 2 (1st modify), 4 (2nd modify)
-	const perOrderTimeout = 8 * time.Second
+	// How long one attempt waits for both legs before re-pricing whichever
+	// is still short. A marketable LIMIT at bid/ask +-1 fills within
+	// ~100ms (09:28 2026-10-16: 1235 qty in 85ms); one that hasn't after
+	// 1.5s is resting and needs a better price, not more waiting. Was 8s
+	// per leg, sequential: worst case ~24s, and the 2nd leg waited out
+	// the 1st leg's full timeout before it was even sent.
+	const perAttemptTimeout = 1500 * time.Millisecond
 
 	// ceToken/peToken are the LIVE ATM strike's tokens (resolved by the
 	// caller, ManualHedgeLots), NOT tr.CEToken/tr.PEToken -- a hedge is a
@@ -3318,18 +3405,22 @@ func (s *Service) executeHedgeTranche(
 	stamp := time.Now().UnixNano()
 	group := fmt.Sprintf("HDG_%s_T%d_%d", tradeUID, trancheIdx, stamp)
 
-	fetchQuote := func(token int64) (bid, ask float64) {
-		if s.Snapshot == nil {
-			return 0, 0
-		}
-		chain, err := s.Snapshot.GetOptionChain(ctx, tr.Symbol, tr.Expiry)
-		if err != nil {
-			return 0, 0
-		}
-		return bidAskForToken(chain, token)
-	}
-
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		// Phase 1: price every open leg off ONE chain fetch, then place (or
+		// re-price) all of them at the same time -- the PE never waits for
+		// the CE's REST round trip, DB writes or quote fetch.
+		var chain *OptionChainSnapshot
+		if s.Snapshot != nil {
+			if c, err := s.Snapshot.GetOptionChain(ctx, tr.Symbol, tr.Expiry); err == nil {
+				chain = c
+			}
+		}
+		type legSend struct {
+			l         *hedgeLegState
+			price     float64
+			remaining int64
+		}
+		var sends []legSend
 		for _, l := range legs {
 			if l.done {
 				continue
@@ -3340,50 +3431,59 @@ func (s *Service) executeHedgeTranche(
 				continue
 			}
 
-			bid, ask := fetchQuote(l.token)
+			var bid, ask float64
+			if chain != nil {
+				bid, ask = bidAskForToken(chain, l.token)
+			}
 			price, ok := bidAskLimitPrice(l.side, bid, ask, bufferForAttempt(attempt))
 			if !ok {
 				log.Printf("[HEDGE] trade=%s tranche=%d attempt=%d leg=%s: no live quote, skipping this round", tradeUID, trancheIdx, attempt, l.leg)
 				continue
 			}
+			sends = append(sends, legSend{l: l, price: price, remaining: remaining})
+		}
 
-			if l.brokerOrderID == "" {
-				// Fresh order (first attempt for this leg, or restarted
-				// after a prior order on this leg went terminal short)
-				// targets exactly the real remainder.
-				l.orderTargetQty = remaining
-				l.currentOrderFilled = 0
-				intentID := fmt.Sprintf("%s_%s_%d", group, l.leg, attempt)
-				intent := OrderIntent{
-					IntentID: intentID, TradeUID: tradeUID, Token: l.token,
-					Symbol: strings.TrimSpace(tr.Symbol), ExchangeSegment: tr.ExchangeSegment,
-					Side: l.side, Quantity: l.orderTargetQty, LotSize: int64(tr.LotSize),
-					OrderType: "LIMIT", LimitPrice: &price, ProductType: tr.ProductType,
-					LegType: l.leg, Phase: "HEDGE", HedgeGroupID: group, OrderUID: intentID,
-					BrokerName: tr.BrokerName, AccountID: tr.AccountID,
-				}
-				brokerOrderID, _, err := s.submitOrderIntent(ctx, executor, tradeUID, intent)
-				if err != nil {
-					log.Printf("[HEDGE] trade=%s tranche=%d leg=%s: submit failed: %v", tradeUID, trancheIdx, l.leg, err)
-					continue
-				}
-				l.brokerOrderID = brokerOrderID
-			} else if modifier != nil {
-				// Same resting order, re-priced more aggressively, SAME
-				// quantity it was created with -- never a second order,
-				// never a shrunk one (the exchange already knows what's
-				// still pending on it).
-				if err := modifier.ModifyOrderPrice(ctx, l.brokerOrderID, price, l.orderTargetQty, int(tr.LotSize)); err != nil {
-					log.Printf("[HEDGE] trade=%s tranche=%d leg=%s: modify failed: %v", tradeUID, trancheIdx, l.brokerOrderID, err)
-					continue
-				}
+		sent := make([]bool, len(sends))
+		var sendWG sync.WaitGroup
+		for i, sd := range sends {
+			sendWG.Add(1)
+			go func(i int, l *hedgeLegState, price float64, remaining int64) {
+				defer sendWG.Done()
+				sent[i] = s.sendHedgeLeg(ctx, executor, modifier, tr, tradeUID, trancheIdx, group, attempt, l, price, remaining)
+			}(i, sd.l, sd.price, sd.remaining)
+		}
+		sendWG.Wait()
+		var working []*hedgeLegState
+		for i, sd := range sends {
+			if sent[i] {
+				working = append(working, sd.l)
 			}
+		}
 
-			waitCtx, cancel := context.WithTimeout(ctx, perOrderTimeout)
-			u, err := s.OrderEvents.WaitTerminal(waitCtx, tradeUID, l.brokerOrderID, l.orderTargetQty, perOrderTimeout)
-			cancel()
+		// Phase 2: wait for all working legs at once, so an attempt costs
+		// at most perAttemptTimeout no matter how many legs are open.
+		type legWait struct {
+			u   contracts.OrderUpdate
+			err error
+		}
+		waits := make([]legWait, len(working))
+		var wg sync.WaitGroup
+		for i, l := range working {
+			wg.Add(1)
+			go func(i int, orderID string, qty int64) {
+				defer wg.Done()
+				waitCtx, cancel := context.WithTimeout(ctx, perAttemptTimeout)
+				defer cancel()
+				waits[i].u, waits[i].err = s.OrderEvents.WaitTerminal(waitCtx, tradeUID, orderID, qty, perAttemptTimeout)
+			}(i, l.brokerOrderID, l.orderTargetQty)
+		}
+		wg.Wait()
+
+		// Phase 3: apply each leg's outcome.
+		for i, l := range working {
+			u, err := waits[i].u, waits[i].err
 			if err != nil {
-				log.Printf("[HEDGE] trade=%s tranche=%d leg=%s order=%s: no terminal confirmation within %s: %v -- will re-price the same order next round", tradeUID, trancheIdx, l.leg, l.brokerOrderID, perOrderTimeout, err)
+				log.Printf("[HEDGE] trade=%s tranche=%d leg=%s order=%s: no terminal confirmation within %s: %v -- will re-price the same order next round", tradeUID, trancheIdx, l.leg, l.brokerOrderID, perAttemptTimeout, err)
 				continue
 			}
 

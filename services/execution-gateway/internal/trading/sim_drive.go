@@ -302,22 +302,59 @@ func (s *Service) simDriveTick() {
 	}
 }
 
+// liveDeltaAtFuture re-values the live snapshot's delta (and points out) at
+// fut by its gamma: delta + gamma x (fut - snapshot future). Returns the
+// snapshot's own numbers when fut or the snapshot can't be used.
+func liveDeltaAtFuture(snap TradeSnapshot, fut float64) (delta, pointsOut float64) {
+	if fut <= 0 || snap.Underlying <= 0 || snap.NetGamma == 0 {
+		return snap.NetDelta, snap.PointsOut
+	}
+	delta = snap.NetDelta + snap.NetGamma*(fut-snap.Underlying)
+	return delta, math.Abs(delta / snap.NetGamma)
+}
+
+// simDriveSizing: the live delta to hedge against (at the simulation's
+// future) and the share of it a simulated hedge takes on the live trade.
+// Intra-minute: all of it. Minute end, new rule: down to 25 % of the live
+// allowed band -- the points band, a fixed test band, or on DTE rows 0 / 1
+// the delta band (|delta| per straddle unit, band x straddleQty / |gamma| in
+// points, no bps floor -- as in the simulation). Old rule: all of it.
+func simDriveSizing(snap TradeSnapshot, h PaperSimHedge, rule hedgeRule, deltaBand float64, straddleQty int64,
+	fixedAllowed, minBps float64) (delta, frac float64, how string) {
+	delta, liveOut := liveDeltaAtFuture(snap, h.Future)
+	frac, how = hedgeIntraFrac, "complete live delta"
+	if h.Kind == "INTRA_MINUTE" || rule.LeaveBand <= 0 {
+		return delta, frac, how
+	}
+	eff := math.Max(snap.PointsAllowed, snap.Underlying*minBps/10000)
+	switch {
+	case fixedAllowed > 0:
+		eff = fixedAllowed // test band, as in its simulation
+	case deltaBand > 0 && snap.NetGamma != 0:
+		eff = deltaBand * float64(straddleQty) / math.Abs(snap.NetGamma)
+	}
+	frac = rule.minuteFrac(liveOut, eff)
+	how = fmt.Sprintf("live points out %.1f -> %.1f (25%% of allowed %.1f)", liveOut, hedgeLeaveBand*eff, eff)
+	return delta, frac, how
+}
+
 func (s *Service) simDriveHedge(d *simDriver, tr StoredTrade, run LUTBuildRun, h PaperSimHedge, lot int64) {
 	a := SimDriveAction{At: time.Now().In(lutIST()).Format("15:04:05.000"), SimTime: h.Time, Kind: h.Kind, SimDelta: h.DeltaBefore,
 		DecideMs: simEventAge(h.Time)}
 	frac, how := hedgeIntraFrac, "complete live delta"
 	if snap, ok := s.Store.LoadSnapshot(tr.TradeUID); ok {
-		a.Delta = snap.NetDelta
-		if rule := simRunRule(run, lutDrivingRule().Key); h.Kind != "INTRA_MINUTE" && rule.LeaveBand > 0 { // new: live points out -> 25 % of live allowed
-			eff := math.Max(snap.PointsAllowed, snap.Underlying*resolveHedgeMinThresholdBps(tr.Config.HedgeMinThresholdBps)/10000)
-			if run.SimPointsAllowed > 0 {
-				eff = run.SimPointsAllowed // test band, as in its simulation
-			} else if band := d.deltaBand; band > 0 && snap.NetGamma != 0 {
-				// new logic, DTE rows 0 / 1: the band is |delta| per straddle unit
-				eff = band * float64(tr.Lots*tr.LotSize) / math.Abs(snap.NetGamma)
-			}
-			frac = rule.minuteFrac(snap.PointsOut, eff)
-			how = fmt.Sprintf("live points out %.1f -> %.1f (25%% of allowed %.1f)", snap.PointsOut, hedgeLeaveBand*eff, eff)
+		// Size on the live delta AT THE FUTURE THE SIMULATION ACTED ON (its
+		// candle close, or the intra tick), not at whatever second the
+		// snapshot was last taken: points out moves 1:1 with the future, so
+		// a stale snapshot is a hedge-size error of that many points. Live
+		// 2026-10-16 10:03:06.989: snapshot at fut 23025.25 (delta -1658)
+		// vs the sim's tick at ~23034 (real delta -1874) -> under-hedged,
+		// left ~10 points out vs the simulation's 0.
+		a.Delta, frac, how = simDriveSizing(snap, h, simRunRule(run, lutDrivingRule().Key), d.deltaBand,
+			int64(tr.Lots*tr.LotSize), run.SimPointsAllowed, resolveHedgeMinThresholdBps(tr.Config.HedgeMinThresholdBps))
+		if a.Delta != snap.NetDelta {
+			log.Printf("[SIM-DRIVE][%s] %s %s: live delta %+.1f at snapshot fut %.2f -> %+.1f at the simulation's fut %.2f (gamma %.4f)",
+				tr.TradeUID, h.Kind, h.Time, snap.NetDelta, snap.Underlying, a.Delta, h.Future, snap.NetGamma)
 		}
 	}
 	a.Lots = hedgeLotsFloor(frac*a.Delta, lot)

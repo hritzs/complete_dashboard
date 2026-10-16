@@ -1349,6 +1349,15 @@ func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 		view = ""
 	}
 	mins := lutLoadSimSet(day, view)
+	if view == "" {
+		// Same intra-minute ticks as the simulation driving the live trade
+		// (sim_drive.go: every 100 ms tick in memory, compacted once a
+		// minute is done), not only the file's first tick of each second --
+		// otherwise this view can hedge at a different second than the live
+		// trade actually did (2026-10-16: live at 10:19:12.489 on a jump
+		// inside that second, this view at 10:19:19). No-op for other days.
+		mins = simWithTicks(day, mins, "09:15")
+	}
 	var cfgs []PaperSimConfig
 	for _, t := range []string{"09:16", "09:17", "09:18", "09:19"} {
 		cfgs = append(cfgs, PaperSimConfig{ID: "AUTO-" + t, Source: "sell at " + t, Entry: t, Lots: lots, Hedge: hedge, HedgeMode: hedgeMode})

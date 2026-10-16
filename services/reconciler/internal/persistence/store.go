@@ -131,10 +131,19 @@ func (s *Store) ApplyOrderUpdate(ctx context.Context, update normalize.OrderUpda
 	// recovery poller kept finding orders to (uselessly) re-poll for them.
 	// order_events below still records every push regardless, terminal or
 	// not, for a complete audit trail.
+	//
+	// filled_qty never goes DOWN and a push carrying less fill than already
+	// recorded leaves the status alone: when pushes beat the order-row write
+	// they are replayed by concurrent retry goroutines in any order, and a
+	// stale "Pending" ack (qty_filled_today=0) landing between two trades
+	// reset filled_qty to 0, so DeriveFill booked the next trade's whole
+	// cumulative as new. Live 2026-10-16: orders 120000057/120000156 (130
+	// each at the broker) were recorded as 195, platform PE -13455 vs
+	// broker -13325.
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE orders
-		SET status = $1,
-		    filled_qty = $2,
+		SET status = CASE WHEN $2 < filled_qty THEN status ELSE $1 END,
+		    filled_qty = GREATEST(filled_qty, $2),
 		    pending_qty = $3,
 		    exchange_order_id = COALESCE($4, exchange_order_id),
 		    updated_at = NOW()

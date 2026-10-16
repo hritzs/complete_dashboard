@@ -431,6 +431,10 @@ type TradeSnapshot struct {
 	NetTheta       float64   `json:"net_theta"`
 	NetVega        float64   `json:"net_vega"`
 	PnLPerStraddle float64   `json:"pnl_per_straddle"`
+	// LegsRealizedPNL: the part of TotalPNL locked in by fills that closed
+	// part of a leg (hedges on the same strike, a hedge strike gone flat,
+	// partial exits); the open legs' PnL is the rest.
+	LegsRealizedPNL float64 `json:"legs_realized_pnl"`
 	// MTM exit: the level in rupees (nil = infinity, never fires) and the
 	// trade's executable MTM (closing every open leg through the depth now).
 	MTMExitFloor     *float64           `json:"mtm_exit_floor,omitempty"`

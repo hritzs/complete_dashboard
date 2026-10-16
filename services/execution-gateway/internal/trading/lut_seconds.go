@@ -37,6 +37,37 @@ var lutTicks = struct {
 	done map[int]bool // minutes already compacted
 }{}
 
+// lutTicksFile keeps, per day, the ticks of every finished minute whose
+// intra-minute hedge fired (up to the hedge's tick): "HHMM,HH:MM:SS.mmm,fut".
+// Those are the only minutes whose 100 ms ticks decide differently from the
+// seconds file; without it a restart lost them and the simulation re-ran
+// the hedge on the seconds file, at a different second and future than the
+// live trade had acted on (2026-10-16 10:19:12.489 -> 10:19:19).
+func lutTicksFile(day string) string { return filepath.Join(lutDataDir(), day+"_ticks.csv") }
+
+func lutLoadTicksFile(day string) map[int][]simSec {
+	out := map[int][]simSec{}
+	f, err := os.Open(lutTicksFile(day))
+	if err != nil {
+		return out
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		p := strings.Split(strings.TrimSpace(sc.Text()), ",")
+		if len(p) != 3 {
+			continue
+		}
+		hm, err1 := strconv.Atoi(p[0])
+		fut, err2 := strconv.ParseFloat(p[2], 64)
+		if err1 != nil || err2 != nil || fut <= 0 {
+			continue
+		}
+		out[hm] = append(out[hm], simSec{T: p[1], F: fut})
+	}
+	return out
+}
+
 func lutNoteTick(day string, now time.Time, fut float64) {
 	if fut <= 0 || now.Second() == 0 {
 		return
@@ -44,21 +75,29 @@ func lutNoteTick(day string, now time.Time, fut float64) {
 	hm := now.Hour()*100 + now.Minute()
 	lutTicks.mu.Lock()
 	if lutTicks.day != day || lutTicks.m == nil {
-		lutTicks.day, lutTicks.m, lutTicks.done = day, map[int][]simSec{}, map[int]bool{}
+		// New day or a restart: finished intra-hedge minutes come back from
+		// the file, already compacted.
+		lutTicks.day, lutTicks.m, lutTicks.done = day, lutLoadTicksFile(day), map[int]bool{}
+		for k := range lutTicks.m {
+			lutTicks.done[k] = true
+		}
 	}
 	lutTicks.m[hm] = append(lutTicks.m[hm], simSec{T: now.Format("15:04:05.000"), F: fut})
 	lutTicks.mu.Unlock()
 }
 
-// lutTicksFrom copies the day's ticks of minutes >= from.
+// lutTicksFrom copies the day's ticks of minutes >= from. A day that isn't
+// the one in memory (another day, or before the first tick after a restart)
+// is read from its ticks file without touching the in-memory state.
 func lutTicksFrom(day string, from int) map[int][]simSec {
 	lutTicks.mu.Lock()
 	defer lutTicks.mu.Unlock()
+	src := lutTicks.m
 	if lutTicks.day != day {
-		return nil
+		src = lutLoadTicksFile(day)
 	}
 	out := map[int][]simSec{}
-	for hm, v := range lutTicks.m {
+	for hm, v := range src {
 		if hm >= from {
 			out[hm] = append([]simSec(nil), v...)
 		}
@@ -71,6 +110,22 @@ func lutTicksFrom(day string, from int) map[int][]simSec {
 // tick up to it (cut = that tick's time), any other one keeps one tick per
 // second (a subset of ticks with no breach has no breach either).
 func lutTicksCompact(day string, before int, cut map[int]string) {
+	var persist []byte
+	defer func() {
+		if len(persist) == 0 {
+			return
+		}
+		if err := os.MkdirAll(lutDataDir(), 0o755); err != nil {
+			return
+		}
+		f, err := os.OpenFile(lutTicksFile(day), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			log.Printf("[LUT] ⚠ ticks file: %v", err)
+			return
+		}
+		_, _ = f.Write(persist)
+		_ = f.Close()
+	}()
 	lutTicks.mu.Lock()
 	defer lutTicks.mu.Unlock()
 	if lutTicks.day != day {
@@ -86,6 +141,7 @@ func lutTicksCompact(day string, before int, cut map[int]string) {
 			for _, s := range v {
 				if s.T <= c {
 					keep = append(keep, s)
+					persist = append(persist, fmt.Sprintf("%d,%s,%.2f\n", hm, s.T, s.F)...)
 				}
 			}
 		} else {

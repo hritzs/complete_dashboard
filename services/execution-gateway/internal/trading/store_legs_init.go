@@ -132,6 +132,48 @@ func (s *PostgresBackedStore) LoadWingHoldings(tradeUID string) ([]wingHolding, 
 	return out, rows.Err()
 }
 
+// LoadLegsRealized sums trade_legs.realized_pnl over every leg of the trade,
+// open or already flat -- the PnL locked in by fills that closed part of a
+// leg (a hedge buying back on the build strike, a later hedge flattening an
+// earlier hedge's strike, a partial exit). Contracts with WING orders and
+// the excluded tokens are left out, as they are of the live totals.
+func (s *PostgresBackedStore) LoadLegsRealized(tradeUID string, excluded []int64) (float64, error) {
+	if s == nil || s.db == nil {
+		return 0, fmt.Errorf("postgres store unavailable")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	skip := map[int64]bool{}
+	for _, t := range excluded {
+		skip[t] = true
+	}
+	rows, err := s.db.QueryContext(ctx, wingQtyCTE+`
+		SELECT c.broker_token, COALESCE(SUM(tl.realized_pnl), 0)::float8
+		FROM trade_legs tl
+		JOIN trades t ON t.id = tl.trade_id
+		JOIN contracts c ON c.id = tl.contract_id
+		WHERE t.trade_uid = $1
+		  AND NOT EXISTS (SELECT 1 FROM w_raw WHERE w_raw.contract_id = tl.contract_id)
+		GROUP BY c.broker_token
+	`, strings.TrimSpace(tradeUID))
+	if err != nil {
+		return 0, fmt.Errorf("load legs realized trade_uid=%s: %w", tradeUID, err)
+	}
+	defer rows.Close()
+	realized := 0.0
+	for rows.Next() {
+		var token int64
+		var r float64
+		if err := rows.Scan(&token, &r); err != nil {
+			return 0, fmt.Errorf("scan legs realized trade_uid=%s: %w", tradeUID, err)
+		}
+		if !skip[token] {
+			realized += r
+		}
+	}
+	return realized, rows.Err()
+}
+
 // LoadOpenLegs returns every currently-OPEN leg recorded for this trade in
 // trade_legs -- the durable, per-token source of truth that every real
 // order (build, hedge, square-off, regardless of which token it traded)
