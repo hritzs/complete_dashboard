@@ -64,7 +64,6 @@ function KV(props) {
 export default function LutBuildTab() {
   const [live, setLive] = createSignal(null);
   const [lastGrid, setLastGrid] = createSignal(null);
-  const [lastGrid0920, setLastGrid0920] = createSignal(null);
   const [minutes, setMinutes] = createSignal([]);
   const [params, setParams] = createSignal(null);
   const [lots, setLots] = createSignal('1');
@@ -73,7 +72,6 @@ export default function LutBuildTab() {
   const [msg, setMsg] = createSignal('');
   const [man, setMan] = createSignal({});
   const [lastSell, setLastSell] = createSignal(null);
-  const [lastSell0920, setLastSell0920] = createSignal(null);
   const [levels, setLevels] = createSignal(null); // 09:16 .. 09:20 sell levels (sent until 09:30, then kept as last seen)
   // Two table sets run side by side: 'main' = the set driving today (its
   // first YES fires the armed build), 'alt' = the other one, shown and
@@ -142,7 +140,7 @@ export default function LutBuildTab() {
   };
   const switchSet = (v) => {
     setTset(v);
-    setLastGrid(null); setLastGrid0920(null); setLastSell(null); setLastSell0920(null); setLevels(null);
+    setLastGrid(null); setLastSell(null); setLevels(null);
     if (stateRaw()) applyState(stateRaw());
     if (raw()) onUpdate({ detail: raw() });
   };
@@ -151,10 +149,8 @@ export default function LutBuildTab() {
     const d = view(e.detail || {});
     setLive(d);
     if (d.grid) setLastGrid(d.grid);
-    if (d.grid_0920) setLastGrid0920(d.grid_0920); else if (d.grid) setLastGrid0920(null);
     if (d.sell_range) setLastSell(d.sell_range);
-    if (d.sell_range_0920) setLastSell0920(d.sell_range_0920); else if (d.sell_range) setLastSell0920(null);
-    if (!d.eval) { setLastSell(null); setLastSell0920(null); }
+    if (!d.eval) setLastSell(null);
     if (d.sell_levels) setLevels({ day: d.day, rows: d.sell_levels }); else if (levels() && levels().day !== d.day) setLevels(null);
     const altCount = raw()?.alt?.minutes_count ?? -1;
     if (raw()?.minutes_count !== seenMinutes || altCount !== seenAlt) {
@@ -723,18 +719,16 @@ export default function LutBuildTab() {
       <Verdict />
       <OpeningLevels />
       <SellZone r={lastSell()} />
-      <Show when={lastSell0920() && lastSell()?.table !== '09:20+'}><SellZone r={lastSell0920()} /></Show>
       <Entry />
       <LutActualBuild />
       <Inputs />
+      {/* ONE table: the live LUT table of the minute checked next (09:15-09:16
+          shows 09:16, ... 09:20 onward 09:20+), kept after 13:30 with the
+          market's cell still outlined -- no YES / NO is given after 13:30. */}
       <Grid g={lastGrid()} />
       <Show when={ev() && !ev().skip && !ev().allowed}>
         <Nearest title={`${ev().stage} table`} rows={ev().nearest_yes} />
-        <Show when={ev().stage !== '09:20+'}>
-          <Nearest title="09:20+ table" rows={ev().nearest_yes_0920} />
-        </Show>
       </Show>
-      <Grid g={lastGrid0920()} />
       <Timeline />
       <Params />
     </section>
