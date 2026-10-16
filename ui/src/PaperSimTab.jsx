@@ -1,4 +1,4 @@
-import { createSignal, createMemo, onCleanup, onMount, Show, For } from 'solid-js';
+import { createSignal, createMemo, createEffect, on, onCleanup, onMount, Show, For } from 'solid-js';
 
 // Paper Sim -- PAPER ONLY. Sells the ATM straddle at 09:16-09:19 (and any
 // "Start now" minute) off the stored minute data of the current or next
@@ -328,7 +328,7 @@ function SimDetail(props) {
   );
 }
 
-export default function PaperSimTab() {
+export default function PaperSimTab(props) {
   const [day, setDay] = createSignal(today());
   const [view, setView] = createSignal('current');
   // Which LUT table set's answers and first YES are shown ('' = the set
@@ -358,6 +358,7 @@ export default function PaperSimTab() {
     return i < SERIES.length ? SERIES[i] : 'rgba(255,255,255,0.35)';
   };
 
+  let wantSel = null, wantDay = null;
   let busy = false;
   const load = async () => {
     if (busy) return;
@@ -366,14 +367,32 @@ export default function PaperSimTab() {
       const n = Math.max(1, Number(size()) || 1);
       const d = await (await fetch(`/api/paper/sim?day=${day()}&expiry=${view()}&lots=${n}&size=${n}&hedge=${hedge()}&tables=${tables()}${mtmQuery()}`)).json();
       try { const dv = await (await fetch('/api/simdrive')).json(); setDrive(dv.driver ? dv : null); } catch (_) { /* gateway restarting */ }
+      if (d.success && d.day && d.day !== day()) { busy = false; return; } // a stale load of another day
       if (d.success) {
         for (const s of d.sims || []) colorOf(s.config.id);
         setData(d);
         if (sel() !== 'overview' && !(d.sims || []).some((s) => s.config.id === sel())) setSel('overview');
+        if (wantSel && d.day === wantDay) {
+          // "Sim" from a portfolio row: open that trade's own simulation.
+          if ((d.sims || []).some((s) => s.config.id === wantSel)) setSel(wantSel);
+          else setMsg(`No simulation for ${wantSel.replace(/^ACTUAL-/, '')} on ${wantDay}`);
+          wantSel = null;
+        }
       } else setMsg(d.error || 'failed');
     } catch (e) { setMsg(String(e)); }
     busy = false;
   };
+  // Focus from the portfolio's "Sim" button: {id: 'ACTUAL-<uid>', day, at}.
+  createEffect(on(() => props.focus, (f) => {
+    if (!f || !f.id) return;
+    wantSel = f.id;
+    wantDay = f.day || today();
+    setMsg('');
+    setView('current');
+    setDay(wantDay);
+    busy = false; // a load of the old day must not swallow this one
+    load();
+  }));
   let timer;
   onMount(() => { load(); timer = setInterval(() => { if (day() === today() && !document.hidden) load(); }, 2000); });
   onCleanup(() => clearInterval(timer));

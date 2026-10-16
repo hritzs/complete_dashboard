@@ -96,3 +96,25 @@ func TestSimDriveOwnsAndRelease(t *testing.T) {
 		t.Fatal("released driver must not own")
 	}
 }
+
+// A contract holding both wing and hedge fills: realized and the open
+// entry of each part come from its own orders only.
+func TestLegFlowsWingSplit(t *testing.T) {
+	// Hedge: sold 1300 @ 40, bought back 650 @ 30 -> realized +6500, open short 650 @ 40.
+	real := legFlows{sellQ: 1300, sellV: 1300 * 40, buyQ: 650, buyV: 650 * 30}
+	// Wing: bought 1300 @ 5 earlier, still held.
+	wing := legFlows{buyQ: 1300, buyV: 1300 * 5}
+	if got := real.realized(); math.Abs(got-6500) > 1e-9 {
+		t.Fatalf("hedge realized %.2f, want 6500", got)
+	}
+	if real.entry() != 40 || wing.entry() != 5 || wing.realized() != 0 {
+		t.Fatalf("entries hedge %.2f wing %.2f (want 40 / 5), wing realized %.2f (want 0)", real.entry(), wing.entry(), wing.realized())
+	}
+	leg := OpenLeg{EntryPrice: 22.5, WingQty: 1300, Qty: 650, WingEntry: wing.entry(), RealEntry: real.entry()}
+	if leg.entryFor(true) != 5 || leg.entryFor(false) != 40 {
+		t.Fatalf("entryFor wing %.2f non-wing %.2f, want 5 / 40", leg.entryFor(true), leg.entryFor(false))
+	}
+	if plain := (OpenLeg{EntryPrice: 22.5}); plain.entryFor(true) != 22.5 || plain.entryFor(false) != 22.5 {
+		t.Fatal("a leg without a split keeps its blended entry")
+	}
+}

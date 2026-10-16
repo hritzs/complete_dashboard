@@ -89,6 +89,20 @@ function parseTiers(text) {
 
 function App() {
     const [activeTab, setActiveTab] = createSignal('terminal');
+    // "Sim" on a portfolio row: the Paper Sim tab opens on that trade's own
+    // simulation (ACTUAL-<trade uid>) for the trade's day.
+    const [simFocus, setSimFocus] = createSignal(null);
+    const tradeDayOf = (uid) => {
+      const m = String(uid || "").match(/_(\d{4})(\d{2})(\d{2})\d{6}$/);
+      if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+      const sb = String(uid || "").match(/-(\d{2})(\d{2})(\d{2})\d{6}$/);
+      if (sb) return `20${sb[1]}-${sb[2]}-${sb[3]}`;
+      return new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+    };
+    const openTradeSim = (uid) => {
+      setSimFocus({ id: `ACTUAL-${uid}`, day: tradeDayOf(uid), at: Date.now() });
+      setActiveTab('papersim');
+    };
     const [wsStatus, setWsStatus] = createSignal('Connecting...');
     const [dataSource, setDataSource] = createSignal('Waiting...');
     const [selectedSymbol, setSelectedSymbol] = createSignal('NIFTY');
@@ -2969,7 +2983,10 @@ function App() {
                                 <Show when={wingPnlValue() !== 0 || Number(live().wing_pct) > 0} fallback={"—"}>₹{fmt(wingPnlValue(), 2)}</Show>
                               </td>
                               <td style={{ padding: "6px 10px" }} onClick={(event) => event.stopPropagation()}>
-                                <Show when={!isClosed()} fallback={"—"}>
+                                <div style={{ display: "flex", gap: "4px", "flex-wrap": "nowrap" }}>
+                                  <button class="dashboard-btn" style={rowBtn} title="Open this trade's simulation in the Paper Sim tab"
+                                    onClick={() => openTradeSim(uid)}>Sim</button>
+                                <Show when={!isClosed()}>
                                   <div style={{ display: "flex", gap: "4px", "flex-wrap": "nowrap" }}>
                                     <Show when={String(status()).toUpperCase() === "BUILDING"}>
                                       <button class="dashboard-btn yellow" style={rowBtn} title="Stop Building" onClick={() => handlePortfolioStopBuild(item)}>Stop</button>
@@ -2980,6 +2997,7 @@ function App() {
                                     <button class="dashboard-btn red" style={rowBtn} title="Full Exit" onClick={() => handlePortfolioSquareOff(item)}>Exit</button>
                                   </div>
                                 </Show>
+                                </div>
                               </td>
                             </tr>
                             <Show when={isExpanded()}>
@@ -4307,7 +4325,7 @@ function App() {
         </Show>
 
         <Show when={activeTab() === 'papersim'}>
-          <PaperSimTab />
+          <PaperSimTab focus={simFocus()} />
         </Show>
 
         <Show when={activeTab() === 'mock'}>

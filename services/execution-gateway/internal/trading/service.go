@@ -1459,7 +1459,8 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 				} else {
 					wingNetPE += part.qty
 				}
-				d, g, th, v, pnl := signedLegGreeksAndPNL(rawDelta, rawGamma, rawTheta, rawVega, ltp, leg.EntryPrice, part.qty)
+				entry := leg.entryFor(part.wing) // each part at its own orders' average
+				d, g, th, v, pnl := signedLegGreeksAndPNL(rawDelta, rawGamma, rawTheta, rawVega, ltp, entry, part.qty)
 				if part.wing {
 					wingPNL += pnl
 				} else if excluded[leg.Token] {
@@ -1480,7 +1481,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 				}
 				extraLegSnapshots = append(extraLegSnapshots, TradeLegSnapshot{
 					Token: leg.Token, Strike: row.Strike, OptionType: leg.OptionType,
-					Action: action, Quantity: absQty, EntryPrice: leg.EntryPrice, LTP: ltp, PNL: pnl,
+					Action: action, Quantity: absQty, EntryPrice: entry, LTP: ltp, PNL: pnl,
 					IV: iv, Delta: rawDelta, Gamma: rawGamma, Theta: rawTheta, Vega: rawVega,
 					Wing: part.wing, Excluded: !part.wing && excluded[leg.Token], Expiry: leg.Expiry,
 				})

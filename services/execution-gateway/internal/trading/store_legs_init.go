@@ -70,6 +70,20 @@ type OpenLeg struct {
 	// different expiry than the trade (manual leg across expiry).
 	Expiry string
 	Strike float64
+	// WingEntry / RealEntry: on a contract holding both wing and non-wing
+	// quantity, each part's own average entry (0 = use EntryPrice).
+	WingEntry, RealEntry float64
+}
+
+// entryFor is the entry price of the wing or the non-wing part of the leg.
+func (l OpenLeg) entryFor(wing bool) float64 {
+	if wing && l.WingEntry > 0 {
+		return l.WingEntry
+	}
+	if !wing && l.RealEntry > 0 {
+		return l.RealEntry
+	}
+	return l.EntryPrice
 }
 
 // wingQtyCTE nets this trade's WING-phase fills per contract ($1 =
@@ -132,11 +146,15 @@ func (s *PostgresBackedStore) LoadWingHoldings(tradeUID string) ([]wingHolding, 
 	return out, rows.Err()
 }
 
-// LoadLegsRealized sums trade_legs.realized_pnl over every leg of the trade,
-// open or already flat -- the PnL locked in by fills that closed part of a
-// leg (a hedge buying back on the build strike, a later hedge flattening an
-// earlier hedge's strike, a partial exit). Contracts with WING orders and
-// the excluded tokens are left out, as they are of the live totals.
+// LoadLegsRealized is the PnL locked in by fills that closed part of a leg
+// (a hedge buying back on the build strike, a later hedge flattening an
+// earlier hedge's strike, a partial exit), over every contract of the trade,
+// open or already flat. Built per contract from the trade's NON-WING orders
+// only -- same once-per-order fill dedupe and average-cost formula as
+// trade_legs (recomputeTradeLegFromPersistedFills) -- so a contract holding
+// both wing and hedge fills (a hedge landing on an old wing strike) keeps
+// its hedge PnL and drops only the wing part. Excluded tokens are left out,
+// as they are of the live totals.
 func (s *PostgresBackedStore) LoadLegsRealized(tradeUID string, excluded []int64) (float64, error) {
 	if s == nil || s.db == nil {
 		return 0, fmt.Errorf("postgres store unavailable")
@@ -147,31 +165,108 @@ func (s *PostgresBackedStore) LoadLegsRealized(tradeUID string, excluded []int64
 	for _, t := range excluded {
 		skip[t] = true
 	}
-	rows, err := s.db.QueryContext(ctx, wingQtyCTE+`
-		SELECT c.broker_token, COALESCE(SUM(tl.realized_pnl), 0)::float8
-		FROM trade_legs tl
-		JOIN trades t ON t.id = tl.trade_id
-		JOIN contracts c ON c.id = tl.contract_id
-		WHERE t.trade_uid = $1
-		  AND NOT EXISTS (SELECT 1 FROM w_raw WHERE w_raw.contract_id = tl.contract_id)
-		GROUP BY c.broker_token
+	flows, err := s.loadPhaseFlows(ctx, tradeUID)
+	if err != nil {
+		return 0, err
+	}
+	realized := 0.0
+	for token, f := range flows {
+		if !skip[token] {
+			realized += f.real.realized()
+		}
+	}
+	return realized, nil
+}
+
+// legFlows is one contract's fills on one side of the wing split.
+type legFlows struct {
+	buyQ, sellQ int64
+	buyV, sellV float64
+}
+
+// realized: (sell avg - buy avg) x the matched quantity, as
+// recomputeTradeLegFromPersistedFills books a leg's realized PnL.
+func (f legFlows) realized() float64 {
+	if f.buyQ <= 0 || f.sellQ <= 0 {
+		return 0
+	}
+	return (f.sellV/float64(f.sellQ) - f.buyV/float64(f.buyQ)) * float64(minInt64(f.buyQ, f.sellQ))
+}
+
+// entry: the average price of the open side (sells when net short, buys
+// when net long), as trade_legs.avg_entry_price; 0 when flat.
+func (f legFlows) entry() float64 {
+	switch net := f.buyQ - f.sellQ; {
+	case net < 0 && f.sellQ > 0:
+		return f.sellV / float64(f.sellQ)
+	case net > 0 && f.buyQ > 0:
+		return f.buyV / float64(f.buyQ)
+	}
+	return 0
+}
+
+// phaseFlows: a contract's fills split into WING orders and every other
+// order (build, hedge, manual, exits).
+type phaseFlows struct{ wing, real legFlows }
+
+// loadPhaseFlows reads the trade's fills per contract and per side of the
+// wing split, each order counted once (same dedupe as perOrderFillsSQL:
+// reconciler exchange fills when present, else the gateway's snapshot).
+func (s *PostgresBackedStore) loadPhaseFlows(ctx context.Context, tradeUID string) (map[int64]*phaseFlows, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		WITH per_order_raw AS (
+			SELECT o.id, o.contract_id, o.side, COALESCE(UPPER(o.phase), '') = 'WING' AS is_wing,
+			       COALESCE(SUM(f.fill_quantity) FILTER (WHERE NOT gw.is_gw), 0) AS r_qty,
+			       COALESCE(SUM(f.fill_quantity * f.fill_price) FILTER (WHERE NOT gw.is_gw), 0) AS r_val,
+			       COALESCE(MAX(f.fill_quantity) FILTER (WHERE gw.is_gw), 0) AS g_qty,
+			       (ARRAY_AGG(f.fill_price ORDER BY f.fill_quantity DESC, f.id DESC) FILTER (WHERE gw.is_gw))[1] AS g_px
+			FROM orders o
+			JOIN fills f ON f.order_id = o.id
+			CROSS JOIN LATERAL (
+				SELECT COALESCE(o.broker_name, '') <> ''
+				   AND UPPER(f.fill_id) LIKE UPPER(o.broker_name) || ':%' AS is_gw
+			) gw
+			WHERE o.trade_uid = $1
+			GROUP BY o.id, o.contract_id, o.side, o.phase
+		), per_order AS (
+			SELECT contract_id, is_wing, UPPER(side) AS side,
+			       CASE WHEN r_qty > 0 THEN r_qty ELSE g_qty END AS qty,
+			       (CASE WHEN r_qty > 0 THEN r_val ELSE g_qty * COALESCE(g_px, 0) END)::float8 AS val
+			FROM per_order_raw
+		)
+		SELECT c.broker_token, p.is_wing,
+		       COALESCE(SUM(p.qty) FILTER (WHERE p.side = 'BUY'), 0)::bigint,
+		       COALESCE(SUM(p.val) FILTER (WHERE p.side = 'BUY'), 0)::float8,
+		       COALESCE(SUM(p.qty) FILTER (WHERE p.side = 'SELL'), 0)::bigint,
+		       COALESCE(SUM(p.val) FILTER (WHERE p.side = 'SELL'), 0)::float8
+		FROM per_order p
+		JOIN contracts c ON c.id = p.contract_id
+		GROUP BY c.broker_token, p.is_wing
 	`, strings.TrimSpace(tradeUID))
 	if err != nil {
-		return 0, fmt.Errorf("load legs realized trade_uid=%s: %w", tradeUID, err)
+		return nil, fmt.Errorf("load leg flows trade_uid=%s: %w", tradeUID, err)
 	}
 	defer rows.Close()
-	realized := 0.0
+	out := map[int64]*phaseFlows{}
 	for rows.Next() {
 		var token int64
-		var r float64
-		if err := rows.Scan(&token, &r); err != nil {
-			return 0, fmt.Errorf("scan legs realized trade_uid=%s: %w", tradeUID, err)
+		var wing bool
+		var f legFlows
+		if err := rows.Scan(&token, &wing, &f.buyQ, &f.buyV, &f.sellQ, &f.sellV); err != nil {
+			return nil, fmt.Errorf("scan leg flows trade_uid=%s: %w", tradeUID, err)
 		}
-		if !skip[token] {
-			realized += r
+		pf := out[token]
+		if pf == nil {
+			pf = &phaseFlows{}
+			out[token] = pf
+		}
+		if wing {
+			pf.wing = f
+		} else {
+			pf.real = f
 		}
 	}
-	return realized, rows.Err()
+	return out, rows.Err()
 }
 
 // LoadOpenLegs returns every currently-OPEN leg recorded for this trade in
@@ -223,6 +318,26 @@ func (s *PostgresBackedStore) LoadOpenLegs(tradeUID string) ([]OpenLeg, error) {
 		return nil, fmt.Errorf("iterate open legs trade_uid=%s: %w", tradeUID, err)
 	}
 
+	// A contract holding both wing and non-wing quantity (a hedge landing on
+	// an old wing strike) prices each part at its own orders' average, not
+	// the contract's blended one -- otherwise the wing PnL and the trade PnL
+	// each carry part of the other.
+	mixed := false
+	for _, l := range legs {
+		if l.WingQty != 0 && l.WingQty != l.Qty {
+			mixed = true
+		}
+	}
+	if mixed {
+		if flows, err := s.loadPhaseFlows(ctx, tradeUID); err == nil {
+			for i := range legs {
+				l := &legs[i]
+				if f := flows[l.Token]; f != nil && l.WingQty != 0 && l.WingQty != l.Qty {
+					l.WingEntry, l.RealEntry = f.wing.entry(), f.real.entry()
+				}
+			}
+		}
+	}
 	return legs, nil
 }
 
