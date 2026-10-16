@@ -116,7 +116,9 @@ func (s *Service) sbHandOffLocked(r *sbRunner) bool {
 		tr.Config.HedgeMinThresholdBps = &hm
 	}
 	now := time.Now()
-	if err := applyBuildRiskConfig(&tr.Config, &BuildRiskConfig{ExitTime: cfg.ExitTime, SlBps: cfg.SLBps, TpBps: cfg.TPBps}, now); err != nil {
+	// Wings: the % the run started with (its trade row), so the standard
+	// monitor keeps adjusting / closing the wings the build bought.
+	if err := applyBuildRiskConfig(&tr.Config, &BuildRiskConfig{ExitTime: cfg.ExitTime, SlBps: cfg.SLBps, TpBps: cfg.TPBps, WingPct: tr.Config.WingPct}, now); err != nil {
 		log.Printf("[SBUILD-LIVE] rule=%s hand-off: risk config: %v", cfg.ID, err)
 	}
 	tr.Status = "ACTIVE"

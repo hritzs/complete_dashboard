@@ -33,7 +33,7 @@ const S = {
 const phaseColor = { BUILDING: '#1e6fd0', PAUSED: '#f9a825', HANDED_OFF: '#00897b', COMPLETE: '#2e7d32', EXITING: '#ef6c00', EXITED: '#7b1fa2', HALTED: '#c62828', STOPPED: '#5d4037', IDLE: '#455a64' };
 const kindColor = { PLAN: '#64b5f6', TRANCHE: '#81c784', HEDGE: '#ffb74d', RISK: '#90a4ae', EXIT: '#e57373', RULE: '#ba68c8', ATM: '#4dd0e1', RESUME: '#fff176', FILL: '#a5d6a7', COMPLETE: '#4db6ac', HANDOFF: '#80cbc4', ORDER: '#ef9a9a', LIVE: '#ff8a65', HALT: '#ff5252', INFO: '#b0bec5' };
 const SYMBOLS = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'];
-const FIELDS = ['name', 'symbol', 'expiry', 'target_straddle', 'straddles', 'sl_bps', 'tp_bps', 'exit_time', 'straddle_div', 'hedge_div', 'hedge_min_bps', 'tranche_gap_ms', 'participation'];
+const FIELDS = ['name', 'symbol', 'expiry', 'target_straddle', 'straddles', 'sl_bps', 'tp_bps', 'exit_time', 'straddle_div', 'hedge_div', 'hedge_min_bps', 'tranche_gap_ms', 'participation', 'wing_pct'];
 const TEXT_FIELDS = ['name', 'symbol', 'expiry', 'exit_time'];
 const isRunning = (s) => ['BUILDING', 'PAUSED', 'COMPLETE', 'EXITING', 'HALTED'].includes(s?.phase);
 const isLive = (s) => s?.mode === 'LIVE';
@@ -198,7 +198,7 @@ export default function StraddleBuildTab() {
     const c = s?.config || {};
     if (!window.confirm(
       `REAL ORDERS on the broker account.\n\n${c.symbol} sell ATM straddle strictly ABOVE ₹${c.target_straddle} (avg CE + avg PE sold always > target), ` +
-      `${2 * (c.straddles || 0)} contracts in total (CE + PE), split DELTA-NEUTRAL by the live deltas (not ${c.straddles}/${c.straddles}), multi-lot IOC limit orders (up to the freeze qty each). Hedge / SL / TP / exit ${c.exit_time || '—'} with MARKET orders.\n\n` +
+      `${2 * (c.straddles || 0)} contracts in total (CE + PE), split DELTA-NEUTRAL by the live deltas (not ${c.straddles}/${c.straddles}), multi-lot IOC limit orders (up to the freeze qty each). Hedge / SL / TP / exit ${c.exit_time || '—'} with MARKET orders.\n${Number(c.wing_pct) > 0 ? `Wings ${c.wing_pct}% OTM bought with every confirmed sell (MARKET).` : 'No wings.'}\n\n` +
       'Sell?')) return;
     if (await call('/api/sbuild/shadow/start', { id: rid, mode: 'LIVE', confirm: 'SELL LIVE' })) { setMsg(`LIVE build started (${rid}) — real orders`); loadState(); }
   };
@@ -422,6 +422,7 @@ export default function StraddleBuildTab() {
                 <In label="SL (bps)" k="sl_bps" />
                 <In label="TP (bps)" k="tp_bps" />
                 <div style={{ 'grid-column': '1 / -1' }}><In label="Exit time" k="exit_time" type="text" ph="15:37:00" /></div>
+                <div style={{ 'grid-column': '1 / -1' }}><In label="Wings % OTM (0 = none)" k="wing_pct" ph="0" hint="LIVE only, fixed when the run starts: bought after each confirmed sell, sold on buy-backs, closed at exit; margin only, not in PnL / delta" /></div>
               </Group>
               <Group title="Hedge" cols={3}>
                 <In label="Straddle ÷" k="straddle_div" />

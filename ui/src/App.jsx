@@ -4,7 +4,7 @@
   import PaperSimTab from './PaperSimTab.jsx';
   import MockTab from './MockTab.jsx';
   import SBPortfolioRows, { sbStore } from './SBPortfolioRows.jsx';
-  import ManualLegPanel, { closeManualLeg } from './ManualLegPanel.jsx';
+  import ManualLegPanel, { closeManualLeg, addManualLeg } from './ManualLegPanel.jsx';
   import PortfolioMTMPanel from './PortfolioMTMPanel.jsx';
   import './App.css';
   import LatencyDashboard from './LatencyDashboard.jsx';
@@ -3521,10 +3521,16 @@ function App() {
                                                     <td>{fmt(position.iv ?? 0, 2)}</td>
                                                     <td>
                                                       <Show when={!isClosed() && !position.wing && Number(position.quantity) > 0 && position.token}>
-                                                        <button class="dashboard-btn red" style={{ padding: "2px 8px", "font-size": "11px" }}
-                                                          onClick={(event) => { event.stopPropagation(); closeManualLeg(uid, position, item.lotSize || 65, () => refreshPortfolio()); }}>
-                                                          Close
-                                                        </button>
+                                                        <span style={{ display: "inline-flex", gap: "4px" }}>
+                                                          <button class="dashboard-btn blue" style={{ padding: "2px 8px", "font-size": "11px" }} title="Add lots to this leg (same contract, same direction); asks how many"
+                                                            onClick={(event) => { event.stopPropagation(); addManualLeg(uid, position, item.lotSize || 65, item.expiry, () => refreshPortfolio()); }}>
+                                                            Add
+                                                          </button>
+                                                          <button class="dashboard-btn red" style={{ padding: "2px 8px", "font-size": "11px" }} title="Close some or all lots of this leg; asks how many"
+                                                            onClick={(event) => { event.stopPropagation(); closeManualLeg(uid, position, item.lotSize || 65, () => refreshPortfolio()); }}>
+                                                            Close
+                                                          </button>
+                                                        </span>
                                                       </Show>
                                                     </td>
                                                   </tr>

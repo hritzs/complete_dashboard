@@ -26,6 +26,7 @@ import (
 	"math"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -96,6 +97,7 @@ func (s *Service) sbLiveCreateTrade(c SBConfig, expiry string, lot int64) (Store
 		CreatedAt:       now,
 		LastUpdateTime:  now,
 	}
+	tr.Config.WingPct = c.WingPct // the run's wings (sbWingsAfterFill), kept after the hand-off
 	s.Store.SaveTrade(tr)
 	if _, ok := s.Store.LoadTrade(tr.TradeUID); !ok {
 		return tr, fmt.Errorf("trade %s not stored", tr.TradeUID)
@@ -423,6 +425,8 @@ func (s *Service) sbExecuteLiveAsync(r *sbRunner, plan DepthEntryPlan, atm Optio
 				got[o.leg] = o.res.Filled
 			}
 			r.persistLocked()
+			// Wings for what this clip actually sold (background, never on the order path).
+			s.sbWingsAfterFill(r, got["CE"], got["PE"], atm.Strike, atm.Strike, fmt.Sprintf("SBUILD %s tranche %d", role, tranche))
 			return got
 		}
 		canSend := func() bool {
@@ -726,6 +730,11 @@ func (s *Service) sbCompleteLocked(r *sbRunner, leg string, atm OptionChainRow, 
 			ceA, peA := r.pms.BuildAverages()
 			r.event("FILL", "LIVE COMPLETE %s SELL %d @%.2f (IOC limit %.2f) -- build avg CE %.2f + PE %.2f = %.2f vs target %.2f",
 				leg, res.Filled, res.AvgPrice, lim, ceA, peA, ceA+peA, r.cfg.TargetStraddle)
+			if leg == "CE" {
+				s.sbWingsAfterFill(r, res.Filled, 0, atm.Strike, atm.Strike, "SBUILD completion")
+			} else {
+				s.sbWingsAfterFill(r, 0, res.Filled, atm.Strike, atm.Strike, "SBUILD completion")
+			}
 		}
 		switch {
 		case res.Unknown:
@@ -779,6 +788,16 @@ func (s *Service) sbLiveMarketAsync(r *sbRunner, role string, orders []sbMarketO
 				if res.Filled > 0 {
 					r.pms.ApplyFill(PMSFill{Token: o.Token, Strike: o.Strike, OptionType: o.OptionType, Side: o.Side, Qty: res.Filled, Price: res.AvgPrice, Role: role})
 					r.event("FILL", "LIVE %s %s %s %.0f %d @%.2f (MARKET)", role, o.Side, o.OptionType, o.Strike, res.Filled, res.AvgPrice)
+					// A hedge moves the net short: wings follow it. An exit's
+					// wings are all closed once the exit is done (sbExitLocked).
+					if role == "HEDGE" {
+						ch := shortChangeFromFill(o.Side, res.Filled)
+						if o.OptionType == "CE" {
+							s.sbWingsAfterFill(r, ch, 0, o.Strike, o.Strike, "SBUILD hedge")
+						} else {
+							s.sbWingsAfterFill(r, 0, ch, o.Strike, o.Strike, "SBUILD hedge")
+						}
+					}
 				}
 				if res.Unknown || res.Filled < q {
 					why := res.Reason
@@ -857,6 +876,7 @@ func (s *Service) sbExitLocked(r *sbRunner, chain *OptionChainSnapshot, why stri
 		r.phase = "EXITED"
 		r.event("EXIT", "%s -- LIVE position already flat", why)
 		s.sbLiveCloseTrade(r.tradeUID, sbStatusClosed)
+		s.sbCloseWings(r, "SBUILD exit")
 		r.persistLocked()
 		return
 	}
@@ -872,8 +892,70 @@ func (s *Service) sbExitLocked(r *sbRunner, chain *OptionChainSnapshot, why stri
 		r.event("EXIT", "LIVE exit confirmed: flat=%t realized ₹%.0f", final.Flat, final.PnL)
 		if final.Flat {
 			s.sbLiveCloseTrade(r.tradeUID, sbStatusClosed)
+			s.sbCloseWings(r, "SBUILD exit")
 		}
 	})
+}
+
+// sbWingLocks serializes wing actions per trade, so a later adjustment (a
+// hedge's buy-back selling wings) never races an earlier one still in flight
+// (a tranche's wing buy).
+var sbWingLocks sync.Map // trade uid -> *sync.Mutex
+
+// sbWingsAfterFill follows a LIVE run's confirmed fill with its wings, in
+// the background (never on the order path) and one action at a time per
+// trade: a net short grown by q buys q wings at strike -/+ wing %, a short
+// that shrank sells held wings LIFO (adjustWings, as the standard build and
+// hedges do). No-op for SHADOW runs and runs without wings. Caller may hold
+// r.mu.
+func (s *Service) sbWingsAfterFill(r *sbRunner, changeCE, changePE int64, baseCE, basePE float64, reason string) {
+	if r == nil || !r.isLive || r.tradeUID == "" || s.Store == nil || s.BrokerFactory == nil || (changeCE == 0 && changePE == 0) {
+		return
+	}
+	tr, ok := s.Store.LoadTrade(r.tradeUID)
+	if !ok || tr.Config.WingPct <= 0 {
+		return
+	}
+	s.sbWingAction(r, tr, reason, func(ctx context.Context, executor Executor) error {
+		return s.adjustWings(ctx, executor, tr, changeCE, changePE, baseCE, basePE, reason)
+	})
+}
+
+// sbCloseWings sells every wing the run holds once its exit is done (after
+// any adjustment still in flight). Caller may hold r.mu.
+func (s *Service) sbCloseWings(r *sbRunner, reason string) {
+	if r == nil || !r.isLive || r.tradeUID == "" || s.Store == nil || s.BrokerFactory == nil {
+		return
+	}
+	tr, ok := s.Store.LoadTrade(r.tradeUID)
+	if !ok {
+		return
+	}
+	s.sbWingAction(r, tr, reason, func(ctx context.Context, _ Executor) error {
+		return s.closeAllWings(ctx, tr, reason)
+	})
+}
+
+func (s *Service) sbWingAction(r *sbRunner, tr StoredTrade, reason string, act func(ctx context.Context, executor Executor) error) {
+	mu, _ := sbWingLocks.LoadOrStore(tr.TradeUID, &sync.Mutex{})
+	go func() {
+		m := mu.(*sync.Mutex)
+		m.Lock()
+		defer m.Unlock()
+		executor, err := s.BrokerFactory.GetExecutor(tr.UserID, tr.BrokerName, tr.AccountID)
+		if err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			err = act(ctx, executor)
+			cancel()
+		}
+		if err != nil {
+			log.Printf("[WINGS] ⚠ SBuild trade=%s %s: %v", tr.TradeUID, reason, err)
+			r.mu.Lock()
+			r.event("WARN", "wings (%s): %v -- check the broker's wing position", reason, err)
+			r.persistLocked()
+			r.mu.Unlock()
+		}
+	}()
 }
 
 // sbTradeBookFill looks one broker order up in the broker's OWN order book
@@ -956,6 +1038,14 @@ func (s *Service) sbResolvePendingLocked(r *sbRunner) (bool, string) {
 		if qty > 0 {
 			r.pms.ApplyFill(PMSFill{Token: p.Token, Strike: p.Strike, OptionType: p.OptionType, Side: p.Side, Qty: qty, Price: px, Role: p.Role, Tranche: r.tranches})
 			s.persistWingFill(p.IntentID, p.BrokerOrderID, "FILLED", qty, p.Qty-qty, px)
+			if p.Role == "BUILD" || p.Role == "HEDGE" { // wings follow a recovered fill too
+				ch := shortChangeFromFill(p.Side, qty)
+				if p.OptionType == "CE" {
+					s.sbWingsAfterFill(r, ch, 0, p.Strike, p.Strike, "SBUILD recovered "+strings.ToLower(p.Role))
+				} else {
+					s.sbWingsAfterFill(r, 0, ch, p.Strike, p.Strike, "SBUILD recovered "+strings.ToLower(p.Role))
+				}
+			}
 		}
 		r.event("RESUME", "unconfirmed order %s (%s %s %d) settled from the broker order book: filled %d @%.2f", p.BrokerOrderID, p.Side, p.OptionType, p.Qty, qty, px)
 	}

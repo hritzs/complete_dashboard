@@ -54,6 +54,11 @@ type SBConfig struct {
 	HedgeDiv       float64 `json:"hedge_div"`        // default 57
 	HedgeMinBps    float64 `json:"hedge_min_bps"`    // default 8
 	MaxDepthAgeMs  int64   `json:"max_depth_age_ms"` // default 1500
+	// WingPct: margin wings % OTM (0 = none), LIVE runs only. Fixed when a
+	// run starts (it goes on the run's trade); wings are bought after each
+	// confirmed build / hedge sell, sold after a buy-back, all closed at the
+	// exit, and the standard monitor keeps them after the hand-off.
+	WingPct float64 `json:"wing_pct"`
 }
 
 // SBLive is the real-time straddle check for a rule (always computed, even

@@ -37,6 +37,25 @@ export async function closeManualLeg(tradeUid, position, lotSize, onDone) {
   onDone && onDone(d);
 }
 
+// Add lots to one open leg, same contract and same direction (a short sells
+// more, a long buys more) -- Position Details "Add" button. Counts in the
+// trade's P&L / greeks unless the leg is already kept out of them.
+export async function addManualLeg(tradeUid, position, lotSize, tradeExpiry, onDone) {
+  const lot = Number(lotSize) || 1;
+  const side = String(position.action || '').toUpperCase() === 'BUY' ? 'BUY' : 'SELL';
+  const expiry = position.expiry || tradeExpiry || '';
+  const contract = `${position.option_type} ${position.strike}${expiry ? ` ${expiry}` : ''}`;
+  const lotsTxt = window.prompt(`Add to ${contract} (${side} ${Number(position.quantity) || 0} held) with a MARKET ${side}.\nLots to add (${lot} each):`, '1');
+  if (lotsTxt == null) return;
+  const lots = Math.floor(Number(lotsTxt));
+  if (!Number.isFinite(lots) || lots <= 0) { window.alert('Invalid lots'); return; }
+  if (!window.confirm(`REAL ORDER: ${side} ${lots * lot} ${contract} at MARKET?`)) return;
+  const d = await post({ trade_uid: tradeUid, action: 'ADD', expiry, strike: Number(position.strike), option_type: position.option_type,
+    side, lots, include_risk: !position.excluded, confirm: 'CONFIRM' });
+  window.alert(resultText(d));
+  onDone && onDone(d);
+}
+
 export default function ManualLegPanel(props) {
   const it = () => props.item || {};
   const [expiries, setExpiries] = createSignal([]);

@@ -86,8 +86,9 @@ func (s *Service) ManualLeg(ctx context.Context, req ManualLegRequest) (ManualLe
 	}
 
 	var token int64
-	var exchange, contract, side string
+	var exchange, contract, side, legOpt string
 	var qty int64
+	var legStrike float64 // the leg's strike and type: where its wings go
 	lotSize := int64(tr.LotSize)
 
 	switch res.Action {
@@ -124,6 +125,7 @@ func (s *Service) ManualLeg(ctx context.Context, req ManualLegRequest) (ManualLe
 		exchange = tr.ExchangeSegment
 		qty = int64(req.Lots) * lotSize
 		contract = fmt.Sprintf("%s %s %.0f %s", tr.Symbol, chain.Expiry, row.Strike, opt)
+		legOpt, legStrike = opt, row.Strike
 		res.InRisk = req.IncludeRisk == nil || *req.IncludeRisk
 
 	case "CLOSE":
@@ -151,6 +153,7 @@ func (s *Service) ManualLeg(ctx context.Context, req ManualLegRequest) (ManualLe
 			qty = int64(req.Lots) * lotSize
 		}
 		token, exchange = leg.Token, leg.Exchange
+		legOpt, legStrike = strings.ToUpper(leg.OptionType), leg.Strike
 		contract = fmt.Sprintf("%s %s %.0f %s", tr.Symbol, leg.Expiry, leg.Strike, leg.OptionType)
 	default:
 		return res, fmt.Errorf("action must be ADD or CLOSE")
@@ -227,6 +230,12 @@ func (s *Service) ManualLeg(ctx context.Context, req ManualLegRequest) (ManualLe
 		if ce, pe, qerr := pg.TradeOpenQuantities(context.Background(), cur.TradeUID); qerr == nil {
 			cur.CEQty, cur.PEQty = int(ce), int(pe)
 		}
+		// The build leg's entry too: an ADD at another price moves its
+		// average, and the monitor values the build legs at the trade's
+		// entry (trade_legs carries the fill-based average).
+		if legs, lerr := pg.LoadOpenLegs(cur.TradeUID); lerr == nil {
+			cur.CELtp, cur.PELtp = buildLegEntries(legs, cur.CEToken, cur.PEToken, cur.CELtp, cur.PELtp)
+		}
 	}
 	if res.Action == "ADD" && !res.InRisk && token != cur.CEToken && token != cur.PEToken {
 		seen := false
@@ -249,6 +258,20 @@ func (s *Service) ManualLeg(ctx context.Context, req ManualLegRequest) (ManualLe
 	cur.LastUpdateTime = time.Now()
 	s.Store.UpdateTrade(cur)
 
+	// Wings follow the net short this leg moved (a short added buys wings at
+	// its strike -/+ wing %, a short bought back sells held wings), as the
+	// build, hedges and exits do. Margin only; a wing problem never undoes
+	// the leg.
+	if res.Filled > 0 && cur.Config.WingPct > 0 {
+		dCE, dPE := manualLegWingChange(side, legOpt, res.Filled)
+		wctx, wcancel := context.WithTimeout(context.Background(), 60*time.Second)
+		if werr := s.adjustWings(wctx, executor, cur, dCE, dPE, legStrike, legStrike, "MANUAL leg "+strings.ToLower(res.Action)); werr != nil {
+			log.Printf("[WINGS] ⚠ trade=%s manual leg: %v", cur.TradeUID, werr)
+			res.Message = strings.TrimSpace(res.Message + " · wings: " + werr.Error())
+		}
+		wcancel()
+	}
+
 	if legs, err := pg.LoadOpenLegs(tr.TradeUID); err == nil {
 		for _, l := range legs {
 			if l.Token == token {
@@ -260,6 +283,29 @@ func (s *Service) ManualLeg(ctx context.Context, req ManualLegRequest) (ManualLe
 		res.Message = fmt.Sprintf("%s %s %d %s filled @%.2f", res.Action, side, res.Filled, contract, res.AvgPrice)
 	}
 	return res, nil
+}
+
+// manualLegWingChange: how a manual leg's fill moves the net short of its
+// type (SELL grows it, BUY shrinks it) -- what its wings must follow.
+func manualLegWingChange(side, opt string, filled int64) (dCE, dPE int64) {
+	ch := shortChangeFromFill(side, filled)
+	if strings.EqualFold(opt, "PE") {
+		return 0, ch
+	}
+	return ch, 0
+}
+
+// buildLegEntries: the build CE / PE entry prices from the fill-based open
+// legs (non-wing part), keeping the current ones where a leg has none.
+func buildLegEntries(legs []OpenLeg, ceToken, peToken int64, ce, pe float64) (float64, float64) {
+	for _, l := range legs {
+		if e := l.entryFor(false); e > 0 && l.Token == ceToken {
+			ce = e
+		} else if e > 0 && l.Token == peToken {
+			pe = e
+		}
+	}
+	return ce, pe
 }
 
 // ManualLegHandler: POST /api/trade/manual-leg (ManualLegRequest).
