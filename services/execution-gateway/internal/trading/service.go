@@ -2021,6 +2021,9 @@ func (s *Service) persistSQFProgress(tradeUID string, tr StoredTrade, verifiedFi
 }
 
 func (s *Service) SquareOff(tradeUID string, reason string) error {
+	// Normal exits first hedge to delta-neutral (exit_complete.go); before
+	// the lock, which the hedge takes itself.
+	s.preExitNeutralise(tradeUID, reason)
 	defer s.lockTrade(tradeUID)()
 
 	tr, ok := s.Store.LoadTrade(tradeUID)
@@ -2155,6 +2158,22 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 	remainingPE := targetPE
 	var allVerifiedFills []BrokerFill
 
+	// Normal exit: the complete position (straddle + every hedge leg) in 7
+	// build-like rounds of concurrent IOC limits (exit_complete.go). Whatever
+	// it leaves falls through to the chunk loop below and the tail.
+	var exitUnconfirmed []string
+	if !aggressiveExitReason(reason) {
+		if inv, ierr := s.completeExitInventory(tradeUID); ierr != nil {
+			log.Printf("⚠️ SQF %s: complete-exit inventory unavailable (%v) -- straddle-first exit", tradeUID, ierr)
+		} else if len(inv) > 0 {
+			rce, rpe, unconf, xerr := s.completeExitRounds(tradeUID, tr, executor, inv, reason)
+			if xerr != nil {
+				return revert(xerr)
+			}
+			remainingCE, remainingPE, exitUnconfirmed = min(rce, targetCE), min(rpe, targetPE), unconf
+		}
+	}
+
 	// Hedge legs come down WITH the straddle: after every chunk each extra
 	// leg is reduced to the same fraction the straddle has closed (whole
 	// lots), so the position keeps its ratio and delta all the way down
@@ -2179,6 +2198,7 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 	// well have filled -- so while any exist, NOTHING more is sent (live
 	// 2026-09-30: unconfirmed exits were re-sent and over-bought).
 	var unconfirmedOrders []string
+	unconfirmedOrders = append(unconfirmedOrders, exitUnconfirmed...)
 
 	for executionAttempt := 1; executionAttempt <= maxExecutionAttempts; executionAttempt++ {
 		if remainingCE <= 0 && remainingPE <= 0 {

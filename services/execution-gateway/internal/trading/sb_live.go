@@ -881,9 +881,9 @@ func (s *Service) sbExitLocked(r *sbRunner, chain *OptionChainSnapshot, why stri
 		return
 	}
 	r.phase = "EXITING"
-	r.event("EXIT", "%s -- LIVE: building stopped for good; buying back / selling out %d leg(s) with MARKET orders", why, len(orders))
+	r.event("EXIT", "%s -- LIVE: building stopped for good; closing all %d leg(s) together: 7 rounds of IOC limits, then MARKET", why, len(orders))
 	r.persistLocked()
-	s.sbLiveMarketAsync(r, "EXIT", orders, func(ok bool) {
+	s.sbLiveExitRounds(r, orders, func(ok bool) {
 		if !ok {
 			return // halted inside
 		}
