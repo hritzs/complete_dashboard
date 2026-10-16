@@ -27,6 +27,17 @@ const FIELDS = [
   ['product_type', 'Product', 'text'],
 ];
 const NUM = new Set(FIELDS.filter((f) => f[2] === 'number').map((f) => f[0]));
+const FIELD = Object.fromEntries(FIELDS.map((f) => [f[0], f]));
+// The form, grouped; the account fields are rarely touched and sit folded.
+const GROUPS = [
+  ['Size', ['lots', 'order_lots_per_call']],
+  ['Risk', ['exit_time', 'sl_bps', 'tp_bps']],
+  ['Hedge & wings', ['hedge_div', 'straddle_div', 'wing_pct']],
+  ['Order pricing', ['buy_buffer', 'sell_buffer']],
+];
+const ACCOUNT = ['broker_name', 'account_id', 'user_id', 'exchange_segment', 'product_type'];
+const groupBox = { border: '1px solid rgba(255,255,255,0.08)', 'border-radius': '8px', padding: '8px 10px', background: 'rgba(255,255,255,0.02)' };
+const groupTitle = { 'font-size': '11px', 'text-transform': 'uppercase', 'letter-spacing': '0.06em', opacity: 0.6, 'margin-bottom': '6px' };
 // Shown and typed as QUANTITY on this tab; the backend keeps lots.
 const QTY = new Set(['lots', 'order_lots_per_call']);
 
@@ -124,8 +135,9 @@ export default function LutActualBuild() {
         <strong style={{ 'font-size': '14px' }}>{armed() ? `ARMED since ${st()?.config?.armed_at}` : 'DISARMED — paper only'}</strong>
         <span style={{ 'font-size': '12px', opacity: 0.9 }}>the LUT check above is paper; this panel is the one that sells</span>
       </div>
-      <div style={{ 'padding-top': '10px', display: 'flex', 'align-items': 'center', gap: '10px', 'flex-wrap': 'wrap' }}>
-        <span style={muted}>FIRST minute-end YES while ARMED → delta-neutral full-size build at the LUT's strike/expiry · that YES only · then it DISARMS ITSELF and only monitors (arm again, or use another build, for a new entry)</span>
+      <div style={{ ...muted, 'padding-top': '8px' }}
+        title="FIRST minute-end YES while ARMED -> delta-neutral full-size build at the LUT's strike / expiry, that YES only; then it DISARMS ITSELF and only monitors (arm again, or use another build, for a new entry)">
+        Armed: the first minute-end LUT YES sells once at the LUT's strike, then it disarms itself.
       </div>
 
       <Show when={today()}>
@@ -149,24 +161,49 @@ export default function LutActualBuild() {
       </Show>
 
       <Show when={form()}>
-        <div style={{ display: 'flex', gap: '10px', 'flex-wrap': 'wrap', 'margin-top': '8px' }}>
-          <For each={FIELDS}>{([k, label, type]) => (
-            <label class="control-block">
-              <span class="control-label">{label}</span>
-              <input class="symbol-select" style={{ width: type === 'number' ? '90px' : '110px' }} type={type === 'number' ? 'text' : type} inputmode={type === 'number' ? 'decimal' : undefined} step="any" value={form()[k] ?? ''}
-                onInput={(e) => { setForm({ ...form(), [k]: e.currentTarget.value }); setDirty(true); }} />
-              <Show when={QTY.has(k)}>
-                <span style={{ ...muted, 'font-size': '11px' }}>
-                  {k === 'order_lots_per_call' && !(Number(form()[k]) > 0) ? 'automatic' : `${(Number(form()[k]) || 0) / lot()} lot(s) × ${lot()}`}
-                </span>
-              </Show>
-            </label>
-          )}</For>
-        </div>
+        {(() => {
+          const Field = (fp) => {
+            const [k, label, type] = FIELD[fp.k];
+            return (
+              <label class="control-block" style={{ 'min-width': '0' }}>
+                <span class="control-label" style={{ 'white-space': 'nowrap' }}>{label}</span>
+                <input class="symbol-select" style={{ width: '100%', 'box-sizing': 'border-box' }} type={type === 'number' ? 'text' : type} inputmode={type === 'number' ? 'decimal' : undefined} step="any" value={form()[k] ?? ''}
+                  onInput={(e) => { setForm({ ...form(), [k]: e.currentTarget.value }); setDirty(true); }} />
+                <Show when={QTY.has(k)}>
+                  <span style={{ ...muted, 'font-size': '11px' }}>
+                    {k === 'order_lots_per_call' && !(Number(form()[k]) > 0) ? 'automatic' : `${(Number(form()[k]) || 0) / lot()} lot(s) × ${lot()}`}
+                  </span>
+                </Show>
+              </label>
+            );
+          };
+          return (
+            <>
+              <div style={{ display: 'grid', 'grid-template-columns': 'repeat(auto-fit, minmax(230px, 1fr))', gap: '10px', 'margin-top': '10px' }}>
+                <For each={GROUPS}>{([title, keys]) => (
+                  <div style={groupBox}>
+                    <div style={groupTitle}>{title}</div>
+                    <div style={{ display: 'grid', 'grid-template-columns': `repeat(${keys.length > 2 ? 3 : 2}, minmax(0, 1fr))`, gap: '8px' }}>
+                      <For each={keys}>{(k) => <Field k={k} />}</For>
+                    </div>
+                  </div>
+                )}</For>
+              </div>
+              <details style={{ ...groupBox, 'margin-top': '10px' }}>
+                <summary style={{ cursor: 'pointer', ...groupTitle, 'margin-bottom': 0 }}>
+                  Account · {form().broker_name}/{form().account_id} · {form().user_id} · {form().exchange_segment} · {form().product_type}
+                </summary>
+                <div style={{ display: 'grid', 'grid-template-columns': 'repeat(auto-fit, minmax(140px, 1fr))', gap: '8px', 'margin-top': '8px' }}>
+                  <For each={ACCOUNT}>{(k) => <Field k={k} />}</For>
+                </div>
+              </details>
+            </>
+          );
+        })()}
       </Show>
 
-      <div style={{ display: 'flex', gap: '8px', 'align-items': 'center', 'margin-top': '8px', 'flex-wrap': 'wrap' }}>
-        <button class="tab-btn" onClick={save}>Save</button>
+      <div style={{ display: 'flex', gap: '8px', 'align-items': 'center', 'margin-top': '12px', 'padding-top': '10px', 'border-top': '1px solid rgba(255,255,255,0.06)', 'flex-wrap': 'wrap' }}>
+        <button class="tab-btn" onClick={save} disabled={!dirty()}>Save</button>
         <Show when={!armed()} fallback={<button class="tab-btn" onClick={disarm}>Disarm</button>}>
           <button class="tab-btn" style={{ background: '#b23b3b' }} onClick={arm}>Arm (REAL orders)</button>
         </Show>

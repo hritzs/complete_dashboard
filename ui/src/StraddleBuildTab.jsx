@@ -292,8 +292,8 @@ export default function StraddleBuildTab() {
   const lotsTxt = () => (lotSize() ? `${(Number(rule().straddles) || 0) / lotSize()} lot(s) of ${lotSize()}` : '');
 
   const In = (p) => (
-    <label style={{ display: 'flex', 'flex-direction': 'column', gap: '4px', 'min-width': 0 }}>
-      <span style={S.label}>{p.label}</span>
+    <label style={{ display: 'flex', 'flex-direction': 'column', gap: '4px', 'min-width': 0 }} title={p.title || undefined}>
+      <span style={{ ...S.label, 'white-space': 'nowrap', overflow: 'hidden', 'text-overflow': 'ellipsis' }}>{p.label}{p.title ? ' ⓘ' : ''}</span>
       <input class="symbol-select" style={S.input} type={p.type || 'text'} inputmode={p.type ? undefined : 'decimal'} step="any" placeholder={p.ph || ''} value={rule()[p.k] ?? ''} onInput={setField(p.k)} onBlur={p.onBlur} disabled={p.disabled} />
       <Show when={p.hint}><span style={{ ...S.muted, 'font-size': '11px' }}>{p.hint}</span></Show>
     </label>
@@ -413,21 +413,21 @@ export default function StraddleBuildTab() {
                 <div style={{ 'grid-column': '1 / -1' }}><In label="Name (optional)" k="name" type="text" ph={`${rule().symbol || 'NIFTY'} ${rule().target_straddle || ''}`} /></div>
               </Group>
               <Group title="Entry">
-                <In label="Target straddle ₹ (sell above)" k="target_straddle" ph={mkt()?.bid_straddle ? fmt(mkt().bid_straddle) : ''} />
-                <In label="Tranche gap (ms)" k="tranche_gap_ms" ph="250" />
-                <In label="Participation (0-1 of fillable depth)" k="participation" ph="0.75" />
-                <In label="Qty per leg (contracts)" k="straddles" ph={String(lotSize() || 65)} onBlur={roundQty} hint={`${lotsTxt()} · total ${totalQty()} CE+PE, split delta-neutral (not equal legs)`} />
+                <In label="Target straddle ₹" title="Sell only while the bid straddle is above this" k="target_straddle" ph={mkt()?.bid_straddle ? fmt(mkt().bid_straddle) : ''} />
+                <In label="Qty per leg" title="Contracts per leg, whole lots; the total 2 x this is split delta-neutral (legs are not equal)" k="straddles" ph={String(lotSize() || 65)} onBlur={roundQty} hint={`${lotsTxt()} · ${totalQty()} CE+PE total`} />
+                <In label="Participation" title="Share (0-1) of the fillable L1-L5 depth each tranche takes" k="participation" ph="0.75" />
+                <In label="Tranche gap (ms)" title="Minimum time between tranches" k="tranche_gap_ms" ph="50" />
               </Group>
-              <Group title="Risk">
+              <Group title="Risk" cols={3}>
                 <In label="SL (bps)" k="sl_bps" />
                 <In label="TP (bps)" k="tp_bps" />
-                <div style={{ 'grid-column': '1 / -1' }}><In label="Exit time" k="exit_time" type="text" ph="15:37:00" /></div>
-                <div style={{ 'grid-column': '1 / -1' }}><In label="Wings % OTM (0 = none)" k="wing_pct" ph="0" hint="LIVE only, fixed when the run starts: bought after each confirmed sell, sold on buy-backs, closed at exit; margin only, not in PnL / delta" /></div>
+                <In label="Exit time" k="exit_time" type="text" ph="15:37:00" />
               </Group>
-              <Group title="Hedge" cols={3}>
+              <Group title="Hedge & wings">
                 <In label="Straddle ÷" k="straddle_div" />
                 <In label="Hedge ÷" k="hedge_div" />
-                <In label="Min bps" k="hedge_min_bps" />
+                <In label="Min bps" title="Floor on points allowed, in bps of spot" k="hedge_min_bps" />
+                <In label="Wings % OTM" title="0 = none. LIVE only, fixed when the run starts: bought after each confirmed sell, sold on buy-backs, closed at exit. Margin only: not in PnL, delta or hedges" k="wing_pct" ph="0" />
               </Group>
             </div>
 
@@ -452,9 +452,12 @@ export default function StraddleBuildTab() {
                 <Show when={running() && !isLive(st())}><button class="tab-btn" style={S.btnDanger} onClick={() => switchToLive(rule().id)}>Switch to LIVE</button></Show>
               </span>
             </div>
-            <div style={{ ...S.muted, 'margin-top': '8px', 'font-size': '11px' }}>
-              Sells the current ATM with multi-lot IOC orders (each leg's planned quantity, up to the freeze qty per order), sized off 75% (participation) of fillable L1–L5 depth (shared across rules on the same book); avg CE + avg PE sold always stays above the target; tail ≤ 2 lots trims net delta.
-            </div>
+            <details style={{ ...S.muted, 'margin-top': '8px', 'font-size': '11px' }}>
+              <summary style={{ cursor: 'pointer' }}>How a build sells</summary>
+              <div style={{ 'margin-top': '4px' }}>
+                Sells the current ATM with multi-lot IOC orders (each leg's planned quantity, up to the freeze qty per order), sized off the participation share of fillable L1–L5 depth (shared across rules on the same book); avg CE + avg PE sold always stays above the target; a tail of ≤ 2 lots trims net delta.
+              </div>
+            </details>
           </div>
 
           {/* Run */}

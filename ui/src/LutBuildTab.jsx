@@ -278,8 +278,8 @@ export default function LutBuildTab() {
         return (
           <div style={{ ...box, border: `1px solid ${r().in_zone ? 'rgba(46,125,50,0.8)' : 'rgba(255,255,255,0.10)'}` }}>
             <div class="section-title">Sell zone — {r().table} table ({r().time}){live()?.manual ? ' · what-if' : ''}</div>
-            <div style={muted}>
-              Future {fmt(r().future)} · ATM {fmt(r().strike, 0)} · DTE {fmt(r().raw_dte, 3)} · gap / IDV / IV change fixed — ATM straddle scanned ₹{fmt(r().from, 0)}–₹{fmt(r().to, 0)} in steps of {fmt(r().step)}.
+            <div style={muted} title={`Gap / IDV / IV change fixed; ATM straddle scanned ₹${fmt(r().from, 0)}–₹${fmt(r().to, 0)} in steps of ${fmt(r().step)}`}>
+              Future {fmt(r().future)} · ATM {fmt(r().strike, 0)} · DTE {fmt(r().raw_dte, 3)} · straddle now ₹{fmt(r().straddle)}
             </div>
             <Show when={(r().ranges || []).length} fallback={<div class="negative" style={{ 'margin-top': '6px' }}>No ATM straddle in that range gives a YES{r().skip ? ` (${r().skip})` : ''}.</div>}>
               <table class="trade-position-table" style={{ 'margin-top': '6px' }}>
@@ -440,9 +440,12 @@ export default function LutBuildTab() {
   };
 
   const Inputs = () => (
-    <div style={box}>
-      <div class="section-title">All inputs right now</div>
-      <div style={{ ...muted, margin: '4px 0' }}>Fixed for today{live()?.manual ? ' (manual values applied where set)' : ''}</div>
+    <details style={box}>
+      <summary style={{ cursor: 'pointer' }}>
+        <strong>All inputs right now</strong>
+        <span style={muted}> · weighted IDV {fmt(inp().WeightedIDV, 4)} · opening gap {fmt(live()?.norm_og, 4)} · adj IV change {fmt(inp().NormalizedAdjChg, 5)} · business days to expiry {live()?.bus_days ?? '—'}</span>
+      </summary>
+      <div style={{ ...muted, margin: '8px 0 4px' }}>Fixed for today{live()?.manual ? ' (manual values applied where set)' : ''}</div>
       <div style={grid}>
         <KV k="Date" v={live()?.day} />
         <KV k="Expiry" v={live()?.expiry || '—'} />
@@ -480,7 +483,7 @@ export default function LutBuildTab() {
           <KV k="Coordinate (DTE,IV,STR,BLD,OG,ADJ)" v={ev().coord_text} />
         </div>
       </Show>
-    </div>
+    </details>
   );
 
   // Grid: rows IV-ratio buckets, columns straddle-ratio buckets.
@@ -576,9 +579,13 @@ export default function LutBuildTab() {
   const otherAt = (t) => otherMins()[t];
   const otherName = () => `${(tset() === 'alt' ? raw()?.tables : raw()?.alt?.tables) || 'other'} tables`;
   const Timeline = () => (
-    <div style={box}>
-      <div class="section-title">Recorded minutes today (09:16–13:30) — row HH:MM = the prices that minute opens at (last trade before HH:MM:00)</div>
-      <Show when={minutes().length} fallback={<div style={muted}>Nothing recorded yet.</div>}>
+    <details style={box}>
+      <summary style={{ cursor: 'pointer' }}>
+        <strong>Recorded minutes today</strong>
+        <span style={muted}>{' '}· {minutes().length} minute(s) · {minutes().filter((e) => !e.skip && e.allowed).length} YES
+          {' '}· row HH:MM = prices that minute opens at (last trade before HH:MM:00)</span>
+      </summary>
+      <Show when={minutes().length} fallback={<div style={{ ...muted, 'margin-top': '8px' }}>Nothing recorded yet.</div>}>
         <div class="position-table-wrap">
           <table class="trade-position-table">
             <thead>
@@ -615,7 +622,7 @@ export default function LutBuildTab() {
           </table>
         </div>
       </Show>
-    </div>
+    </details>
   );
 
   const Params = () => {
@@ -662,37 +669,41 @@ export default function LutBuildTab() {
       <div class="panel-header">
         <div class="panel-title">
           LUT Entry Check
-          <span style={{ 'font-size': '12px', padding: '2px 8px', 'border-radius': '10px', background: '#5d4037', 'margin-left': '8px' }}>YES / NO check — real orders only via the armed Actual build below</span>
-        </div>
-        <div class="panel-subtitle">
-          Always on: re-evaluated on every chain tick and shown live. The first tick of each minute 09:16–13:30 is recorded; the first YES of the day is the paper entry.
+          <span style={{ 'font-size': '11px', padding: '2px 8px', 'border-radius': '10px', background: '#5d4037', 'margin-left': '8px', 'vertical-align': 'middle' }}
+            title="Always on: re-evaluated on every chain tick. The first tick of each minute 09:16-13:30 is recorded; the first YES of the day is the paper entry.">
+            paper check · real orders only via the armed Actual build
+          </span>
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: '8px', 'align-items': 'center', 'flex-wrap': 'wrap', margin: '6px 0 10px' }}>
-        <span style={muted}>LUT logic:</span>
-        <button class={`tab-btn ${tset() === 'main' ? 'active' : ''}`} onClick={() => switchSet('main')}
-          title="drives today: its first YES is the paper entry and fires the armed build">
-          {raw()?.tables === 'new' ? 'New tables (backtest)' : 'Old tables'} · drives today
-        </button>
-        <Show when={raw()?.alt}>
-          <button class={`tab-btn ${tset() === 'alt' ? 'active' : ''}`} onClick={() => switchSet('alt')}
-            title="shown and recorded beside on the same prices, never executed">
-            {raw().alt.tables === 'new' ? 'New tables (backtest)' : 'Old tables'} · shown beside, never executed
-          </button>
-        </Show>
-        <Show when={tset() === 'alt'}><span style={{ color: '#ffb74d', 'font-size': '12px' }}>Showing the set that is NOT driving today</span></Show>
-        <span style={{ ...muted, 'margin-left': '12px' }}>Show old algorithm:</span>
-        <label style={{ cursor: 'pointer' }}><input type="radio" name="lut-show-old" checked={!showOld()} onChange={() => toggleShowOld(false)} /> Off</label>
-        <label style={{ cursor: 'pointer' }}><input type="radio" name="lut-show-old" checked={showOld()} onChange={() => toggleShowOld(true)} /> On</label>
-        <span style={muted}>(off = the old tables are not loaded, evaluated, recorded or simulated)</span>
-      </div>
-
-      <div style={{ display: 'flex', gap: '12px', 'flex-wrap': 'wrap', 'align-items': 'flex-end' }}>
+      <div style={{ ...box, display: 'flex', gap: '14px 20px', 'align-items': 'flex-end', 'flex-wrap': 'wrap' }}>
+        <div class="control-block">
+          <span class="control-label">LUT logic</span>
+          <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}>
+            <button class={`tab-btn ${tset() === 'main' ? 'active' : ''}`} onClick={() => switchSet('main')}
+              title="drives today: its first YES is the paper entry and fires the armed build">
+              {raw()?.tables === 'new' ? 'New tables' : 'Old tables'} · drives today
+            </button>
+            <Show when={raw()?.alt}>
+              <button class={`tab-btn ${tset() === 'alt' ? 'active' : ''}`} onClick={() => switchSet('alt')}
+                title="shown and recorded beside on the same prices, never executed">
+                {raw().alt.tables === 'new' ? 'New tables' : 'Old tables'} · beside, never executed
+              </button>
+            </Show>
+          </div>
+        </div>
+        <div class="control-block" title="Off = the old tables are not loaded, evaluated, recorded or simulated">
+          <span class="control-label">Old algorithm</span>
+          <div style={{ display: 'flex', gap: '10px', height: '30px', 'align-items': 'center' }}>
+            <label style={{ cursor: 'pointer' }}><input type="radio" name="lut-show-old" checked={!showOld()} onChange={() => toggleShowOld(false)} /> Off</label>
+            <label style={{ cursor: 'pointer' }}><input type="radio" name="lut-show-old" checked={showOld()} onChange={() => toggleShowOld(true)} /> On</label>
+          </div>
+        </div>
+        <span style={{ width: '1px', 'align-self': 'stretch', background: 'rgba(255,255,255,0.08)' }} />
         <label class="control-block">
-          <span class="control-label">Size (qty)</span>
-          <input class="symbol-select" type="text" inputmode="numeric"
-            title={`Quantity per leg; whole lots of ${live()?.lot_size || 65}. The backend keeps lots.`}
+          <span class="control-label">Paper size (qty)</span>
+          <input class="symbol-select" type="text" inputmode="numeric" style={{ width: '90px' }}
+            title={`Quantity per leg for the paper entry; whole lots of ${live()?.lot_size || 65}.`}
             value={(Number(lots()) || 0) * (live()?.lot_size || 65)}
             onChange={(e) => {
               const ls = live()?.lot_size || 65;
@@ -703,25 +714,25 @@ export default function LutBuildTab() {
             }} />
         </label>
         <label class="control-block">
-          <span class="control-label">Expiry (blank = nearest)</span>
-          <input class="symbol-select" type="text" placeholder={live()?.expiry ? `nearest: ${live().expiry}` : 'nearest'} value={expiry()} onInput={(e) => setExpiry(e.currentTarget.value)} />
+          <span class="control-label">Expiry</span>
+          <input class="symbol-select" type="text" style={{ width: '130px' }} placeholder={live()?.expiry ? `nearest: ${live().expiry}` : 'nearest'} value={expiry()} onInput={(e) => setExpiry(e.currentTarget.value)} />
         </label>
-        <label class="control-block">
-          <span class="control-label">09:16 future override (blank = captured live)</span>
-          <input class="symbol-select" type="text" inputmode="decimal" step="0.05" value={og0916()} onInput={(e) => setOg0916(e.currentTarget.value)} />
+        <label class="control-block" title="Blank = the 09:16 future captured live">
+          <span class="control-label">09:16 future override</span>
+          <input class="symbol-select" type="text" inputmode="decimal" step="0.05" style={{ width: '120px' }} placeholder="captured live" value={og0916()} onInput={(e) => setOg0916(e.currentTarget.value)} />
         </label>
-        <button class="tab-btn" onClick={saveConfig}>Save settings</button>
-        <button class="tab-btn" onClick={startNow} title="Record a paper entry at this tick (not executed)">Start now</button>
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <button class="tab-btn" onClick={saveConfig}>Save</button>
+          <button class="tab-btn" onClick={startNow} title="Record a paper entry at this tick (not executed)">Paper entry now</button>
+        </div>
+        <Show when={tset() === 'alt'}><span style={{ color: '#ffb74d', 'font-size': '12px' }}>Showing the set that is NOT driving today</span></Show>
         <span style={muted}>{msg()}</span>
       </div>
 
-      <Manual />
       <Verdict />
-      <OpeningLevels />
-      <SellZone r={lastSell()} />
-      <Entry />
       <LutActualBuild />
-      <Inputs />
+      <Entry />
+      <SellZone r={lastSell()} />
       {/* ONE table: the live LUT table of the minute checked next (09:15-09:16
           shows 09:16, ... 09:20 onward 09:20+), kept after 13:30 with the
           market's cell still outlined -- no YES / NO is given after 13:30. */}
@@ -729,6 +740,9 @@ export default function LutBuildTab() {
       <Show when={ev() && !ev().skip && !ev().allowed}>
         <Nearest title={`${ev().stage} table`} rows={ev().nearest_yes} />
       </Show>
+      <OpeningLevels />
+      <Inputs />
+      <Manual />
       <Timeline />
       <Params />
     </section>
