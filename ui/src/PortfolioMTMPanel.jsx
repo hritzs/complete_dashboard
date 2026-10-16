@@ -137,7 +137,13 @@ export default function PortfolioMTMPanel() {
         </strong>
         <span style={{ padding: '1px 8px', 'border-radius': '8px', 'font-size': '12px', background: STATUS_BG[st().status] || '#455a64' }}>{st().status || '…'}</span>
         <Show when={!open()}>
-          <span style={{ 'font-size': '13px' }}>Day MTM <strong class={cls(view().day_mtm)}>{money(view().day_mtm)}</strong></span>
+          <span style={{ 'font-size': '13px' }} title="Open legs at LTP + realized: what the broker terminal and the trade rows show">
+            Day MTM at LTP <strong class={cls(view().day_mtm_ltp)}>{money(view().day_mtm_ltp)}</strong>
+          </span>
+          <span style={{ 'font-size': '12px', opacity: 0.8 }} title="If everything were closed now through the L1-L5 depth (shorts buy up the asks, longs sell down the bids); the book / SL rule uses this">
+            closeable now <strong class={cls(view().day_mtm)}>{money(view().day_mtm)}</strong>
+            {' '}(spread {money(Number(view().day_mtm_ltp) - Number(view().day_mtm))})
+          </span>
         </Show>
         <span style={{ opacity: 0.6, 'font-size': '12px' }}>{cfg().broker_name}/{cfg().account_id} · live {view().at || '…'} · {openTrades().length} open trade(s) · {(view().trades || []).length} today</span>
         <button class="dashboard-btn red" style={{ 'margin-left': 'auto', 'font-weight': 700 }} onClick={squareOffAll}
