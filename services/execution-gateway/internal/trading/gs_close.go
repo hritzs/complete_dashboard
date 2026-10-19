@@ -41,7 +41,7 @@ const (
 	// get the close sooner.
 	gsClosePoll     = 40 * time.Millisecond
 	gsCloseInflight = 1
-	gsCloseDeadline = 2 * time.Second // after the boundary: then the feed close is used
+	gsCloseDeadline = 1 * time.Second // after the boundary: then the feed close is used (user: wait 1 s at most; 95% of minutes are in by then)
 	// gsCaptureStart: when the boundary capture starts asking (GreekSoft
 	// never had the candle earlier than ~+0.25-0.3 s; earlier asks only add
 	// load).
@@ -614,24 +614,44 @@ func gsHaveAll(tokens map[int64]bool, b time.Time) bool {
 // moved within the minute is already in. Asked nearest first (gsRank).
 const gsSimBand = 2
 
-// gsAligned: a token's candles keyed by the minute they END (hh:mm:00) --
-// end-stamped candles only. GreekSoft's answer also carries candles stamped
-// INSIDE a minute (19 Oct: token 51346, 198 of 601), but they are a different
-// series (11:30:00 371.00 vs 11:30:05 308.35): never a close for this token.
-// Where no end-stamped candle exists the feed close stands in.
-func gsAligned(bars map[int64]float64, _ time.Time, tok int64) map[int64]float64 {
+// gsAligned: a token's candles of now's day, keyed by the minute they close
+// (hh:mm:00). GreekSoft's answer for a day also carries the PREVIOUS trading
+// day's candles (19 Oct token 51346: 324 of 610 were 16 Oct's) -- dropped.
+// The day's candles are stamped at the minute end, or a few seconds after it
+// (the time of the last trade it took in): 10:04:01 is the 10:04 close
+// (19 Oct NSE ticks: = the LTP at the stamp; 6 of 62 match 10:05). Such a
+// late stamp is taken once its minute is over (final); before that, and
+// whenever an hh:mm:00 candle exists, the hh:mm:00 one is the close.
+func gsAligned(bars map[int64]float64, now time.Time, tok int64) map[int64]float64 {
+	y, m, d := now.In(lutIST()).Date()
+	from := time.Date(y, m, d, 0, 0, 0, 0, lutIST()).Unix()
+	to := from + 86400
 	out := make(map[int64]float64, len(bars))
-	inside := 0
+	late := map[int64]int64{} // minute -> stamp used
 	for ts, c := range bars {
-		if ts%60 == 0 {
-			out[ts] = c
-		} else {
-			inside++
+		if ts < from || ts >= to || c <= 0 {
+			continue
+		}
+		b := ts - ts%60
+		if ts == b {
+			out[b] = c
+			delete(late, b)
+			continue
+		}
+		if b+60 > now.Unix() { // still inside the minute it was stamped in
+			continue
+		}
+		if _, end := bars[b]; end {
+			continue
+		}
+		if prev, ok := late[b]; !ok || ts > prev {
+			late[b] = ts
+			out[b] = c
 		}
 	}
-	if inside > 0 {
+	if len(late) > 0 {
 		if _, seen := gsLateLogged.LoadOrStore(tok, true); !seen {
-			log.Printf("[GS-CLOSE] token %d: %d candle(s) not stamped at a minute end -- ignored (not this token's closes)", tok, inside)
+			log.Printf("[GS-CLOSE] token %d: %d minute close(s) stamped a few seconds after the minute end -- used for that minute", tok, len(late))
 		}
 	}
 	return out
@@ -642,7 +662,7 @@ var gsLateLogged sync.Map // token -> logged once
 // gsOwnGrace: how long the minute record waits, after the ATM pair is in,
 // for the open trades' position-strike closes (prefetched at rank 1, so
 // normally ~0.1-0.3 s behind the ATM pair); after it, what is in is used.
-const gsOwnGrace = 1500 * time.Millisecond
+const gsOwnGrace = gsCloseDeadline
 
 // gsRowFor: the chain has a row carrying this token.
 func gsRowFor(cc *OptionChainSnapshot, tok int64) bool {

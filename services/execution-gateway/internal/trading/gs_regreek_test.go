@@ -78,14 +78,29 @@ func TestGSOverlayDropsGreeksEverywhere(t *testing.T) {
 	}
 }
 
-func TestGSAlignedEndStampsOnly(t *testing.T) {
+func TestGSAlignedTodayLateStamps(t *testing.T) {
 	ist := lutIST()
+	fri := func(h, m, s int) int64 { return time.Date(2026, 10, 16, h, m, s, 0, ist).Unix() }
 	at := func(h, m, s int) int64 { return time.Date(2026, 10, 19, h, m, s, 0, ist).Unix() }
-	// 19 Oct token 51346: end-stamped 371.00 / 377.70, inside-stamped 308.35 /
-	// 298.05 -- a different series, never this token's close.
-	bars := map[int64]float64{at(11, 30, 0): 371.00, at(11, 30, 5): 308.35, at(11, 31, 0): 377.70, at(11, 31, 3): 298.05}
-	got := gsAligned(bars, time.Unix(at(11, 40, 0), 0), 51346)
-	if len(got) != 2 || got[at(11, 30, 0)] != 371.00 || got[at(11, 31, 0)] != 377.70 {
-		t.Fatalf("only the end-stamped candles: %v", got)
+	// 19 Oct token 51346: GreekSoft's answer carries 16 Oct's 11:30:00 371.00 /
+	// 11:31:00 377.70 next to today's 11:30:05 308.35 / 11:31:03 298.05.
+	bars := map[int64]float64{
+		fri(11, 30, 0): 371.00, fri(11, 31, 0): 377.70,
+		at(11, 30, 5): 308.35, at(11, 31, 3): 298.05,
+		at(11, 32, 0): 292.00, at(11, 32, 4): 291.00, // an hh:mm:00 candle wins
+		at(11, 39, 2): 280.00, // its minute is not over yet
+	}
+	got := gsAligned(bars, time.Unix(at(11, 39, 30), 0), 51346)
+	want := map[int64]float64{at(11, 30, 0): 308.35, at(11, 31, 0): 298.05, at(11, 32, 0): 292.00}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+	if got := gsAligned(bars, time.Unix(at(11, 40, 0), 0), 51346); got[at(11, 39, 0)] != 280.00 {
+		t.Fatalf("a late stamp is the close once its minute is over: %v", got)
 	}
 }
