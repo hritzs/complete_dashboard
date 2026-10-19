@@ -197,7 +197,7 @@ func (s *Service) gsCaptureLoop() {
 		if s.gsCloseProvider() == nil || !sbLiveWindow(b.Add(-time.Minute).In(lutIST())) {
 			continue
 		}
-		toks, atmCE, atmPE := s.gsTokens(0)
+		toks, atmCE, atmPE := s.gsTokens(gsSimBand)
 		gsGateSet(b.Unix(), atmCE, gsRankTokens(atmCE, atmPE, toks))
 		if atmCE > 0 {
 			go s.gsCloseAt(atmCE, b) // the lead first
@@ -228,8 +228,16 @@ func gsAfterBoundary() {
 // gsTokens: CE + PE within band strikes of the ATM (band 0: the ATM, plus
 // the neighbouring strike when the synthetic is within 10 pts of the middle
 // between two strikes) and every leg the open positions hold.
+// gsDist: each front-expiry token's distance from the ATM in strikes, from
+// the last gsTokens call (the ask order of the ATM band: nearest first).
+var gsDist struct {
+	sync.Mutex
+	m map[int64]int
+}
+
 func (s *Service) gsTokens(band int) (toks map[int64]bool, atmCE, atmPE int64) {
 	toks = map[int64]bool{}
+	dist := map[int64]int{}
 	frontExpiry := ""
 	if s.Snapshot != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -248,6 +256,8 @@ func (s *Service) gsTokens(band int) (toks map[int64]bool, atmCE, atmPE int64) {
 				}
 				if near {
 					toks[r.CEToken], toks[r.PEToken] = r.CEToken > 0, r.PEToken > 0
+					n := int(math.Round(d / lutStrikeStep))
+					dist[r.CEToken], dist[r.PEToken] = n, n
 				}
 				if d < 1e-6 {
 					atmCE, atmPE = r.CEToken, r.PEToken
@@ -283,6 +293,9 @@ func (s *Service) gsTokens(band int) (toks map[int64]bool, atmCE, atmPE int64) {
 			cancel()
 		}
 	}
+	gsDist.Lock()
+	gsDist.m = dist
+	gsDist.Unlock()
 	return toks, atmCE, atmPE
 }
 
@@ -597,6 +610,12 @@ func gsHaveAll(tokens map[int64]bool, b time.Time) bool {
 	return true
 }
 
+// gsSimBand: strikes either side of the front-expiry ATM fetched at every
+// boundary -- what the LUT simulation needs besides its build strike: the
+// ATM pair (synthetic future, allowed) and its neighbours, so an ATM that
+// moved within the minute is already in. Asked nearest first (gsRank).
+const gsSimBand = 2
+
 // gsOwnGrace: how long the minute record waits, after the ATM pair is in,
 // for the open trades' position-strike closes (prefetched at rank 1, so
 // normally ~0.1-0.3 s behind the ATM pair); after it, what is in is used.
@@ -733,6 +752,17 @@ func gsRankTokens(atmCE, atmPE int64, toks map[int64]bool) map[int64]int {
 }
 
 func gsRank(atmCE, atmPE int64, toks, own map[int64]bool, legs map[int64]int64) map[int64]int {
+	gsDist.Lock()
+	dist := gsDist.m
+	gsDist.Unlock()
+	return gsRankWith(atmCE, atmPE, toks, own, legs, dist)
+}
+
+// gsRankWith orders a boundary's asks: 0 the ATM pair, 1 the build (own)
+// strikes, then the front ATM band nearest first (+/-1, +/-2: an ATM that
+// moved within the minute is in right behind), then the normal trades' held
+// legs largest first, then anything else.
+func gsRankWith(atmCE, atmPE int64, toks, own map[int64]bool, legs map[int64]int64, dist map[int64]int) map[int64]int {
 	rank := map[int64]int{}
 	if atmCE > 0 {
 		rank[atmCE] = 0
@@ -743,18 +773,26 @@ func gsRank(atmCE, atmPE int64, toks, own map[int64]bool, legs map[int64]int64) 
 	next := 1
 	ownTok := []int64{}
 	for t, ok := range own {
-		if ok && toks[t] {
-			if _, done := rank[t]; !done {
-				ownTok = append(ownTok, t)
-			}
+		if _, done := rank[t]; ok && toks[t] && !done {
+			ownTok = append(ownTok, t)
 		}
 	}
-	sort.Slice(ownTok, func(i, j int) bool { return ownTok[i] < ownTok[j] })
 	if len(ownTok) > 0 {
 		for _, t := range ownTok {
 			rank[t] = next
 		}
 		next++
+	}
+	for d := 1; d <= gsSimBand; d++ {
+		any := false
+		for t, ok := range toks {
+			if _, done := rank[t]; ok && !done && dist[t] == d {
+				rank[t], any = next, true
+			}
+		}
+		if any {
+			next++
+		}
 	}
 	held := []int64{}
 	for t := range legs {
@@ -772,15 +810,10 @@ func gsRank(atmCE, atmPE int64, toks, own map[int64]bool, legs map[int64]int64) 
 		rank[t] = next
 		next++
 	}
-	rest := []int64{}
 	for t, ok := range toks {
-		if _, done := rank[t]; !done && ok {
-			rest = append(rest, t)
+		if _, done := rank[t]; ok && !done {
+			rank[t] = next
 		}
-	}
-	sort.Slice(rest, func(i, j int) bool { return rest[i] < rest[j] })
-	for _, t := range rest {
-		rank[t] = next
 	}
 	return rank
 }

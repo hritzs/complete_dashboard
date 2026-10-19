@@ -63,3 +63,14 @@ func TestPaperSameExpiry(t *testing.T) {
 		t.Fatalf("no expiry: current view only")
 	}
 }
+
+func TestGSRankATMBandBeforeNormalLegs(t *testing.T) {
+	toks := map[int64]bool{1: true, 2: true, 10: true, 11: true, 21: true, 22: true, 31: true, 32: true, 50: true}
+	own := map[int64]bool{10: true, 11: true}
+	legs := map[int64]int64{50: 3510}                 // a normal trade's hedge leg
+	dist := map[int64]int{21: 1, 22: 1, 31: 2, 32: 2} // the ATM band
+	r := gsRankWith(1, 2, toks, own, legs, dist)
+	if !(r[1] == 0 && r[10] == 1 && r[21] == 2 && r[22] == 2 && r[31] == 3 && r[50] == 4) {
+		t.Fatalf("want ATM 0, build 1, +/-1 2, +/-2 3, normal legs 4: %v", r)
+	}
+}
