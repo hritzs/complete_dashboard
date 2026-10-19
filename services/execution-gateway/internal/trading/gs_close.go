@@ -18,6 +18,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -54,30 +55,35 @@ const (
 // the "candle not out yet" misses of 6-8 legs polling together -- delays
 // the real answers. So per boundary ONE leg, the lead (the ATM CE), asks
 // until the candle is out; every other leg waits for that and then asks
-// once, the ATM PE first, the held legs right behind it.
+// once, in rank order (gsRankStep apart): the ATM pair, each trade's own
+// straddle strike, the hedge legs largest first, the rest of the band.
 var gsGate struct {
 	mu   sync.Mutex
 	b    int64
 	lead int64
-	prio map[int64]bool
+	rank map[int64]int
 	open chan struct{}
 }
+
+// gsRankStep: spacing between ranks once the candle is out, so GreekSoft
+// (~2 answers at a time) serves the legs that matter most first.
+const gsRankStep = 6 * time.Millisecond
 
 // gsGateFor (caller holds gsGate.mu) resets the gate for boundary b.
 func gsGateFor(b int64) {
 	if gsGate.b != b {
-		gsGate.b, gsGate.lead, gsGate.prio, gsGate.open = b, 0, nil, make(chan struct{})
+		gsGate.b, gsGate.lead, gsGate.rank, gsGate.open = b, 0, nil, make(chan struct{})
 	}
 }
 
-// gsGateSet names the lead and the priority legs of boundary b.
-func gsGateSet(b, lead int64, prio map[int64]bool) {
+// gsGateSet names the lead and the ask order (rank, 0 first) of boundary b.
+func gsGateSet(b, lead int64, rank map[int64]int) {
 	gsGate.mu.Lock()
 	gsGateFor(b)
 	if gsGate.lead == 0 {
 		gsGate.lead = lead
 	}
-	gsGate.prio = prio
+	gsGate.rank = rank
 	gsGate.mu.Unlock()
 }
 
@@ -102,15 +108,19 @@ func gsGateWait(token int64, b time.Time) {
 	if gsGate.lead == 0 {
 		gsGate.lead = token
 	}
-	lead, prio, open := gsGate.lead == token, gsGate.prio[token], gsGate.open
+	lead, open := gsGate.lead == token, gsGate.open
+	r, ranked := gsGate.rank[token]
+	if !ranked {
+		r = len(gsGate.rank) // unranked: after every ranked leg
+	}
 	gsGate.mu.Unlock()
 	if lead {
 		return
 	}
 	select {
 	case <-open:
-		if !prio {
-			time.Sleep(10 * time.Millisecond) // the ATM pair goes out first
+		if r > 0 {
+			time.Sleep(time.Duration(r) * gsRankStep)
 		}
 	case <-time.After(time.Until(b.Add(gsGateMaxWait))):
 	}
@@ -188,7 +198,7 @@ func (s *Service) gsCaptureLoop() {
 			continue
 		}
 		toks, atmCE, atmPE := s.gsTokens(0)
-		gsGateSet(b.Unix(), atmCE, map[int64]bool{atmCE: true, atmPE: true})
+		gsGateSet(b.Unix(), atmCE, gsRankTokens(atmCE, atmPE, toks))
 		if atmCE > 0 {
 			go s.gsCloseAt(atmCE, b) // the lead first
 		}
@@ -245,6 +255,11 @@ func (s *Service) gsTokens(band int) (toks map[int64]bool, atmCE, atmPE int64) {
 			}
 		}
 		cancel()
+	}
+	// Every leg the open trades hold (not wings): the whole position on one
+	// price source, so its delta is consistent across strikes.
+	for t := range gsPlanLegs() {
+		toks[t] = true
 	}
 	// Open trades, per the minute-end plan (gsPlanNow, refreshed at :50):
 	// a sim-driven LUT trade needs only its expiry's ATM pair (the sim
@@ -623,15 +638,22 @@ type gsSymExp struct{ sym, exp string }
 
 var gsPlan struct {
 	sync.Mutex
-	m map[gsSymExp]int // expiry -> widest band an open trade there needs
+	m    map[gsSymExp]int // expiry -> widest band an open trade there needs
+	own  map[int64]bool   // each open trade's own straddle CE / PE tokens
+	legs map[int64]int64  // every held non-wing leg -> |net qty| (all trades)
 }
 
 // gsPlanNow refreshes which expiries need which band (open trades), off the
 // boundary (warm loop :50) so the minute-end capture only reads it.
 func (s *Service) gsPlanNow() {
 	m := map[gsSymExp]int{}
+	own := map[int64]bool{}
 	for _, t := range s.Store.AllTrades() {
-		if isTerminalTradeStatus(t.Status) || strings.TrimSpace(t.Expiry) == "" {
+		if isTerminalTradeStatus(t.Status) {
+			continue
+		}
+		own[t.CEToken], own[t.PEToken] = t.CEToken > 0, t.PEToken > 0
+		if strings.TrimSpace(t.Expiry) == "" {
 			continue
 		}
 		k := gsSymExp{NormalizeSymbol(t.Symbol), strings.TrimSpace(t.Expiry)}
@@ -639,9 +661,91 @@ func (s *Service) gsPlanNow() {
 			m[k] = gsMinuteBand(t.TradeUID)
 		}
 	}
+	legs := map[int64]int64{}
+	pm.mu.Lock()
+	for _, pos := range pm.view.Positions {
+		if pos.NetQty != 0 && pos.Token > 0 && !pos.Wing {
+			legs[pos.Token] = abs64(pos.NetQty)
+		}
+	}
+	pm.mu.Unlock()
 	gsPlan.Lock()
-	gsPlan.m = m
+	gsPlan.m, gsPlan.own, gsPlan.legs = m, own, legs
 	gsPlan.Unlock()
+}
+
+// gsPlanLegs: every held non-wing leg (|net qty|).
+func gsPlanLegs() map[int64]int64 {
+	gsPlan.Lock()
+	defer gsPlan.Unlock()
+	out := make(map[int64]int64, len(gsPlan.legs))
+	for k, v := range gsPlan.legs {
+		out[k] = v
+	}
+	return out
+}
+
+// gsRankTokens orders a boundary's asks: 0 the ATM pair, 1 each trade's own
+// straddle strike, then the held hedge legs largest first, then the rest.
+func gsRankTokens(atmCE, atmPE int64, toks map[int64]bool) map[int64]int {
+	gsPlan.Lock()
+	own := gsPlan.own
+	legs := gsPlan.legs
+	gsPlan.Unlock()
+	return gsRank(atmCE, atmPE, toks, own, legs)
+}
+
+func gsRank(atmCE, atmPE int64, toks, own map[int64]bool, legs map[int64]int64) map[int64]int {
+	rank := map[int64]int{}
+	if atmCE > 0 {
+		rank[atmCE] = 0
+	}
+	if atmPE > 0 {
+		rank[atmPE] = 0
+	}
+	next := 1
+	ownTok := []int64{}
+	for t, ok := range own {
+		if ok && toks[t] {
+			if _, done := rank[t]; !done {
+				ownTok = append(ownTok, t)
+			}
+		}
+	}
+	sort.Slice(ownTok, func(i, j int) bool { return ownTok[i] < ownTok[j] })
+	if len(ownTok) > 0 {
+		for _, t := range ownTok {
+			rank[t] = next
+		}
+		next++
+	}
+	held := []int64{}
+	for t := range legs {
+		if _, done := rank[t]; !done && toks[t] {
+			held = append(held, t)
+		}
+	}
+	sort.Slice(held, func(i, j int) bool {
+		if legs[held[i]] != legs[held[j]] {
+			return legs[held[i]] > legs[held[j]]
+		}
+		return held[i] < held[j]
+	})
+	for _, t := range held {
+		rank[t] = next
+		next++
+	}
+	rest := []int64{}
+	for t, ok := range toks {
+		if _, done := rank[t]; !done && ok {
+			rest = append(rest, t)
+		}
+	}
+	sort.Slice(rest, func(i, j int) bool { return rest[i] < rest[j] })
+	for _, t := range rest {
+		rank[t] = next
+	}
+	return rank
 }
 
 func gsPlanGet() map[gsSymExp]int {

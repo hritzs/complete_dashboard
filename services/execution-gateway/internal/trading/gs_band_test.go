@@ -24,3 +24,22 @@ func TestGSMinuteBand(t *testing.T) {
 		t.Fatalf("normal trade band %d, want 2", b)
 	}
 }
+
+func TestGSRankOrder(t *testing.T) {
+	toks := map[int64]bool{1: true, 2: true, 10: true, 11: true, 20: true, 21: true, 30: true, 31: true, 99: true}
+	own := map[int64]bool{10: true, 11: true}
+	legs := map[int64]int64{10: 12480, 11: 12480, 20: 3510, 21: 3510, 30: 650, 31: 650}
+	r := gsRank(1, 2, toks, own, legs)
+	if r[1] != 0 || r[2] != 0 {
+		t.Fatalf("ATM pair must be first: %v", r)
+	}
+	if r[10] != 1 || r[11] != 1 {
+		t.Fatalf("own straddle strike second: %v", r)
+	}
+	if !(r[20] < r[30] && r[21] < r[31]) {
+		t.Fatalf("hedge legs largest first: %v", r)
+	}
+	if r[99] <= r[31] {
+		t.Fatalf("band-only token after every held leg: %v", r)
+	}
+}
