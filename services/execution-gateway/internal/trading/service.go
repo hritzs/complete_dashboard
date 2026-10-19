@@ -1271,17 +1271,19 @@ func (s *Service) minuteCloseChain(ctx context.Context, tradeUID string, trade S
 	// own legs and the ATM pair (synthetic future); shared with the LUT and
 	// other trades, ~0.3-0.5 s after the minute; feed closes if not in by
 	// gsCloseDeadline.
-	// GreekSoft closes for this trade's minute end: the ATM pair (a normal
-	// trade the ATM +/- 2 strikes), its own legs and every hedge leg. Asked in
+	// GreekSoft closes for this trade's minute end: a sim-driven LUT trade
+	// the ATM pair + its initial strike (fast: 2-4 tokens); a normal trade the
+	// ATM +/- 2 strikes + every leg it holds (1-2 s is fine there). Asked in
 	// rank order once the candle is out (gsRankTokens).
 	toks := atmBandTokens(closed, gsMinuteBand(tradeUID))
 	for t := range atmTokens(closed) {
 		toks[t] = true
 	}
-	// ...and every leg the trade holds (not wings): the whole position on
-	// one price source, so its delta is consistent across strikes.
+	// ...its initial straddle strike, and -- a normal trade only -- every
+	// leg it holds (not wings). A sim-driven LUT trade needs no more: the
+	// sim decides, and its gamma is the initial strike's.
 	toks[trade.CEToken], toks[trade.PEToken] = trade.CEToken > 0, trade.PEToken > 0
-	if extra, xerr := s.extraOpenLegs(tradeUID, trade); xerr == nil {
+	if extra, xerr := s.extraOpenLegs(tradeUID, trade); xerr == nil && gsMinuteBand(tradeUID) > 0 {
 		for _, l := range extra {
 			if l.Qty-l.WingQty != 0 && (strings.TrimSpace(l.Expiry) == "" || strings.EqualFold(strings.TrimSpace(l.Expiry), strings.TrimSpace(trade.Expiry))) {
 				toks[l.Token] = true
@@ -1422,6 +1424,10 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 		for _, t := range trade.Config.RiskExcludedTokens {
 			excluded[t] = true
 		}
+		// A sim-driven LUT trade's gamma is its initial straddle strike's
+		// only (as the backtest / sim: hedges are delta-1 synthetics): its
+		// hedge legs add delta, never gamma.
+		ownGammaOnly, _ := simDriveOwns(tradeUID)
 		for _, leg := range extraLegs {
 			var row *OptionChainRow
 			if legChain := chainFor(leg.Expiry); legChain != nil {
@@ -1470,7 +1476,9 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 					// shown below, kept out of every total
 				} else {
 					netDelta += d
-					netGamma += g
+					if !ownGammaOnly {
+						netGamma += g
+					}
 					netTheta += th
 					netVega += v
 					totalPNL += pnl

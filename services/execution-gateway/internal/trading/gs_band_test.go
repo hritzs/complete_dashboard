@@ -20,8 +20,16 @@ func TestATMBandTokens(t *testing.T) {
 }
 
 func TestGSMinuteBand(t *testing.T) {
+	simDrive.mu.Lock()
+	prev := simDrive.d
+	simDrive.d = &simDriver{TradeUID: "TRD_LUT_SIM"}
+	simDrive.mu.Unlock()
+	defer func() { simDrive.mu.Lock(); simDrive.d = prev; simDrive.mu.Unlock() }()
 	if b := gsMinuteBand("TRD_NOT_SIM_DRIVEN"); b != 2 {
-		t.Fatalf("normal trade band %d, want 2", b)
+		t.Fatalf("normal trade band %d, want 2 (ATM +/- 2 and every held leg)", b)
+	}
+	if b := gsMinuteBand("TRD_LUT_SIM"); b != 0 {
+		t.Fatalf("sim-driven LUT trade band %d, want 0 (ATM pair + own strike only)", b)
 	}
 }
 

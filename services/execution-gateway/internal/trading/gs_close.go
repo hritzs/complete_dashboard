@@ -256,8 +256,11 @@ func (s *Service) gsTokens(band int) (toks map[int64]bool, atmCE, atmPE int64) {
 		}
 		cancel()
 	}
-	// Every leg the open trades hold (not wings): the whole position on one
-	// price source, so its delta is consistent across strikes.
+	// The normal trades' held legs (not wings) and every trade's own strike:
+	// one price source per position, so its delta is consistent.
+	for t := range gsPlanOwn() {
+		toks[t] = true
+	}
 	for t := range gsPlanLegs() {
 		toks[t] = true
 	}
@@ -640,7 +643,7 @@ var gsPlan struct {
 	sync.Mutex
 	m    map[gsSymExp]int // expiry -> widest band an open trade there needs
 	own  map[int64]bool   // each open trade's own straddle CE / PE tokens
-	legs map[int64]int64  // every held non-wing leg -> |net qty| (all trades)
+	legs map[int64]int64  // normal trades' held non-wing legs -> |net qty|
 }
 
 // gsPlanNow refreshes which expiries need which band (open trades), off the
@@ -648,33 +651,49 @@ var gsPlan struct {
 func (s *Service) gsPlanNow() {
 	m := map[gsSymExp]int{}
 	own := map[int64]bool{}
+	legs := map[int64]int64{} // held legs of the NORMAL trades (LUT: own strike only)
 	for _, t := range s.Store.AllTrades() {
 		if isTerminalTradeStatus(t.Status) {
 			continue
 		}
 		own[t.CEToken], own[t.PEToken] = t.CEToken > 0, t.PEToken > 0
+		band := gsMinuteBand(t.TradeUID)
+		if band > 0 {
+			if extra, err := s.extraOpenLegs(t.TradeUID, t); err == nil {
+				for _, l := range extra {
+					if q := abs64(l.Qty - l.WingQty); q > 0 {
+						legs[l.Token] += q
+					}
+				}
+			}
+		}
 		if strings.TrimSpace(t.Expiry) == "" {
 			continue
 		}
 		k := gsSymExp{NormalizeSymbol(t.Symbol), strings.TrimSpace(t.Expiry)}
-		if b, ok := m[k]; !ok || gsMinuteBand(t.TradeUID) > b {
-			m[k] = gsMinuteBand(t.TradeUID)
+		if b, ok := m[k]; !ok || band > b {
+			m[k] = band
 		}
 	}
-	legs := map[int64]int64{}
-	pm.mu.Lock()
-	for _, pos := range pm.view.Positions {
-		if pos.NetQty != 0 && pos.Token > 0 && !pos.Wing {
-			legs[pos.Token] = abs64(pos.NetQty)
-		}
-	}
-	pm.mu.Unlock()
 	gsPlan.Lock()
 	gsPlan.m, gsPlan.own, gsPlan.legs = m, own, legs
 	gsPlan.Unlock()
 }
 
-// gsPlanLegs: every held non-wing leg (|net qty|).
+// gsPlanOwn: every open trade's own straddle CE / PE tokens.
+func gsPlanOwn() map[int64]bool {
+	gsPlan.Lock()
+	defer gsPlan.Unlock()
+	out := make(map[int64]bool, len(gsPlan.own))
+	for k, v := range gsPlan.own {
+		if v {
+			out[k] = true
+		}
+	}
+	return out
+}
+
+// gsPlanLegs: the normal trades' held non-wing legs (|net qty|).
 func gsPlanLegs() map[int64]int64 {
 	gsPlan.Lock()
 	defer gsPlan.Unlock()
