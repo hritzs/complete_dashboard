@@ -110,25 +110,54 @@ func gsGateOpen(b int64) {
 func gsGateWait(token int64, b time.Time) {
 	gsGate.mu.Lock()
 	gsGateFor(b.Unix())
-	if gsGate.lead == 0 {
+	// A leg asking before the capture has named the lead (a trade's check at
+	// +0 s) waits for it instead of becoming a second poller.
+	if gsGate.lead == 0 && time.Since(b) >= gsCaptureStart+gsLeadGrace {
 		gsGate.lead = token
 	}
 	lead, open := gsGate.lead == token, gsGate.open
-	r, ranked := gsGate.rank[token]
-	if !ranked {
-		r = len(gsGate.rank) // unranked: after every ranked leg
-	}
 	gsGate.mu.Unlock()
 	if lead {
 		return
 	}
+	maxWait := time.After(time.Until(b.Add(gsGateMaxWait)))
 	select {
 	case <-open:
-		if r > 0 {
-			time.Sleep(time.Duration(r) * gsRankStep)
-		}
-	case <-time.After(time.Until(b.Add(gsGateMaxWait))):
+	case <-maxWait:
+		return
 	}
+	gsGate.mu.Lock() // the rank is set by now (the capture names it before asking)
+	r, ranked := gsGate.rank[token]
+	if !ranked {
+		r = len(gsGate.rank) + 1 // unranked: after every ranked leg
+	}
+	pair := gsGatePair()
+	gsGate.mu.Unlock()
+	if r == 0 {
+		return // the ATM pair asks as soon as the candle is out
+	}
+	// Everything else only once the ATM pair is in (19 Oct 12:30-14:50:
+	// released together, ~15 next-week legs pushed the ATM PE past the
+	// deadline in 8-15 of every 30 minutes), then in rank order.
+	for len(pair) > 0 && !gsHaveAll(pair, b) && time.Now().Before(b.Add(gsGateMaxWait)) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(time.Duration(r) * gsRankStep)
+}
+
+// gsLeadGrace: how long after gsCaptureStart a leg still waits for the
+// capture to name the lead before naming itself (no capture running).
+const gsLeadGrace = 300 * time.Millisecond
+
+// gsGatePair (caller holds gsGate.mu): the rank-0 tokens -- the front ATM pair.
+func gsGatePair() map[int64]bool {
+	pair := map[int64]bool{}
+	for t, r := range gsGate.rank {
+		if r == 0 && t > 0 {
+			pair[t] = true
+		}
+	}
+	return pair
 }
 
 // gsArrived wakes the LUT loop as soon as a close is in (instead of its

@@ -1,6 +1,9 @@
 package trading
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestATMBandTokens(t *testing.T) {
 	c := &OptionChainSnapshot{ATM: 23000, SyntheticFuture: 23004, Chain: []OptionChainRow{}}
@@ -104,5 +107,40 @@ func TestGSGateSetLeadOverridesEarlyAsker(t *testing.T) {
 	gsGate.mu.Unlock()
 	if lead != 47155 {
 		t.Fatalf("lead %d, want the front ATM CE 47155", lead)
+	}
+}
+
+// A leg asking at +0 s does not name itself the lead; once the capture
+// names the ATM CE and its candle is out, the ATM PE asks at once and the
+// other legs only after the pair is in.
+func TestGSGatePairFirst(t *testing.T) {
+	b := time.Now().Truncate(time.Second)
+	gsc.mu.Lock()
+	gsc.got, gsc.inflight, gsc.day = map[gsCloseKey]float64{}, map[gsCloseKey]chan struct{}{}, b.Format("20060102")
+	gsc.mu.Unlock()
+	early := make(chan time.Time, 1)
+	go func() { gsGateWait(51354, b); early <- time.Now() }()
+	time.Sleep(20 * time.Millisecond)
+	gsGate.mu.Lock()
+	lead := gsGate.lead
+	gsGate.mu.Unlock()
+	if lead == 51354 {
+		t.Fatal("an early leg named itself the lead")
+	}
+	gsGateSet(b.Unix(), 47155, map[int64]int{47155: 0, 47156: 0, 51354: 3})
+	pe := make(chan time.Time, 1)
+	go func() { gsGateWait(47156, b); pe <- time.Now() }()
+	gsGateOpen(b.Unix())
+	tPE := <-pe
+	select {
+	case <-early:
+		t.Fatal("a non-ATM leg asked before the ATM pair was in")
+	case <-time.After(50 * time.Millisecond):
+	}
+	gsc.mu.Lock()
+	gsc.got[gsCloseKey{47155, b.Unix()}], gsc.got[gsCloseKey{47156, b.Unix()}] = 30, 26
+	gsc.mu.Unlock()
+	if tEarly := <-early; !tEarly.After(tPE) {
+		t.Fatal("the other legs must follow the ATM pair")
 	}
 }
