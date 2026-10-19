@@ -17,8 +17,10 @@ import (
 	"context"
 	"log"
 	"math"
+	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -316,10 +318,8 @@ func (s *Service) gsWarmNow() {
 			if bars, err := p.MinuteCloses(ctx, tok, day); err == nil {
 				gsc.mu.Lock()
 				if gsc.got != nil && gsc.day == day {
-					for ts, c := range bars {
-						if ts%60 == 0 {
-							gsc.got[gsCloseKey{tok, ts}] = c
-						}
+					for ts, c := range gsAligned(bars, time.Now(), tok) {
+						gsc.got[gsCloseKey{tok, ts}] = c
 					}
 				}
 				gsc.mu.Unlock()
@@ -414,10 +414,8 @@ func gsFetch(p MinuteCloseProvider, k gsCloseKey, day string, deadline time.Time
 				return
 			}
 			gsc.mu.Lock()
-			for ts, c := range bars { // keep every completed candle seen (stamped hh:mm:00)
-				if ts%60 == 0 {
-					gsc.got[gsCloseKey{token, ts}] = c
-				}
+			for ts, c := range gsAligned(bars, time.Now(), token) { // every completed candle seen
+				gsc.got[gsCloseKey{token, ts}] = c
 			}
 			v, ok := gsc.got[k]
 			gsc.mu.Unlock()
@@ -615,6 +613,52 @@ func gsHaveAll(tokens map[int64]bool, b time.Time) bool {
 // ATM pair (synthetic future, allowed) and its neighbours, so an ATM that
 // moved within the minute is already in. Asked nearest first (gsRank).
 const gsSimBand = 2
+
+// gsAligned: a token's candles keyed by the minute they END (hh:mm:00).
+// GreekSoft stamps a completed candle at its end; a candle stamped INSIDE a
+// minute (its last trade time) is taken as that minute's close only when the
+// minute ended >= gsLateStampAge ago and no end-stamped candle exists for it
+// -- 16 Oct 22950 CE had no end-stamped candle in 18 minutes it traded in.
+// At the live boundary nothing changes: there the end stamp is GreekSoft's
+// "candle complete" signal.
+func gsAligned(bars map[int64]float64, now time.Time, tok int64) map[int64]float64 {
+	out := make(map[int64]float64, len(bars))
+	late := map[int64]int64{} // minute end -> latest inside stamp used
+	for ts, c := range bars {
+		if ts%60 == 0 {
+			out[ts] = c
+		}
+	}
+	cutoff := now.Add(-gsLateStampAge).Unix()
+	for ts, c := range bars {
+		if ts%60 == 0 || c <= 0 {
+			continue
+		}
+		end := ts - ts%60 + 60
+		if end > cutoff {
+			continue // the minute is too recent: the end stamp may still come
+		}
+		if _, ok := bars[end]; ok {
+			continue
+		}
+		if prev, ok := late[end]; !ok || ts > prev {
+			late[end] = ts
+			out[end] = c
+		}
+	}
+	for end, ts := range late {
+		if _, seen := gsLateLogged.LoadOrStore(gsCloseKey{tok, end}, true); !seen {
+			log.Printf("[GS-CLOSE] token %d candle for %s stamped %s (not its minute end) -- used as that minute's close",
+				tok, time.Unix(end, 0).In(lutIST()).Format("15:04"), time.Unix(ts, 0).In(lutIST()).Format("15:04:05"))
+		}
+	}
+	return out
+}
+
+// gsLateStampAge: a minute this old is complete at GreekSoft, end stamp or not.
+const gsLateStampAge = 10 * time.Second
+
+var gsLateLogged sync.Map // gsCloseKey -> logged once
 
 // gsOwnGrace: how long the minute record waits, after the ATM pair is in,
 // for the open trades' position-strike closes (prefetched at rank 1, so
@@ -839,4 +883,39 @@ func atmTokens(cc *OptionChainSnapshot) map[int64]bool {
 		}
 	}
 	return out
+}
+
+// GSCandlesHandler: GET /api/gs/candles?token=47159[&date=YYYYMMDD] -- a
+// token's raw GreekSoft 1-minute candles (timestamp, close, whether stamped at
+// a minute end) through the gateway's existing session. Read-only diagnostic.
+func (h *Handlers) GSCandlesHandler(w http.ResponseWriter, r *http.Request) {
+	tok, _ := strconv.ParseInt(r.URL.Query().Get("token"), 10, 64)
+	date := strings.TrimSpace(r.URL.Query().Get("date"))
+	if date == "" {
+		date = time.Now().In(lutIST()).Format("20060102")
+	}
+	p := h.Service.gsCloseProvider()
+	if tok <= 0 || p == nil {
+		lutJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error": "token required / GreekSoft closes unavailable"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	bars, err := p.MinuteCloses(ctx, tok, date)
+	cancel()
+	if err != nil {
+		lutJSON(w, http.StatusBadGateway, map[string]interface{}{"success": false, "error": err.Error()})
+		return
+	}
+	type bar struct {
+		TS       int64   `json:"ts"`
+		Time     string  `json:"time"`
+		Close    float64 `json:"close"`
+		EndStamp bool    `json:"end_stamped"`
+	}
+	out := make([]bar, 0, len(bars))
+	for ts, c := range bars {
+		out = append(out, bar{ts, time.Unix(ts, 0).In(lutIST()).Format("15:04:05"), c, ts%60 == 0})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].TS < out[j].TS })
+	lutJSON(w, http.StatusOK, map[string]interface{}{"success": true, "token": tok, "date": date, "bars": out})
 }

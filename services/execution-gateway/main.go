@@ -470,6 +470,7 @@ func startHTTPServer(cfg *Config, handlers *trading.Handlers) {
 	mux.HandleFunc("/api/simdrive", handlers.SimDriveHandler)  // simulation-driven LUT trade (sim_drive.go)
 	// Paper-trade simulation off the stored minute data -- never places orders.
 	mux.HandleFunc("/api/paper/sim", handlers.PaperSimHandler)
+	mux.HandleFunc("/api/gs/candles", handlers.GSCandlesHandler) // read-only: raw GreekSoft candles of a token
 	mux.HandleFunc("/api/paper/start", handlers.PaperStartHandler)
 	mux.HandleFunc("/api/paper/remove", handlers.PaperRemoveHandler)
 	// Straddle-target build, SHADOW mode (no orders).

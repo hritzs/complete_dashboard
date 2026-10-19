@@ -77,3 +77,30 @@ func TestGSOverlayDropsGreeksEverywhere(t *testing.T) {
 		t.Fatalf("the feed's stored greeks must be dropped: %+v", r)
 	}
 }
+
+func TestGSAlignedLateStamps(t *testing.T) {
+	ist := lutIST()
+	at := func(h, m, s int) int64 { return time.Date(2026, 10, 16, h, m, s, 0, ist).Unix() }
+	bars := map[int64]float64{
+		at(10, 55, 0):  184.85, // end-stamped (candle 10:54)
+		at(10, 55, 47): 183.45, // candle 10:55 stamped at its last trade: no 10:56:00 bar
+		at(10, 57, 0):  185.00,
+		at(10, 56, 30): 999.0,  // inside 10:56 but 10:57:00 exists: ignored
+		at(11, 0, 55):  190.0,  // the minute just ended (11:01:00): too recent
+	}
+	got := gsAligned(bars, time.Unix(at(11, 1, 5), 0), 47159)
+	if got[at(10, 55, 0)] != 184.85 || got[at(10, 57, 0)] != 185.00 {
+		t.Fatalf("end-stamped candles must stay: %v", got)
+	}
+	if got[at(10, 56, 0)] != 183.45 {
+		t.Fatalf("10:56 (candle stamped 10:55:47) should be filled with 183.45: %v", got)
+	}
+	if _, ok := got[at(11, 1, 0)]; ok {
+		t.Fatalf("a minute that ended 5 s ago must wait for its end stamp")
+	}
+	for ts := range got {
+		if ts%60 != 0 {
+			t.Fatalf("only minute-end keys out: %d", ts)
+		}
+	}
+}

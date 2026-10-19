@@ -229,7 +229,7 @@ func (s *Service) gsOverlayBuild(p MinuteCloseProvider, now time.Time, set strin
 				cancel()
 				if err == nil {
 					mu.Lock()
-					closes[tok] = bars
+					closes[tok] = gsAligned(bars, time.Now(), tok)
 					mu.Unlock()
 				}
 			}(tok)
@@ -256,7 +256,7 @@ func (s *Service) gsOverlayBuild(p MinuteCloseProvider, now time.Time, set strin
 				log.Printf("[GS-OVERLAY] ⚠ %s%.0f %s (token %d): candles not fetched (%v) -- earlier values kept", map[bool]string{true: "", false: set + " "}[set == ""], k, leg.name, leg.tok, err)
 				continue
 			}
-			closes[leg.tok] = bars
+			closes[leg.tok] = gsAligned(bars, time.Now(), leg.tok)
 		}
 	}
 
