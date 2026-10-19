@@ -3704,6 +3704,7 @@ func (s *Service) ManualHedgeLots(ctx context.Context, tradeUID string, lots int
 
 	remaining := totalQty
 	var totalVerifiedCE, totalVerifiedPE int64
+	var lastCE, lastPE int64 // the last tranche's fills (both 0 = nothing traded)
 	var bookErr error
 	trancheIdx := 0
 	incomplete := false
@@ -3725,6 +3726,7 @@ func (s *Service) ManualHedgeLots(ctx context.Context, tradeUID string, lots int
 		)
 		totalVerifiedCE += filledCE
 		totalVerifiedPE += filledPE
+		lastCE, lastPE = filledCE, filledPE
 		ev.CEFilled, ev.PEFilled, ev.Tranches = totalVerifiedCE, totalVerifiedPE, trancheIdx
 
 		// Book this tranche's real, broker-confirmed fill immediately --
@@ -3787,6 +3789,27 @@ func (s *Service) ManualHedgeLots(ctx context.Context, tradeUID string, lots int
 	switch {
 	case bookErr != nil:
 		return fmt.Errorf("hedge orders placed but booking failed (check broker position): %w", bookErr)
+	case incomplete && lastCE == 0 && lastPE == 0 && remaining > 0:
+		// Neither leg traded (e.g. the broker's RMS refused it): take the
+		// delta off by buying back shorts instead (hedge_cut_fallback.go).
+		log.Printf("[HEDGE-CUT] trade=%s tranche %d filled nothing on both legs -- cutting short %s legs for the %d delta still needed",
+			tradeUID, trancheIdx, map[string]string{"BUY": "CE", "SELL": "PE"}[ceSide], remaining)
+		got, sce, spe, cutErr := s.hedgeCutShorts(ctx, executor, tr, tradeUID, ceSide, remaining, chain)
+		if sce != 0 || spe != 0 {
+			if latest, ok := s.Store.LoadTrade(tradeUID); ok {
+				tr = latest
+			}
+			if wingErr := s.adjustWings(ctx, executor, tr, sce, spe, atmRow.Strike, atmRow.Strike, "HEDGE cut shorts"); wingErr != nil {
+				log.Printf("[WINGS] ⚠ trade=%s hedge cut: %v", tradeUID, wingErr)
+			}
+		}
+		ev.Reason = strings.TrimSpace(ev.Reason + fmt.Sprintf(" · synthetic refused; cut shorts for %.0f of %d delta", got, remaining))
+		if cutErr != nil || got < 0.9*float64(remaining) {
+			return fmt.Errorf("hedge not filled after tranche %d (ce=%d pe=%d of %d); cut-shorts fallback removed %.0f of %d delta: %v",
+				trancheIdx, totalVerifiedCE, totalVerifiedPE, totalQty, got, remaining, cutErr)
+		}
+		log.Printf("✅ Hedge done by cutting shorts for %s: %.0f of %d delta removed (synthetic tranche %d refused)", tradeUID, got, remaining, trancheIdx)
+		return nil
 	case incomplete:
 		return fmt.Errorf("hedge not fully filled after tranche %d, booked to verified fills only: ce=%d pe=%d of %d total",
 			trancheIdx, totalVerifiedCE, totalVerifiedPE, totalQty)
