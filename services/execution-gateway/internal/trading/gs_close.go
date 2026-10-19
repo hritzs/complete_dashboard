@@ -593,12 +593,22 @@ func gsFetch(p MinuteCloseProvider, k gsCloseKey, day string, deadline time.Time
 // synthetic came from the 22550 pair). Returns how many legs came from
 // GreekSoft and the feed closes they replaced (token -> feed price).
 func (s *Service) gsApplyCloses(cc *OptionChainSnapshot, b time.Time, tokens map[int64]bool) (int, map[int64]float64) {
+	return s.gsApplyClosesCore(cc, b, tokens, nil)
+}
+
+// gsApplyClosesCore is gsApplyCloses waiting fully only for core (the ATM
+// pair and the trade's own strike: what the decision rests on); the other
+// tokens get gsLegGrace after core is in, then their feed close stands. A
+// held hedge strike that did not trade in the minute has no candle to wait
+// for -- its last trade is its close (19 Oct: the monitor waited the full 2 s
+// every minute for such legs). core nil: wait for every token.
+func (s *Service) gsApplyClosesCore(cc *OptionChainSnapshot, b time.Time, tokens, core map[int64]bool) (int, map[int64]float64) {
 	feed := map[int64]float64{}
 	if cc == nil || len(tokens) == 0 {
 		return 0, feed
 	}
 	done := map[int64]bool{}
-	n := s.gsReplace(cc, b, tokens, done, feed)
+	n := s.gsReplaceCore(cc, b, tokens, core, done, feed)
 	if n == 0 {
 		return 0, feed
 	}
@@ -663,6 +673,14 @@ func gsRegreek(cc *OptionChainSnapshot, b time.Time, feed map[int64]float64) {
 // them into cc; done collects every token attempted, feed the replaced feed
 // prices. Returns the number of legs replaced.
 func (s *Service) gsReplace(cc *OptionChainSnapshot, b time.Time, tokens map[int64]bool, done map[int64]bool, feed map[int64]float64) int {
+	return s.gsReplaceCore(cc, b, tokens, nil, done, feed)
+}
+
+// gsLegGrace: how long the non-core legs may still come in after the core
+// tokens are in (gsApplyClosesCore).
+const gsLegGrace = 200 * time.Millisecond
+
+func (s *Service) gsReplaceCore(cc *OptionChainSnapshot, b time.Time, tokens, core map[int64]bool, done map[int64]bool, feed map[int64]float64) int {
 	if len(tokens) == 0 {
 		return 0
 	}
@@ -680,10 +698,33 @@ func (s *Service) gsReplace(cc *OptionChainSnapshot, b time.Time, tokens map[int
 		}(t)
 	}
 	got := map[int64]float64{}
+	coreLeft := -1 // wait for every token
+	if core != nil {
+		coreLeft = 0
+		for t := range tokens {
+			if core[t] {
+				coreLeft++
+			}
+		}
+	}
+	var grace <-chan time.Time
+	if coreLeft == 0 {
+		grace = time.After(gsLegGrace)
+	}
+collect:
 	for range tokens {
-		r := <-ch
-		if r.ok {
-			got[r.tok] = r.px
+		select {
+		case r := <-ch:
+			if r.ok {
+				got[r.tok] = r.px
+			}
+			if coreLeft > 0 && core[r.tok] {
+				if coreLeft--; coreLeft == 0 {
+					grace = time.After(gsLegGrace)
+				}
+			}
+		case <-grace:
+			break collect // the rest: feed closes this minute
 		}
 	}
 	n := 0

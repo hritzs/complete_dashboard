@@ -1290,7 +1290,11 @@ func (s *Service) minuteCloseChain(ctx context.Context, tradeUID string, trade S
 			}
 		}
 	}
-	nGS, feedPx := s.gsApplyCloses(closed, boundary, toks)
+	// The decision rests on the ATM pair (synthetic future) and the own
+	// strike: those are waited for; the other held legs only gsLegGrace more.
+	core := atmTokens(closed)
+	core[trade.CEToken], core[trade.PEToken] = trade.CEToken > 0, trade.PEToken > 0
+	nGS, feedPx := s.gsApplyClosesCore(closed, boundary, toks, core)
 	mc := minuteCloseOf(closed, chain, boundary)
 	mc.Source = "feed"
 	if nGS > 0 {

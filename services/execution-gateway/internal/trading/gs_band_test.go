@@ -164,3 +164,28 @@ func TestGSRankLiveTradeFirst(t *testing.T) {
 		t.Fatalf("held leg rank %d should follow: %v", r[51352], r)
 	}
 }
+
+// The monitor waits for the ATM pair and its own strike only; a held hedge
+// leg whose candle never comes costs gsLegGrace, not the 2 s deadline.
+func TestGSReplaceCoreDoesNotWaitForLegs(t *testing.T) {
+	s := &Service{Store: NewMemoryStore()}
+	b := time.Now()
+	day := b.In(lutIST()).Format("20060102")
+	gsc.mu.Lock()
+	gsc.got, gsc.inflight, gsc.day = map[gsCloseKey]float64{}, map[gsCloseKey]chan struct{}{}, day
+	gsc.got[gsCloseKey{1, b.Unix()}], gsc.got[gsCloseKey{2, b.Unix()}] = 170.5, 170.35
+	gsc.inflight[gsCloseKey{9, b.Unix()}] = make(chan struct{}) // never answers
+	gsc.mu.Unlock()
+	cc := &OptionChainSnapshot{Chain: []OptionChainRow{
+		{Strike: 22900, CEToken: 1, PEToken: 2, CELtp: 170, PELtp: 171},
+		{Strike: 23150, CEToken: 9, PEToken: 10, CELtp: 73.6, PELtp: 324},
+	}}
+	start := time.Now()
+	n := s.gsReplaceCore(cc, b, map[int64]bool{1: true, 2: true, 9: true}, map[int64]bool{1: true, 2: true}, map[int64]bool{}, map[int64]float64{})
+	if el := time.Since(start); el > gsLegGrace+300*time.Millisecond {
+		t.Fatalf("waited %v for a non-core leg", el)
+	}
+	if n != 2 || cc.Chain[0].CELtp != 170.5 || cc.Chain[1].CELtp != 73.6 {
+		t.Fatalf("core from GreekSoft, the leg on its feed close: n=%d %+v", n, cc.Chain)
+	}
+}
