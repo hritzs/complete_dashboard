@@ -130,6 +130,8 @@ type LUTLive struct {
 	SellLevelsNext []LUTSellLevel `json:"sell_levels_next,omitempty"`
 	NextExpiry     string         `json:"next_expiry,omitempty"`
 	NextBasis      string         `json:"next_basis,omitempty"`
+	// NW: the next-week check against NW_LUT.csv (lut_nw.go), display only.
+	NW *LUTNWCheck `json:"nw,omitempty"`
 	// Tables: the table set driving today; Alt: the other set, shown beside.
 	Tables     string      `json:"tables"`
 	TablesName string      `json:"tables_name"`
@@ -691,6 +693,9 @@ func (s *Service) lutComputeLocked(now time.Time, day string, hhmm int, chain *O
 		if !whatIf && hhmm < 930 {
 			live.SellLevelsNext, live.NextExpiry, live.NextBasis = e.lutNextWeekLevels(now, day, hhmm, shown, expStr)
 		}
+	}
+	if withGrid && !whatIf && hhmm >= 916 {
+		live.NW = e.lutNWCheckCached(now, day, shown.In, shown.InOK, shown.BusDays, shown.U0916)
 	}
 	// The other table set on the same shown prices (display only).
 	live.Alt = e.altLiveLocked(now, hhmm, shown, withGrid, levelsExp, levelsBasis, whatIf, dispMan.DTE != nil)

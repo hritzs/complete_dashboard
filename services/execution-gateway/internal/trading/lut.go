@@ -394,6 +394,9 @@ type LUTDailyInputs struct {
 	// backtest and the new tables use); HasFinalChg false = column absent.
 	FinalAdjChg float64
 	HasFinalChg bool
+	// Next-week columns (the next-week check, lut_nw.go); 0 / "" when absent.
+	NWAdjIV  float64
+	NWExpiry string
 }
 
 // adjChg is the normalised IV change a schema buckets.
@@ -498,6 +501,12 @@ func LoadLUTDailyInputs(path, date string) (LUTDailyInputs, error) {
 		in.FinalAdjChg, in.HasFinalChg = finalChg*0.1/base, true
 	}
 	in.WeightedIDV = lutWeights[0]*in.IDVPure + lutWeights[1]*in.IDVWithPrev + lutWeights[2]*in.YesterdayIV
+	if v, err := num("NW_Adj_IV"); err == nil {
+		in.NWAdjIV = v
+	}
+	if i, ok := col["NW_Expiry"]; ok && i < len(row) {
+		in.NWExpiry = strings.TrimSpace(row[i])
+	}
 	if in.PrevStraddle <= 0 || in.PrevFuture <= 0 || in.YesterdayIV <= 0 || in.IDVPure <= 0 || in.IDVWithPrev <= 0 || in.WeightedIDV <= 0 {
 		return in, fmt.Errorf("daily inputs not usable: %+v", in)
 	}

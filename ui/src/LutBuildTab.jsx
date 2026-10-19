@@ -131,7 +131,7 @@ export default function LutBuildTab() {
     const a = d.alt;
     return {
       ...d, eval: a.eval, grid: a.grid, grid_0920: a.grid_0920, sell_range: a.sell_range, sell_range_0920: a.sell_range_0920,
-      sell_levels: a.sell_levels, sell_levels_next: undefined, entry: a.entry, table_yes: a.table_yes, tables_error: a.tables_error,
+      sell_levels: a.sell_levels, sell_levels_next: undefined, nw: undefined, entry: a.entry, table_yes: a.table_yes, tables_error: a.tables_error,
       tables: a.tables, tables_name: a.name, alt: { ...a, tables: d.tables, name: d.tables_name, eval: d.eval }
     };
   };
@@ -382,6 +382,54 @@ export default function LutBuildTab() {
               </table>
             </Show>
           </details>
+        );
+      })()}
+    </Show>
+  );
+
+  // Next-week check (NW_LUT.csv) on DTE1 / DTE2 days -- display only.
+  const NextWeek = () => (
+    <Show when={live()?.nw}>
+      {(() => {
+        const n = () => live().nw;
+        const cell = (v, here) => ({ padding: '6px 10px', 'text-align': 'center', 'font-weight': here ? 700 : 400,
+          background: v === 'YES' ? 'rgba(46,125,50,0.30)' : 'rgba(255,255,255,0.03)', outline: here ? '2px solid #4dd0e1' : 'none' });
+        return (
+          <div style={{ ...box, border: '1px solid rgba(255,183,77,0.45)' }}>
+            <div>
+              <strong>Next-week check (NW_LUT) — {n().expiry || 'next expiry'}</strong> <span style={muted}>· display only, never sold</span>
+              <Show when={n().verdict}>
+                {' '}· <strong class={n().verdict === 'YES' ? 'positive' : 'negative'}>{n().verdict}</strong>
+              </Show>
+            </div>
+            <div style={{ ...muted, 'margin-top': '4px' }}>{n().note}</div>
+            <Show when={n().applies && n().build_iv > 0}>
+              <div style={{ ...muted, 'margin-top': '6px' }}>
+                {n().snapshot}: future {fmt(n().future)} · ATM {fmt(n().atm, 0)} straddle ₹{fmt(n().straddle)} ·
+                OTM {n().otm_leg} {fmt(n().otm_price)} → IV {fmt(n().iv, 4)} × {fmt(n().adj_factor, 4)} (√({fmt(n().nw_dte, 3)} / {fmt(n().trading_days, 0)} trading days))
+                = build IV <strong>{fmt(n().build_iv, 4)}</strong> [{n().iv_band}] ·
+                ratio {fmt(n().build_iv, 4)} / IDV {fmt(n().idv, 4)} = <strong>{fmt(n().ratio, 3)}</strong> [{n().ratio_band}] ·
+                gap {fmt(n().og_pct, 4)}% × 0.19 / NW Adj IV {fmt(n().nw_adj_iv, 4)} = <strong>{fmt(n().norm_og, 3)}</strong> [{n().og_band}] ·
+                current-week DTE {n().cur_dte}
+              </div>
+            </Show>
+            <Show when={(n().cells || []).length}>
+              <table class="trade-position-table" style={{ 'margin-top': '8px', width: 'auto' }}>
+                <thead><tr><th>NW ratio ↓ · NW build IV →</th><For each={n().cols}>{(c) => <th>{c}</th>}</For></tr></thead>
+                <tbody>
+                  <For each={n().rows}>
+                    {(r, i) => (
+                      <tr>
+                        <td><strong>{r}</strong></td>
+                        <For each={n().cells[i()]}>{(v, j) => <td style={cell(v, i() === n().row && j() === n().col)}>{v || '—'}</td>}</For>
+                      </tr>
+                    )}
+                  </For>
+                </tbody>
+              </table>
+              <div style={{ ...muted, 'margin-top': '4px' }}>Gap band {n().og_band} · outlined = today's cell.</div>
+            </Show>
+          </div>
         );
       })()}
     </Show>
@@ -757,6 +805,7 @@ export default function LutBuildTab() {
         <Nearest title={`${ev().stage} table`} rows={ev().nearest_yes} />
       </Show>
       <OpeningLevels />
+      <NextWeek />
       <Inputs />
       <Manual />
       <Timeline />
