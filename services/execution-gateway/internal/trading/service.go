@@ -2237,12 +2237,12 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 			})
 		}
 
-		// Use aggressive chunking for SL-triggered square-off (max lots/order
-		// for fastest exit) -- the trade's SL, the portfolio SL and the
-		// emergency Square off ALL.
+		// Aggressive chunking (max lots/order, fastest exit) for the trade.s SL,
+		// the portfolio SL, the emergency Square off ALL and a manual Square off
+		// (aggressiveExitReason).
 		var chunks [][]ExecOrder
 		var err error
-		if reason == "SL" || reason == "PORTFOLIO" || reason == "EMERGENCY" {
+		if aggressiveExitReason(reason) {
 			chunks, err = GenerateAggressiveChunkedOrders(
 				fmt.Sprintf("S%sA%d", tradeUID, executionAttempt),
 				legs,

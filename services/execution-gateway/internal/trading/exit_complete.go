@@ -31,9 +31,15 @@ import (
 // exitIOCAttempts: IOC limit attempts per order before the MARKET fallback.
 const exitIOCAttempts = 3
 
-// aggressiveExitReason: exits that keep the fastest max-lots MARKET path.
+// aggressiveExitReason: exits that keep the fastest max-lots MARKET path --
+// SL, the portfolio stop, Square off ALL, and a manual Square off (owner,
+// 19 Oct: "manual exit the same as the SL exit, square off completely").
 func aggressiveExitReason(reason string) bool {
-	return reason == "SL" || reason == "PORTFOLIO" || reason == "EMERGENCY"
+	switch strings.ToUpper(strings.TrimSpace(reason)) {
+	case "SL", "PORTFOLIO", "EMERGENCY", "MANUAL":
+		return true
+	}
+	return false
 }
 
 // exitLimitBuffer: the reference's base limit buffer (2 for NIFTY-type

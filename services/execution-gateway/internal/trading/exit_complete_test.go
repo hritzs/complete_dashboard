@@ -124,12 +124,12 @@ func mustChain() *OptionChainSnapshot {
 }
 
 func TestAggressiveExitReason(t *testing.T) {
-	for _, r := range []string{"SL", "PORTFOLIO", "EMERGENCY"} {
+	for _, r := range []string{"SL", "PORTFOLIO", "EMERGENCY", "manual"} {
 		if !aggressiveExitReason(r) {
 			t.Fatalf("%s should keep the aggressive path", r)
 		}
 	}
-	for _, r := range []string{"TIME", "TP", "manual", "SQUARE_OFF"} {
+	for _, r := range []string{"TIME", "TP", "SQUARE_OFF"} {
 		if aggressiveExitReason(r) {
 			t.Fatalf("%s should take the complete-position exit", r)
 		}
