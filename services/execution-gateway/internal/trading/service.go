@@ -2237,7 +2237,7 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 			})
 		}
 
-		// Aggressive chunking (max lots/order, fastest exit) for the trade.s SL,
+		// Aggressive chunking (max lots/order, fastest exit) for the trade's SL,
 		// the portfolio SL, the emergency Square off ALL and a manual Square off
 		// (aggressiveExitReason).
 		var chunks [][]ExecOrder
