@@ -74,3 +74,20 @@ func TestGSRankATMBandBeforeNormalLegs(t *testing.T) {
 		t.Fatalf("want ATM 0, build 1, +/-1 2, +/-2 3, normal legs 4: %v", r)
 	}
 }
+
+func TestGSCaptureBandOnlyWithLUTTrade(t *testing.T) {
+	gsPlan.Lock()
+	prev := gsPlan.sim
+	gsPlan.sim = false
+	gsPlan.Unlock()
+	defer func() { gsPlan.Lock(); gsPlan.sim = prev; gsPlan.Unlock() }()
+	if b := gsCaptureBand(); b != 0 {
+		t.Fatalf("no LUT trade open: band %d, want 0 (ATM pair only)", b)
+	}
+	gsPlan.Lock()
+	gsPlan.sim = true
+	gsPlan.Unlock()
+	if b := gsCaptureBand(); b != gsSimBand {
+		t.Fatalf("LUT trade open: band %d, want %d", b, gsSimBand)
+	}
+}

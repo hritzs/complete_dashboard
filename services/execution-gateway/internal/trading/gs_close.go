@@ -199,7 +199,7 @@ func (s *Service) gsCaptureLoop() {
 		if s.gsCloseProvider() == nil || !sbLiveWindow(b.Add(-time.Minute).In(lutIST())) {
 			continue
 		}
-		toks, atmCE, atmPE := s.gsTokens(gsSimBand)
+		toks, atmCE, atmPE := s.gsTokens(gsCaptureBand())
 		gsGateSet(b.Unix(), atmCE, gsRankTokens(atmCE, atmPE, toks))
 		if atmCE > 0 {
 			go s.gsCloseAt(atmCE, b) // the lead first
@@ -724,6 +724,21 @@ var gsPlan struct {
 	m    map[gsSymExp]int // expiry -> widest band an open trade there needs
 	own  map[int64]bool   // each open trade's own straddle CE / PE tokens
 	legs map[int64]int64  // normal trades' held non-wing legs -> |net qty|
+	sim  bool             // a sim-driven (LUT) trade is open
+}
+
+// gsCaptureBand: the front ATM band fetched at every boundary. +/- gsSimBand
+// only while a sim-driven LUT trade is open (its sim needs the neighbours);
+// otherwise the ATM pair alone (plus the strike it may flip to) -- fewer
+// requests, so the ATM candle is in sooner. Normal trades add their own
+// expiry's ATM +/- 2 through gsPlan either way.
+func gsCaptureBand() int {
+	gsPlan.Lock()
+	defer gsPlan.Unlock()
+	if gsPlan.sim {
+		return gsSimBand
+	}
+	return 0
 }
 
 // gsPlanNow refreshes which expiries need which band (open trades), off the
@@ -732,12 +747,14 @@ func (s *Service) gsPlanNow() {
 	m := map[gsSymExp]int{}
 	own := map[int64]bool{}
 	legs := map[int64]int64{} // held legs of the NORMAL trades (LUT: own strike only)
+	sim := false
 	for _, t := range s.Store.AllTrades() {
 		if isTerminalTradeStatus(t.Status) {
 			continue
 		}
 		own[t.CEToken], own[t.PEToken] = t.CEToken > 0, t.PEToken > 0
 		band := gsMinuteBand(t.TradeUID)
+		sim = sim || band == 0
 		if band > 0 {
 			if extra, err := s.extraOpenLegs(t.TradeUID, t); err == nil {
 				for _, l := range extra {
@@ -756,7 +773,7 @@ func (s *Service) gsPlanNow() {
 		}
 	}
 	gsPlan.Lock()
-	gsPlan.m, gsPlan.own, gsPlan.legs = m, own, legs
+	gsPlan.m, gsPlan.own, gsPlan.legs, gsPlan.sim = m, own, legs, sim
 	gsPlan.Unlock()
 }
 
