@@ -614,51 +614,30 @@ func gsHaveAll(tokens map[int64]bool, b time.Time) bool {
 // moved within the minute is already in. Asked nearest first (gsRank).
 const gsSimBand = 2
 
-// gsAligned: a token's candles keyed by the minute they END (hh:mm:00).
-// GreekSoft stamps a completed candle at its end; a candle stamped INSIDE a
-// minute (its last trade time) is taken as that minute's close only when the
-// minute ended >= gsLateStampAge ago and no end-stamped candle exists for it
-// -- 16 Oct 22950 CE had no end-stamped candle in 18 minutes it traded in.
-// At the live boundary nothing changes: there the end stamp is GreekSoft's
-// "candle complete" signal.
-func gsAligned(bars map[int64]float64, now time.Time, tok int64) map[int64]float64 {
+// gsAligned: a token's candles keyed by the minute they END (hh:mm:00) --
+// end-stamped candles only. GreekSoft's answer also carries candles stamped
+// INSIDE a minute (19 Oct: token 51346, 198 of 601), but they are a different
+// series (11:30:00 371.00 vs 11:30:05 308.35): never a close for this token.
+// Where no end-stamped candle exists the feed close stands in.
+func gsAligned(bars map[int64]float64, _ time.Time, tok int64) map[int64]float64 {
 	out := make(map[int64]float64, len(bars))
-	late := map[int64]int64{} // minute end -> latest inside stamp used
+	inside := 0
 	for ts, c := range bars {
 		if ts%60 == 0 {
 			out[ts] = c
+		} else {
+			inside++
 		}
 	}
-	cutoff := now.Add(-gsLateStampAge).Unix()
-	for ts, c := range bars {
-		if ts%60 == 0 || c <= 0 {
-			continue
-		}
-		end := ts - ts%60 + 60
-		if end > cutoff {
-			continue // the minute is too recent: the end stamp may still come
-		}
-		if _, ok := bars[end]; ok {
-			continue
-		}
-		if prev, ok := late[end]; !ok || ts > prev {
-			late[end] = ts
-			out[end] = c
-		}
-	}
-	for end, ts := range late {
-		if _, seen := gsLateLogged.LoadOrStore(gsCloseKey{tok, end}, true); !seen {
-			log.Printf("[GS-CLOSE] token %d candle for %s stamped %s (not its minute end) -- used as that minute's close",
-				tok, time.Unix(end, 0).In(lutIST()).Format("15:04"), time.Unix(ts, 0).In(lutIST()).Format("15:04:05"))
+	if inside > 0 {
+		if _, seen := gsLateLogged.LoadOrStore(tok, true); !seen {
+			log.Printf("[GS-CLOSE] token %d: %d candle(s) not stamped at a minute end -- ignored (not this token's closes)", tok, inside)
 		}
 	}
 	return out
 }
 
-// gsLateStampAge: a minute this old is complete at GreekSoft, end stamp or not.
-const gsLateStampAge = 10 * time.Second
-
-var gsLateLogged sync.Map // gsCloseKey -> logged once
+var gsLateLogged sync.Map // token -> logged once
 
 // gsOwnGrace: how long the minute record waits, after the ATM pair is in,
 // for the open trades' position-strike closes (prefetched at rank 1, so

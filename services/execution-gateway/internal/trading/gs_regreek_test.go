@@ -78,29 +78,14 @@ func TestGSOverlayDropsGreeksEverywhere(t *testing.T) {
 	}
 }
 
-func TestGSAlignedLateStamps(t *testing.T) {
+func TestGSAlignedEndStampsOnly(t *testing.T) {
 	ist := lutIST()
-	at := func(h, m, s int) int64 { return time.Date(2026, 10, 16, h, m, s, 0, ist).Unix() }
-	bars := map[int64]float64{
-		at(10, 55, 0):  184.85, // end-stamped (candle 10:54)
-		at(10, 55, 47): 183.45, // candle 10:55 stamped at its last trade: no 10:56:00 bar
-		at(10, 57, 0):  185.00,
-		at(10, 56, 30): 999.0,  // inside 10:56 but 10:57:00 exists: ignored
-		at(11, 0, 55):  190.0,  // the minute just ended (11:01:00): too recent
-	}
-	got := gsAligned(bars, time.Unix(at(11, 1, 5), 0), 47159)
-	if got[at(10, 55, 0)] != 184.85 || got[at(10, 57, 0)] != 185.00 {
-		t.Fatalf("end-stamped candles must stay: %v", got)
-	}
-	if got[at(10, 56, 0)] != 183.45 {
-		t.Fatalf("10:56 (candle stamped 10:55:47) should be filled with 183.45: %v", got)
-	}
-	if _, ok := got[at(11, 1, 0)]; ok {
-		t.Fatalf("a minute that ended 5 s ago must wait for its end stamp")
-	}
-	for ts := range got {
-		if ts%60 != 0 {
-			t.Fatalf("only minute-end keys out: %d", ts)
-		}
+	at := func(h, m, s int) int64 { return time.Date(2026, 10, 19, h, m, s, 0, ist).Unix() }
+	// 19 Oct token 51346: end-stamped 371.00 / 377.70, inside-stamped 308.35 /
+	// 298.05 -- a different series, never this token's close.
+	bars := map[int64]float64{at(11, 30, 0): 371.00, at(11, 30, 5): 308.35, at(11, 31, 0): 377.70, at(11, 31, 3): 298.05}
+	got := gsAligned(bars, time.Unix(at(11, 40, 0), 0), 51346)
+	if len(got) != 2 || got[at(11, 30, 0)] != 371.00 || got[at(11, 31, 0)] != 377.70 {
+		t.Fatalf("only the end-stamped candles: %v", got)
 	}
 }
