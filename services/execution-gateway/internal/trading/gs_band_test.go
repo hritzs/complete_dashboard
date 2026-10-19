@@ -114,7 +114,7 @@ func TestGSGateSetLeadOverridesEarlyAsker(t *testing.T) {
 // names the ATM CE and its candle is out, the ATM PE asks at once and the
 // other legs only after the pair is in.
 func TestGSGatePairFirst(t *testing.T) {
-	b := time.Now().Truncate(time.Second)
+	b := time.Now() // the boundary just passed: well inside the lead grace
 	gsc.mu.Lock()
 	gsc.got, gsc.inflight, gsc.day = map[gsCloseKey]float64{}, map[gsCloseKey]chan struct{}{}, b.Format("20060102")
 	gsc.mu.Unlock()
