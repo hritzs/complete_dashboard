@@ -147,11 +147,13 @@ const gsWarmStrikes = 1
 
 func (s *Service) gsWarmLoop() {
 	go s.gsCaptureLoop()
+	s.gsPlanNow()
 	s.gsWarmNow()
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
 	for now := range t.C {
 		if now.Second() == 50 {
+			s.gsPlanNow()
 			s.gsWarmNow()
 		}
 		if now.Second() == 3 {
@@ -244,36 +246,20 @@ func (s *Service) gsTokens(band int) (toks map[int64]bool, atmCE, atmPE int64) {
 		}
 		cancel()
 	}
-	// Held legs, and the expiries they sit in: a trade on another expiry
-	// (e.g. next week) is checked on ITS expiry's ATM pair / synthetic
-	// future, so that pair is fetched here too, each expiry separately.
-	type symExp struct{ sym, exp string }
-	others := map[symExp]bool{}
-	pm.mu.Lock()
-	for _, pos := range pm.view.Positions {
-		// Wings are margin-only (outside PnL / delta): no candle needed.
-		if pos.NetQty != 0 && pos.Token > 0 && !pos.Wing {
-			toks[pos.Token] = true
-			if e := strings.TrimSpace(pos.Expiry); e != "" && !strings.EqualFold(e, frontExpiry) {
-				others[symExp{pos.Symbol, e}] = true
-			}
-		}
-	}
-	pm.mu.Unlock()
+	// Open trades, per the minute-end plan (gsPlanNow, refreshed at :50):
+	// a sim-driven LUT trade needs only its expiry's ATM pair (the sim
+	// decides its hedges / exits); a normal trade its expiry's ATM +/- 2
+	// strikes, CE + PE (its hedges open at the ATM). Fewer tokens = the
+	// candles in sooner: GreekSoft answers ~2 requests at a time.
 	if s.Snapshot != nil {
-		for se := range others {
+		for se, b := range gsPlanGet() {
+			if se.exp == "" || (strings.EqualFold(se.exp, frontExpiry) && b <= band) {
+				continue // the front expiry's band is in already
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			if c, err := s.Snapshot.GetOptionChain(ctx, se.sym, se.exp); err == nil && c != nil {
-				S := lutUnderlying(c)
-				atm := c.ATM
-				if S > 0 {
-					atm = math.Round(S/lutStrikeStep) * lutStrikeStep
-				}
-				for _, r := range c.Chain {
-					d := math.Abs(r.Strike - atm)
-					if d < 1e-6 || (S > 0 && d <= lutStrikeStep+1e-6 && math.Abs(r.Strike-S) <= lutStrikeStep/2+10) {
-						toks[r.CEToken], toks[r.PEToken] = r.CEToken > 0, r.PEToken > 0
-					}
+				for t, ok := range atmBandTokens(c, max(b, band)) {
+					toks[t] = toks[t] || ok
 				}
 			}
 			cancel()
@@ -594,6 +580,80 @@ func gsHaveAll(tokens map[int64]bool, b time.Time) bool {
 }
 
 // atmTokens: the ATM CE / PE tokens of a chain.
+// atmBandTokens: CE + PE tokens of the strikes within band steps of the ATM
+// (from the synthetic future), plus the strike the ATM may flip to.
+func atmBandTokens(c *OptionChainSnapshot, band int) map[int64]bool {
+	out := map[int64]bool{}
+	if c == nil {
+		return out
+	}
+	S := lutUnderlying(c)
+	atm := c.ATM
+	if S > 0 {
+		atm = math.Round(S/lutStrikeStep) * lutStrikeStep
+	}
+	for _, r := range c.Chain {
+		d := math.Abs(r.Strike - atm)
+		near := d <= float64(band)*lutStrikeStep+1e-6
+		if !near && band == 0 && S > 0 && d <= lutStrikeStep+1e-6 && math.Abs(r.Strike-S) <= lutStrikeStep/2+10 {
+			near = true // the ATM may flip to this strike
+		}
+		if near {
+			if r.CEToken > 0 {
+				out[r.CEToken] = true
+			}
+			if r.PEToken > 0 {
+				out[r.PEToken] = true
+			}
+		}
+	}
+	return out
+}
+
+// gsMinuteBand: strikes around the ATM a trade's minute-end GreekSoft closes
+// cover -- 0 (the ATM pair) for a sim-driven LUT trade, 2 for a normal one.
+func gsMinuteBand(tradeUID string) int {
+	if owned, _ := simDriveOwns(tradeUID); owned {
+		return 0
+	}
+	return 2
+}
+
+type gsSymExp struct{ sym, exp string }
+
+var gsPlan struct {
+	sync.Mutex
+	m map[gsSymExp]int // expiry -> widest band an open trade there needs
+}
+
+// gsPlanNow refreshes which expiries need which band (open trades), off the
+// boundary (warm loop :50) so the minute-end capture only reads it.
+func (s *Service) gsPlanNow() {
+	m := map[gsSymExp]int{}
+	for _, t := range s.Store.AllTrades() {
+		if isTerminalTradeStatus(t.Status) || strings.TrimSpace(t.Expiry) == "" {
+			continue
+		}
+		k := gsSymExp{NormalizeSymbol(t.Symbol), strings.TrimSpace(t.Expiry)}
+		if b, ok := m[k]; !ok || gsMinuteBand(t.TradeUID) > b {
+			m[k] = gsMinuteBand(t.TradeUID)
+		}
+	}
+	gsPlan.Lock()
+	gsPlan.m = m
+	gsPlan.Unlock()
+}
+
+func gsPlanGet() map[gsSymExp]int {
+	gsPlan.Lock()
+	defer gsPlan.Unlock()
+	out := make(map[gsSymExp]int, len(gsPlan.m))
+	for k, v := range gsPlan.m {
+		out[k] = v
+	}
+	return out
+}
+
 func atmTokens(cc *OptionChainSnapshot) map[int64]bool {
 	out := map[int64]bool{}
 	if cc == nil {

@@ -1271,19 +1271,13 @@ func (s *Service) minuteCloseChain(ctx context.Context, tradeUID string, trade S
 	// own legs and the ATM pair (synthetic future); shared with the LUT and
 	// other trades, ~0.3-0.5 s after the minute; feed closes if not in by
 	// gsCloseDeadline.
-	toks := atmTokens(closed)
-	toks[trade.CEToken], toks[trade.PEToken] = true, true
-	if gsClosesOn() { // every other leg the trade holds in this expiry (hedges; not wings)
-		if extra, xerr := s.extraOpenLegs(tradeUID, trade); xerr == nil {
-			for _, l := range extra {
-				if l.Qty-l.WingQty == 0 {
-					continue // a wing only: margin, outside PnL / delta -- no candle needed
-				}
-				if strings.EqualFold(strings.TrimSpace(l.Expiry), "") || strings.EqualFold(strings.TrimSpace(l.Expiry), strings.TrimSpace(trade.Expiry)) {
-					toks[l.Token] = true
-				}
-			}
-		}
+	// GreekSoft closes for what this trade's minute end needs: a sim-driven
+	// LUT trade only the ATM pair (the sim decides its hedges / exits); a
+	// normal trade the ATM +/- 2 strikes (its hedges open at the ATM). Legs
+	// further out keep their feed close -- fewer requests, closes in sooner.
+	toks := atmBandTokens(closed, gsMinuteBand(tradeUID))
+	for t := range atmTokens(closed) {
+		toks[t] = true
 	}
 	nGS, feedPx := s.gsApplyCloses(closed, boundary, toks)
 	mc := minuteCloseOf(closed, chain, boundary)
