@@ -473,6 +473,24 @@ func simBlack76(isCall bool, F, K, T, iv float64) (float64, float64, float64) {
 }
 
 // simPrice prices one leg at a minute: chain > LUT ATM LTP > BS.
+// simStrikeIV: one IV per strike, the OTM leg's (call when K > F, else put),
+// shared by both legs -- the backtest's method (strike_arrays: IV from the
+// OTM leg, delta -cd - (cd-1) at that one IV). 0 if not solvable.
+func simStrikeIV(F, K, T, ce, pe float64) float64 {
+	otmCall := K > F
+	px := pe
+	if otmCall {
+		px = ce
+	}
+	if px <= 0 || F <= 0 {
+		return 0
+	}
+	if iv, ok := lutImpliedVol(otmCall, px, F, K, T); ok && iv > 0.01 && iv < 2 {
+		return iv
+	}
+	return 0
+}
+
 func simPrice(m simMinute, K float64, opt string) (px, delta, gamma float64, src string) {
 	isCall := opt == "CE"
 	// Our own first-tick ATM price beats an imported (other recorder,
@@ -486,9 +504,9 @@ func simPrice(m simMinute, K float64, opt string) (px, delta, gamma float64, src
 			px, delta, gamma = r.CE, r.CEDelta, r.CEGamma
 		}
 		if px > 0 {
-			if delta == 0 || gamma == 0 { // greeks missing: BS at this price's IV
+			if delta == 0 || gamma == 0 { // greeks missing: the strike's OTM-leg IV (backtest)
 				T := math.Max(m.DTE/365, 1e-5)
-				if iv, ok := lutImpliedVol(isCall, px, m.Future, K, T); ok {
+				if iv := simStrikeIV(m.Future, K, T, r.CE, r.PE); iv > 0 {
 					_, delta, gamma = simBlack76(isCall, m.Future, K, T, iv)
 				}
 			}
@@ -506,8 +524,8 @@ lutATM:
 			px = m.lutCE
 		}
 		if px > 0 {
-			iv, ok := lutImpliedVol(isCall, px, m.Future, K, T)
-			if !ok {
+			iv := simStrikeIV(m.Future, K, T, m.lutCE, m.lutPE)
+			if iv <= 0 {
 				iv = m.IV
 			}
 			_, delta, gamma = simBlack76(isCall, m.Future, K, T, iv)
@@ -572,7 +590,12 @@ func simGreeks(m simMinute, K float64, opt string) (px, delta, gamma, theta, veg
 	px, delta, gamma, src = simPrice(m, K, opt)
 	T := math.Max(m.DTE/365, 1e-5)
 	iv = m.IV
-	if px > 0 {
+	// The strike's IV, from its OTM leg (both legs share it, as the backtest).
+	ce, _, _, _ := simPrice(m, K, "CE")
+	pe, _, _, _ := simPrice(m, K, "PE")
+	if v := simStrikeIV(m.Future, K, T, ce, pe); v > 0 {
+		iv = v
+	} else if px > 0 {
 		if v, ok := lutImpliedVol(opt == "CE", px, m.Future, K, T); ok {
 			iv = v
 		}

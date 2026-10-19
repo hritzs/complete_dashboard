@@ -71,7 +71,15 @@ func gsOverlayLoad(day, set string) gsOverlay {
 // feed closes, so there the synthetic future and the ATM are re-derived from
 // the overlaid ATM pair too -- each expiry on its own closes.
 func gsOverlayApply(day, set string, mins map[string]lutChainMinute) {
-	ov := gsOverlayLoad(day, set)
+	gsOverlayApplyWith(gsOverlayLoad(day, set), set, mins)
+}
+
+// gsOverlayApplyWith: gsOverlayApply on a loaded overlay. A strike it
+// re-prices drops the feed's greeks / IVs (taken at the feed's price at
+// another moment): the simulation recomputes them at the close, one IV per
+// strike from the OTM leg as the backtest does (simStrikeIV). Mixing close
+// prices with feed greeks flipped the 16 Oct 10:19 minute-end hedge.
+func gsOverlayApplyWith(ov gsOverlay, set string, mins map[string]lutChainMinute) {
 	if len(ov) == 0 {
 		return
 	}
@@ -89,6 +97,8 @@ func gsOverlayApply(day, set string, mins map[string]lutChainMinute) {
 				if px[1] > 0 {
 					m.Rows[i].PE = px[1]
 				}
+				r := &m.Rows[i]
+				r.CEDelta, r.CEGamma, r.PEDelta, r.PEGamma, r.CEIV, r.PEIV = 0, 0, 0, 0, 0, 0
 			}
 		}
 		if other {

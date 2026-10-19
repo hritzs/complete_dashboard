@@ -491,7 +491,40 @@ func (s *Service) gsApplyCloses(cc *OptionChainSnapshot, b time.Time, tokens map
 		}
 		n += s.gsReplace(cc, b, extra, done, feed)
 	}
+	gsRegreek(cc, b, feed)
 	return n, feed
+}
+
+// gsRegreek recomputes delta / gamma / IV at every strike whose price the
+// GreekSoft closes replaced (feed holds the replaced tokens): Black-76 at the
+// GreekSoft synthetic future, one IV per strike from its OTM leg's close,
+// both legs sharing it -- the backtest's method. The snapshot's greeks were
+// taken at the feed's price at another moment (16 Oct 10:19).
+func gsRegreek(cc *OptionChainSnapshot, b time.Time, feed map[int64]float64) {
+	if cc == nil || len(feed) == 0 || cc.SyntheticFuture <= 0 {
+		return
+	}
+	exp, err := lutParseExpiry(cc.Expiry)
+	if err != nil {
+		return
+	}
+	F := cc.SyntheticFuture
+	T := math.Max(lutRawDTE(b, exp)/365.0, 1e-5)
+	for i := range cc.Chain {
+		r := &cc.Chain[i]
+		_, ce := feed[r.CEToken]
+		_, pe := feed[r.PEToken]
+		if !(ce && r.CEToken > 0) && !(pe && r.PEToken > 0) {
+			continue
+		}
+		iv := simStrikeIV(F, r.Strike, T, r.CELtp, r.PELtp)
+		if iv <= 0 {
+			continue
+		}
+		_, r.CEDelta, r.CEGamma = simBlack76(true, F, r.Strike, T, iv)
+		_, r.PEDelta, r.PEGamma = simBlack76(false, F, r.Strike, T, iv)
+		r.CEIV, r.PEIV = iv*100, iv*100
+	}
 }
 
 // gsReplace fetches the GreekSoft closes of tokens (in parallel) and writes
