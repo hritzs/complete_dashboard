@@ -1,0 +1,42 @@
+{
+  "Combinations": 1944,
+  "Outer_entries": 442,
+  "Inputs": {
+    "nested_sizing.py": "4b312e31a48b750257e9dbce186af1f9d9a03afb6328c9254bb280c8e52b1677",
+    "NESTED_SIZING_SPEC.md": "9064f5ef20926bf8dc7230eb5ead873a7805b7b694b8dc880bab01e042d1d2c6",
+    "audit_walkforward_sizing.py": "5ddc35ac75b09c0b4cc5823e69826160be03923cbf9690dba3cfa04627f7fb14",
+    "monte_carlo_sizing.py": "57c476c89e9c533866cdd5af5cc0b11482f23dba41127b98249d39270dc8124d",
+    "output/monte_carlo_sizing/trade_comparison.csv": "b24de2fb2a976d7d21c799748da43a736b4f35d78b1c179570f5e28011b72f43",
+    "output/walkforward_sizing/prepared_inputs.csv": "ffee1cce36c3a71f754a82a849abde56eb58294f94ab2671463b4fb328a1324a",
+    "output/walkforward_sizing/daily_pnl.csv": "912c068fd585dc6e325cbfcfc276fa3eead12021c517991aa753f5c0cd52c7a7",
+    "output/walkforward_sizing/walkforward_comparison.xlsx": "abc2797384aff05dcba634e6e1a356d70724ac31ea5f506a87a6fe4538a59e11",
+    "output/walkforward_sizing/model_2022.json": "209356dbf098c887dc7586b2c3e13c1808949f37d409cfd19a7a9a2d9ee8bd1d",
+    "output/walkforward_sizing/model_2023.json": "065ec220e39fc3b2a67a4877044c16d4fc1576900a01202a33b04ad390cff436",
+    "output/walkforward_sizing/model_2024.json": "bbe8c10c9bf854bd03ffb42396f85c79ae83efbb30544ac030c35d627ddeb56e",
+    "output/walkforward_sizing/model_2025.json": "2a2cf33ad10d8f19cb7e8cd4c033cbed2bc03c3aa7489dfadfa0774698ef1fb7",
+    "output/walkforward_sizing/model_2026.json": "d88f1b1e4346fdd9c5545ad20877a2fdea35161f55c01a3805b227789b4382b2",
+    "verify_nested_sizing.py": "7f8b8aff48d3f120e4e94ec7e359a643c6ef3abb48193f835eb3e20b9061b697",
+    "test_nested_sizing.py": "a8b1a81d9f236a944d22841cce1b5b610962e831a0359d5d39b2aa8ba9f0aebd"
+  },
+  "Outputs": {
+    "frozen_selections.csv": "13e2285c787d9f967517a5af93a2fd5484d3bb64326031b5e1fb713a37f14eff",
+    "formula_replay.csv": "dc0bdbf544fec8af2fbc8bba0085ad807d90be8a6e8d5a740878516100994eb5",
+    "REPORT.md": "1a5e9b6aee26d6d274f7cbaccaa143ea62d91435af9d70fd5bb2efe89c654f87",
+    "verification.json": "5d470e394827a4045c879d95a45617f7371bf63f1fda7b2a00f83b23e9f793fb",
+    "trade_comparison.csv": "9aec9a2eb531eab1a6c5deda1e15035d41a20ba3dadae343e6cc6757e88b9ed8",
+    "outer_equity_drawdown.svg": "086dcf79dbf0b9f4a04c4e2779f5fdd428fd822603ee3ef25a430e805b5be567",
+    "environment.json": "7afb7637fa76e69289d8a6af65da291765e3913b7b0f7ebbcaa2e7efa0a8ab37",
+    "placement_summary.csv": "f4b3c74c5ea70db97872bec388df0097f786e6d3e961a1fb0b723c15c510b208",
+    "inner_sensitivity.parquet": "86936721ddce477dd7cc154f5f05171a1289b25c4b1476c4f7718fd1a7253f6b",
+    "nested_sizing.xlsx": "226b1c910f4c18bb2fd5a7c8506168bdaa9bbbfddee33b0b459d382212dd63d7",
+    "daily_pnl.csv": "fba47c761f6364ab1015359ad1623246cc9523daeb8ec33697ef0d4093fc0a2c",
+    "historical_summary.csv": "085ca01687e45e4adb106f4befd928fd6282d808f477eea5ba1c6faf0f0bf310",
+    "parameter_sensitivity.svg": "53f20434ffa603826f5acfccd516f3b181a4bfc26b84811e638abf3837f6ff2b",
+    "outer_equity_drawdown.png": "2e8814e9ac1b89d4bd29bf625bb991d4d7b39d3e82b55708bb0a20e493470b86",
+    "equal_exposure_placement.svg": "6c12676c4b9fef1d3bb41f7a7500ec67cbcb4c570dcbda32451c0c9443409e71",
+    "equal_exposure_placement.png": "de61ef0f097c639a790fdbb4db5d7c3ca79c7f81d7c9fa7f650f7d3913595f20",
+    "parameter_sensitivity.png": "81cfe0d674c5a7e23d9435449bc6862db41c5bf1ab35a34149d64c84fdc20510",
+    "placement_paths.npz": "84cde10a0162a2142286029664dd11203746d79f987cb18b5917e235b280ead3",
+    "daily_sizes.csv": "9dd4618ccc311c1a8453f293ca5602c21a0cfe6663154457eb676a3cfedb355e"
+  }
+}

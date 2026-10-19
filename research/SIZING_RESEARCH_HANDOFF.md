@@ -1,6 +1,6 @@
 # GammaShort sizing / opportunity research: where it stands
 
-Updated 2026-10-15. The sizing studies through v6 and the preregistered
+Updated 2026-10-19. The sizing studies through v6 and the preregistered
 relaxed-entry rerun are complete. The derived-strategy simulator remains a
 scaffold (see sections 4.9, 4.10, and 7). The latest owner request is exact risk
 formulas and a persistent Excel iteration ledger in section4.17, extended with
@@ -14,6 +14,10 @@ past-only overlays and actual mean exposure. Earlier studies
 4.11–4.14 retain their historical full-fit normalization and no-09:16-boost
 rules. Section4.19 specifically retests the archived10/11 caps with past-only
 fits and frozen training offsets; it does not add the section4.15 tax boosts.
+
+Latest continuation: sections4.20/4.21 contain Monte Carlo scenarios,1,944
+chronological parameter combinations and identical-size placement diagnostics.
+No normalization or new live policy.
 
 ## 1. Goal
 
@@ -757,6 +761,72 @@ cutoff/fingerprint checks pass; five focused tests pass. The master now has
 16 iterations/193 policy paths/211 sheets;
 20,651 period rows reconcile, alongside the original spreadsheet
 checks and1,234 new spreadsheet-engine sizing calculations.
+
+### 4.20 Monte Carlo scenarios and 4.21 nested parameter/placement tests
+
+The owner rejected future mean balancing and constant-multiplier profit as
+allocation alpha. Iteration17 stores the six-scenario Monte Carlo study;
+iteration18 adds a chronological1,944-combination parameter sweep and an
+identical-exposure placement test. No live code, entries or tax vector changed.
+
+Iteration17:27 policies;5,000 paired paths per scenario;150 trade opportunities
+per path. Selection uses2022–2024, with2025+ as the evaluation pool. Fixed1.15
+is only an exposure control, not an alpha result. At the flat1 training-tail
+DD budget, the selected policy is flat. The training-selected adaptive policy
+also failed in the later pool. See `output/monte_carlo_sizing/REPORT.md` and
+`monte_carlo_sizing.xlsx` in that directory.
+
+Iteration18 varies risk rank weights/cutoffs, cuts0.75/0.80/0.85, boosts
+1.05/1.10/1.15, extra tax+2/+4, S1/S2 guards, IV dampening and prior realized-DD
+caps. For each2023–2026 outer year, earlier2022+ observations supply a60/40
+inner train/validation split. Annual input models remain prior-year fitted.
+Top10 distinct inner-training paths are shortlisted before inner validation;
+chosen parameters freeze before the scored year. No outer-grid winner is
+selected after outcomes.2021–2022 stay flat calibration/warmup in this book.
+
+None of the shortlisted policies passed the declared validation requirements,
+including the relaxed10%-DD selector. All strict selectors explicitly fell
+back to the original flat control; this is not a newly admitted risk policy.
+The exploratory selector is reported despite failure, not adopted.
+
+Outer2023+ results on442 trades, in normalized backtest units:
+
+| Policy | Net | Max DD | Mean size |
+|---|---:|---:|---:|
+| Flat / strict baseline fallback | 5,375.05 | 126.39 | 1.0000 |
+| Exploratory allocation | 4,770.88 | 114.43 | 0.8869 |
+
+Exploratory net changes-11.24% and DD-9.47%.
+It reduces participation; this is not a higher-profit/lower-DD result.
+Against5,000 within-year random permutations of **the same exact sizes**, its
+actual net exceeds the random mean by only8.90;
+the upper-tail permutation frequency is0.4597.
+Across5,000 Block10 paired paths of150 trades, it beats random placement in
+50.74% of paths. No persuasive placement edge was established.
+The null placements are counterfactual diagnostics and may violate individual
+risk/conviction gates; actual admitted policies retain their constraints.
+
+Parameter sensitivity charts use earlier inner validation only. IV dampening
+and prior-DD guards lower mean validation DD but reduce allocation excess;
+larger boosts increase allocation excess and DD. These descriptive averages
+across correlated candidates are not causal effects or new outer winners.
+
+All1,944 combinations' inner metrics,16 dated selections, full trade/daily/
+quarter/year paths, formulas, parameters and three PNG/SVG charts are in
+`output/nested_sizing/nested_sizing.xlsx`, with compressed sensitivity and
+placement arrays beside it. Master18_ adds monthly/FY/group reports. Monte
+Carlo17_ preserves all27 daily paths and scenario summaries. Specifications
+are `MONTE_CARLO_SIZING_SPEC.md` and `NESTED_SIZING_SPEC.md`.
+
+Verification: four focused tests for each study;945,000 Monte Carlo policy-path
+replays and25,000 matched-placement policy paths reconcile. All15,560 inner
+candidate metric rows, chronological choices and1,768 chosen-size formulas
+replay. Strict-prefix source availability is conditional on prior audits.
+Legacy fixed entry LUTs, higher-tax training cache and fill assumptions remain;
+previously researched years are not an untouched holdout. These experiments
+do not establish end-to-end unbiased strategy performance. Original taxes
+13/5/2/2/6 remain selection hurdles, not extra PnL deductions. Future work on
+entry timing, SL/TP or hedging must replay execution rather than edit saved PnL.
 
 ## 5. Overall conclusion from the earlier studies
 

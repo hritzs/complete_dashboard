@@ -1,9 +1,9 @@
 {
   "Status": "PASS",
-  "Iterations": 16,
-  "Policies": 193,
-  "Period_rows_checked": 20651,
-  "Sheets": 211,
+  "Iterations": 18,
+  "Policies": 225,
+  "Period_rows_checked": 24075,
+  "Sheets": 238,
   "Spreadsheet_engine": "LibreOffice headless; stored cached formula results verified",
   "Spreadsheet_risk_rows": 799,
   "Maximum_formula_errors": {
@@ -15,12 +15,16 @@
   "Annual_sizing_formula_rows": 3196,
   "Optimized_sizing_formula_rows": 11985,
   "Walkforward_sizing_formula_rows": 1234,
+  "Monte_Carlo_sizing_formula_rows": 21573,
+  "Nested_sizing_formula_rows": 1768,
   "Maximum_algorithm_formula_errors": {
     "Annual_Size_Excel": 0.0,
     "Optimized_Raw_Excel": 1.0658141036401503e-14,
     "Optimized_Size_Excel": 9.992007221626409e-15,
     "Walkforward_Raw_Excel": 1.021405182655144e-14,
-    "Walkforward_Size_Excel": 9.992007221626409e-15
+    "Walkforward_Size_Excel": 9.992007221626409e-15,
+    "Monte_Carlo_Size_Excel": 0.0,
+    "Nested_Size_Excel": 0.0
   },
   "Checks": [
     "input/output hashes",

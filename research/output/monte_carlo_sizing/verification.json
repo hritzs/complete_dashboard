@@ -1,0 +1,20 @@
+{
+  "Status": "PASS",
+  "Policies": 27,
+  "Evaluation_scenarios": 6,
+  "Paths_per_scenario": 5000,
+  "Horizon_trades": 150,
+  "Policy_path_replays_including_training": 945000,
+  "Maximum_replay_error": 0.0,
+  "PNG_charts": 5,
+  "Checks": [
+    "source and output hashes",
+    "all27 size rules and hard bounds",
+    "all training/evaluation paths replay",
+    "non-wrapping contiguous blocks",
+    "paired summaries and constant-size scaling",
+    "training-only selections",
+    "historical evaluation reconciliation",
+    "PNG decoding and nonblank contents"
+  ]
+}

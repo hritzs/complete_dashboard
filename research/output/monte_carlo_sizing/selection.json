@@ -1,0 +1,8 @@
+{
+  "Selected_using": "2022\u20132024 only; before evaluation",
+  "Policies": {
+    "Maximum simulated mean profit": "Fixed 1.15",
+    "Maximum adaptive mean profit": "Tax+2 cut0.85 boost1.15",
+    "Maximum mean profit at flat tail-DD budget": "Flat size 1"
+  }
+}

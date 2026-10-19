@@ -151,8 +151,13 @@ def summaries(config,d,policies,grouping):
         selections={'All_history':np.ones(len(d),bool)}
         if config['kind'] in ('tax','tick') or config.get('warmup_year')==2021:
             selections.update(Warmup_2021=year.eq(2021).to_numpy(),Scored_2022plus=year.ge(2022).to_numpy())
+            if config.get('selection_until_year'):
+                cut=config['selection_until_year']
+                selections.update(Selection_2022_2024=(year.ge(2022)&year.le(cut)).to_numpy(),Evaluation_2025plus=year.gt(cut).to_numpy())
         elif 'Part' in d:
             selections.update({str(k):d.Part.eq(k).to_numpy() for k in d.Part.dropna().unique()})
+        if config.get('outer_start_year'):
+            start=config['outer_start_year'];selections.update(Warmup_2021_2022=year.lt(start).to_numpy(),Outer_2023plus=year.ge(start).to_numpy())
     else:
         values=labels[grouping]; selections={str(k):np.asarray(values==k) for k in sorted(set(values))}
     out=[]

@@ -1,14 +1,14 @@
 # GammaShort research ledger
 
-Open `GammaShort_Research_Ledger.xlsx`. This combines 16 saved research iterations
-and 193 daily policy paths. It does not refit strategies or change live trading.
+Open `GammaShort_Research_Ledger.xlsx`. This combines 18 saved research iterations
+and 225 daily policy paths. It does not refit strategies or change live trading.
 The original source workbooks remain unchanged.
 
 ## Workbook navigation
 
 - **START_HERE**: iteration index, dates, coverage, research protocol and source.
 - **All_Iterations**: overall and saved split/warmup/scored-period metrics.
-- **01_… through 16_…**: separate sheets for each iteration, described below.
+- **01_… through 18_…**: separate sheets for each iteration, described below.
 - **Risk_Trade_Replay**: all 799 original risk predictions, raw instability
   readings, component ranks, realized outcomes, flags and verified replay.
 - **Risk_Excel_Formulas**: executable Excel formulas for those 799 trades.
@@ -150,3 +150,18 @@ and1,234 executable sizing replays. The separate rerun workbook contains
 | WF11 dicey0.85 maximum profit | 7,435.66 | 138.66 | -53.87 | 53.63 | 0.956000 |
 
 Neither rerun passes the declared forward qualification (higher net, higher net/DD and no worse worst day).
+
+
+## Monte Carlo17 and nested parameter18
+
+17_ stores27 candidate trade/daily/quarter/year/month/FY paths and six paired
+Monte Carlo scenarios.18_ stores five dated selector streams from a1,944-grid
+chronological inner train/validation sweep, with explicit flat fallbacks and
+separate exploratory results. The source workbooks contain charts;18_Source_tables
+contains all inner sensitivity metrics, dated choices and matched-size
+placement diagnostics. Algo_MC_* and Algo_Nested_* explain and recompute the
+sizing branches in actual spreadsheet formulas. No mean normalization occurs.
+A larger constant multiplier is an exposure benchmark, not allocation alpha.
+Strict selectors found no validated improvement; exploratory placement was
+consistent with random allocation of the same sizes. Read the two source
+REPORT.md files for exact scopes, limitations and charts.

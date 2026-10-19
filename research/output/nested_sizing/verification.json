@@ -1,0 +1,21 @@
+{
+  "Status": "PASS",
+  "Combinations": 1944,
+  "Inner_candidate_metric_rows": 15560,
+  "Outer_entries": 442,
+  "Annual_policy_selections": 16,
+  "Formula_replay_rows": 1768,
+  "Matched_MC_policy_paths": 25000,
+  "Within_year_permutations_per_policy": 5000,
+  "Maximum_null_replay_error": 0.0,
+  "Checks": [
+    "source/output hashes",
+    "all grid risk bounds and NW caps",
+    "all inner metrics and dated choices",
+    "future outcome exclusion from parameter selection",
+    "chosen outer sizes",
+    "size formula replay",
+    "identical per-path size sums",
+    "paired Monte Carlo and within-year permutation replay"
+  ]
+}

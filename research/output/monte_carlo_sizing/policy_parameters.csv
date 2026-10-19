@@ -1,0 +1,28 @@
+Candidate,Family,Risk_cut,Boost,Extra_tax
+Flat size 1,Exposure benchmark,,1.0,
+Fixed 0.75,Exposure benchmark,,0.75,
+Fixed 0.85,Exposure benchmark,,0.85,
+Fixed 1.05,Exposure benchmark,,1.05,
+Fixed 1.1,Exposure benchmark,,1.1,
+Fixed 1.15,Exposure benchmark,,1.15,
+Risk cut0.75,Risk only,0.75,1.0,
+Tax+2 cut0.75 boost1.05,Adaptive,0.75,1.05,2.0
+Tax+2 cut0.75 boost1.1,Adaptive,0.75,1.1,2.0
+Tax+2 cut0.75 boost1.15,Adaptive,0.75,1.15,2.0
+Tax+4 cut0.75 boost1.05,Adaptive,0.75,1.05,4.0
+Tax+4 cut0.75 boost1.1,Adaptive,0.75,1.1,4.0
+Tax+4 cut0.75 boost1.15,Adaptive,0.75,1.15,4.0
+Risk cut0.8,Risk only,0.8,1.0,
+Tax+2 cut0.8 boost1.05,Adaptive,0.8,1.05,2.0
+Tax+2 cut0.8 boost1.1,Adaptive,0.8,1.1,2.0
+Tax+2 cut0.8 boost1.15,Adaptive,0.8,1.15,2.0
+Tax+4 cut0.8 boost1.05,Adaptive,0.8,1.05,4.0
+Tax+4 cut0.8 boost1.1,Adaptive,0.8,1.1,4.0
+Tax+4 cut0.8 boost1.15,Adaptive,0.8,1.15,4.0
+Risk cut0.85,Risk only,0.85,1.0,
+Tax+2 cut0.85 boost1.05,Adaptive,0.85,1.05,2.0
+Tax+2 cut0.85 boost1.1,Adaptive,0.85,1.1,2.0
+Tax+2 cut0.85 boost1.15,Adaptive,0.85,1.15,2.0
+Tax+4 cut0.85 boost1.05,Adaptive,0.85,1.05,4.0
+Tax+4 cut0.85 boost1.1,Adaptive,0.85,1.1,4.0
+Tax+4 cut0.85 boost1.15,Adaptive,0.85,1.15,4.0

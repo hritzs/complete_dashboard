@@ -28,12 +28,16 @@ CATALOG=[
  ('A18','Annual risk-first sizing branch','Warmup flag, dicey, CW higher-tax mask, fixed boost','warmup ->1; else dicey ->.85; else stronger CW ->1.05/1.10; else1','Final modest boost/cut; risk overrides conviction','Prior-year model and masks;2021 warmup','09:16 boost allowed only under original13 plus15/17; no future normalization; no candidate adopted','higher_tax_sizing.py:assign_sizes'),
  ('A19','Tick percentile / residual entry filters','Strict pre-entry premium rank, residual, spread/range/change','Eight fixed skip/delay rules; see TICK_ENTRY_SPEC.md','Entry rejection or one-minute delay, not size boost','Within-day prefix; prior-year across-day cutoffs','None met profit+ratio qualification; not executable stat arb','tick_entry_features.py; tick_entry_eval.py'),
  ('A20','Relaxed later entry','Time cutoff and YES-neighbor support of09:20+ NO cell','R1/R2/R3/R4 fixed windows and support; entry size1 or.75','Alternative entry set and timing','Fixed candidate evaluation on saved counterfactuals','Not simply sizing original entry; legacy LUT bias remains','entry_relax_eval.py'),
- ('A21','Annual frozen allocation rerun','Prior-year S1/S2, numeric scalers, risk models/references, allocation b and training offset','Fit prior years only; size=clip(1+X*b+frozen_offset,.75,cap); cap1.15, early CW1, WF11 dicey.85','Forward continuous size; actual future mean is reported','2021 warmup; annual expanding fit2022–2026; no old full-history weights','Training mean1 uses breakpoint projection; never normalize scored year; strict tick prefixes; legacy base LUT/fill bias remains','walkforward_sizing.py; WALKFORWARD_SIZING_SPEC.md')
+ ('A21','Annual frozen allocation rerun','Prior-year S1/S2, numeric scalers, risk models/references, allocation b and training offset','Fit prior years only; size=clip(1+X*b+frozen_offset,.75,cap); cap1.15, early CW1, WF11 dicey.85','Forward continuous size; actual future mean is reported','2021 warmup; annual expanding fit2022–2026; no old full-history weights','Training mean1 uses breakpoint projection; never normalize scored year; strict tick prefixes; legacy base LUT/fill bias remains','walkforward_sizing.py; WALKFORWARD_SIZING_SPEC.md'),
+ ('A22','Monte Carlo scenario sizing','Annual prior-trained risk; stronger-tax masks at strict-prefix CW cells; fixed cut/boost grid','warmup1; benchmark=fixed size; otherwise dicey=cut; else tax-strong=boost; else1; no normalization','Fixed signal-based allocation and paired scenario profit/DD distributions','2022–2024 selection;2025+ evaluation;5000x150 trades/scenario','Six empirical/stress scenarios; not future forecasts, dynamic online refits or new edge; legacy LUT/fill/cache limitations remain','monte_carlo_sizing.py; MONTE_CARLO_SIZING_SPEC.md'),
+ ('A23','Nested chronological sizing and placement','1944 risk/tax/boost/profit-score/IV/DD combinations; earlier inner train/validation','raw=risk?cut:(strong?boost:1); size=min(DDcap,strong?1.15:1,clip(raw*vol,.75,1.15)); flat fallback explicit','Parameters frozen before scored year; allocation-placement diagnostic at identical sizes','2021 model warmup;2022 calibration; outer2023+; prior-only60/40 inner split','Risk flags cannot be removed by admitted policies; fallback0 is baseline control; random permutations are diagnostics, not risk-gated policies; legacy base limitations','nested_sizing.py; NESTED_SIZING_SPEC.md')
 ]
 
 
 def families(iteration,name):
     if name=='Flat size 1': return 'A00'
+    if iteration=='18': return 'A09,A10,A11,A12,A17,A23'
+    if iteration=='17': return 'A22' if name.startswith('Fixed') else 'A09,A10,A11,A12,A22'+(',A17' if name.startswith('Tax+') else '')
     if iteration=='15': return 'A02,A03,A13,A14,A21'
     if iteration=='16': return 'A02,A03,A09,A10,A11,A12,A13,A14,A21'
     if iteration=='13': return 'A09,A10,A11,A12,A17,A18'
@@ -68,7 +72,9 @@ def add_sheets(book,table,policy_map):
             '13':'Prior-year risk+tax gates;09:16 boosts allowed; risk.85 overrides; no future balancing',
             '14':'Strict tick prefixes; entry skip/delay; fixed multiplier1',
             '15':'Rebuild strict intraday inputs; all score/scaler/optimizer fits prior-year only; freeze training offset; actual mean',
-            '16':'Same annual frozen protocol plus prior-year risk/percentile gates; dicey<=.85; explicit risk-only fallback'}.get(c['id'],'Earlier split-based research; original restrictions and precise parameters in source tables')
+            '16':'Same annual frozen protocol plus prior-year risk/percentile gates; dicey<=.85; explicit risk-only fallback',
+            '17':'No normalization; paired Monte Carlo scenario paths; training-selected fixed sizing branches; exposure benchmarks separated',
+            '18':'Nested earlier-data parameter selection; no normalization; IV/DD guards and stricter risk gates; identical-size placement nulls; explicit baseline fallbacks'}.get(c['id'],'Earlier split-based research; original restrictions and precise parameters in source tables')
         changes.append({'Iteration':c['id'],'Name':c['name'],'Change':change,'Protocol':c['protocol'],'Coverage':c['coverage']})
     table(book,'Algo_Changes',pd.DataFrame(changes))
     for row in policy_map: row['Algorithms']=families(row['Iteration'],row['Policy_name'])
@@ -186,7 +192,31 @@ def add_sheets(book,table,policy_map):
     table(book,'Algo_WF_Inputs',pd.DataFrame(wf_input_rows));table(book,'Algo_WF_Coefs',pd.DataFrame(wf_coefs))
     table(book,'Algo_WF_Replay',pd.DataFrame(wf_rows));table(book,'Algo_WF_Folds',wf['Training_cutoffs'])
     paths.update([ROOT/'WALKFORWARD_SIZING_SPEC.md',ROOT/'walkforward_sizing.py',ROOT/'audit_walkforward_sizing.py'])
+    mc=load('monte_carlo_sizing/monte_carlo_sizing.xlsx');mc_rows=[]
+    mc_trades=mc['Trade_comparison']
+    for rule in mc['Policy_parameters'].itertuples():
+        for row in mc_trades.to_dict('records'):
+            rr=len(mc_rows)+2;warm=bool(row['Warmup']);dice=bool(row['Dicey'])
+            mc_strong=bool(row[f'Strong_tax_plus{int(rule.Extra_tax)}']) if pd.notna(rule.Extra_tax) else False
+            mc_rows.append({'Date':row['Date'],'Candidate':rule.Candidate,'Warmup':warm,'Dicey':dice,'Strong':mc_strong,
+                'Risk_cut':float(rule.Risk_cut) if pd.notna(rule.Risk_cut) else 1.,'Boost':float(rule.Boost),'Family':rule.Family,
+                'Saved_size':row[rule.Candidate+'_size'],
+                'Size_Excel':f'=IF(C{rr},1,IF(H{rr}="Exposure benchmark",G{rr},IF(D{rr},F{rr},IF(E{rr},G{rr},1))))',
+                'Excel_error':f'=J{rr}-I{rr}'})
+    table(book,'Algo_MC_Replay',pd.DataFrame(mc_rows));table(book,'Algo_MC_Parameters',mc['Policy_parameters'])
+    table(book,'Algo_MC_Selection',mc['Frozen_selection'])
+    paths.update([ROOT/'MONTE_CARLO_SIZING_SPEC.md',ROOT/'monte_carlo_sizing.py'])
+    nested=load('nested_sizing/nested_sizing.xlsx');nr=nested['Formula_replay'].copy()
+    formulas=[]
+    for i in range(len(nr)):
+        r=i+2
+        formula=f'=IF(E{r},1,MIN(K{r},IF(G{r},1.15,1),MAX(0.75,MIN(1.15,IF(F{r},H{r},IF(G{r},I{r},1))*J{r}))))'
+        assert formula.count('(')==formula.count(')');formulas.append(formula)
+    nr['Size_Excel']=formulas;nr['Excel_error']=[f'=M{i+2}-L{i+2}' for i in range(len(nr))]
+    table(book,'Algo_Nested_Replay',nr);table(book,'Algo_Nested_Selection',nested['Frozen_parameters'])
+    paths.update([ROOT/'NESTED_SIZING_SPEC.md',ROOT/'nested_sizing.py'])
     return paths,{'Algorithms':len(CATALOG),'Mapped_policies':len(policy_map),'Conviction_rows':len(gate),
         'Strong':int(strong.sum()),'Eligible':int(eligible.sum()),'Annual_sizing_rows':len(annual_rows),
         'Optimized_policies':len(checks),'Optimized_trade_rows':len(replay),'Maximum_size_replay_error':max(c['Maximum_error'] for c in checks),
-        'Walkforward_sizing_rows':len(wf_rows),'Walkforward_folds':len(wf_coefs)}
+        'Walkforward_sizing_rows':len(wf_rows),'Walkforward_folds':len(wf_coefs),'Monte_Carlo_sizing_rows':len(mc_rows),
+        'Nested_sizing_formula_rows':len(nr)}

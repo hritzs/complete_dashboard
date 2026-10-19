@@ -1,5 +1,27 @@
 # What controls boosts, cuts and restrictions
 
+Iteration18 extends17 with1944 fixed parameter combinations and chronological
+inner tuning/validation before each outer year. No normalization occurs. The
+new factors are risk-weight/quantile sensitivity, profit-score guards,
+volatility dampening and a prior realized-DD cap. `Algo_Nested_Selection` and
+`Algo_Nested_Replay` store the actual dated choices and executable size rules.
+Strict selectors may revert to the baseline control when no shortlisted
+policy validates; this is not a new admitted risk policy. Exploratory results
+are labelled separately. Random placements preserve identical sizes/exposure
+and test timing of allocation, not larger average positions. See
+`NESTED_SIZING_SPEC.md` and `output/nested_sizing/REPORT.md`.
+
+Latest iteration17 uses **no mean normalization**. Its27 predeclared sizing
+rules compare fixed exposure, risk-only cuts and risk-first stronger-tax
+boosts. Read `MONTE_CARLO_SIZING_SPEC.md` for the full protocol and
+`output/monte_carlo_sizing/REPORT.md` for charts and results. Monte Carlo
+resamples paired historical signals/outcomes; it does not manufacture an edge.
+Policy selection uses2022–2024 before evaluation-pool simulations on2025+.
+`Algo_MC_Parameters`, `Algo_MC_Selection` and `Algo_MC_Replay` explain and
+recompute all27x799 daily sizing decisions, including2021 warmup at1.
+The earlier normalization experiments below remain archived, not the current
+instruction. Existing legacy entry/fill/cache limitations still apply.
+
 These are research algorithms, not a statement that a new sizing model is
 active in live execution. The original reporting replay does not refit archived
 models. The separate annual rerun15/16 below refits sizing models using prior
