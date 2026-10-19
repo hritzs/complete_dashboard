@@ -905,7 +905,7 @@ func (s *Service) gsPlanNow() {
 	legs := map[int64]int64{} // held hedge legs are not fetched (feed closes)
 	sim := false
 	for _, t := range s.Store.AllTrades() {
-		if isTerminalTradeStatus(t.Status) {
+		if !gsPlanLive(t.Status) {
 			continue
 		}
 		own[t.CEToken], own[t.PEToken] = t.CEToken > 0, t.PEToken > 0
@@ -922,6 +922,14 @@ func (s *Service) gsPlanNow() {
 	gsPlan.Lock()
 	gsPlan.m, gsPlan.own, gsPlan.legs, gsPlan.sim = m, own, legs, sim
 	gsPlan.Unlock()
+}
+
+// gsPlanLive: a trade the minute-end monitor runs for. Straddle Build
+// session records (SBUILD / SBUILD_CLOSED) are not: 19 Oct, 7 of them (one
+// SBUILD left open since 8 Oct) put old expiries' strikes at the head of
+// every boundary's asks -- candles that never came, the rest waited 1.3 s.
+func gsPlanLive(status string) bool {
+	return !isTerminalTradeStatus(status) && status != sbStatusLive && status != sbStatusClosed
 }
 
 // gsPlanOwn: every open trade's own straddle CE / PE tokens.

@@ -189,3 +189,11 @@ func TestGSReplaceCoreDoesNotWaitForLegs(t *testing.T) {
 		t.Fatalf("core from GreekSoft, the leg on its feed close: n=%d %+v", n, cc.Chain)
 	}
 }
+
+func TestGSPlanLiveSkipsBuildRecords(t *testing.T) {
+	for st, want := range map[string]bool{"ACTIVE": true, "SBUILD": false, "SBUILD_CLOSED": false, "CLOSED_SL": false} {
+		if got := gsPlanLive(st); got != want {
+			t.Fatalf("gsPlanLive(%q) = %v, want %v", st, got, want)
+		}
+	}
+}
