@@ -79,10 +79,13 @@ func gsGateFor(b int64) {
 }
 
 // gsGateSet names the lead and the ask order (rank, 0 first) of boundary b.
+// The capture's lead (the front ATM CE) replaces a leg that asked first
+// and named itself (19 Oct 14:39: a next-week trade's leg at +0 s held the
+// lead, the ATM CE waited for its candle and fell back to the feed).
 func gsGateSet(b, lead int64, rank map[int64]int) {
 	gsGate.mu.Lock()
 	gsGateFor(b)
-	if gsGate.lead == 0 {
+	if lead > 0 {
 		gsGate.lead = lead
 	}
 	gsGate.rank = rank

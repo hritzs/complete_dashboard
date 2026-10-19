@@ -91,3 +91,18 @@ func TestGSCaptureBandOnlyWithLUTTrade(t *testing.T) {
 		t.Fatalf("LUT trade open: band %d, want %d", b, gsSimBand)
 	}
 }
+
+func TestGSGateSetLeadOverridesEarlyAsker(t *testing.T) {
+	b := int64(1792400940)
+	gsGate.mu.Lock()
+	gsGateFor(b)
+	gsGate.lead = 51354 // a next-week leg asked first and named itself
+	gsGate.mu.Unlock()
+	gsGateSet(b, 47155, map[int64]int{47155: 0})
+	gsGate.mu.Lock()
+	lead := gsGate.lead
+	gsGate.mu.Unlock()
+	if lead != 47155 {
+		t.Fatalf("lead %d, want the front ATM CE 47155", lead)
+	}
+}
