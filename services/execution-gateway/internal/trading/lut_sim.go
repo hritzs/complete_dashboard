@@ -125,6 +125,11 @@ type LUTLive struct {
 	// SellLevels: for each opening minute 09:16 .. 09:20, the ATM straddle
 	// at / above which the LUT sells (lut_manual.go). Sent until 09:30.
 	SellLevels []LUTSellLevel `json:"sell_levels,omitempty"`
+	// The same rows for NEXT week's expiry (display only, lut_next_levels.go):
+	// that expiry's time to expiry and business days, today's daily inputs.
+	SellLevelsNext []LUTSellLevel `json:"sell_levels_next,omitempty"`
+	NextExpiry     string         `json:"next_expiry,omitempty"`
+	NextBasis      string         `json:"next_basis,omitempty"`
 	// Tables: the table set driving today; Alt: the other set, shown beside.
 	Tables     string      `json:"tables"`
 	TablesName string      `json:"tables_name"`
@@ -683,6 +688,9 @@ func (s *Service) lutComputeLocked(now time.Time, day string, hhmm int, chain *O
 			live.SellLevels = e.levelsDone
 		}
 		levelsExp = expStr
+		if !whatIf && hhmm < 930 {
+			live.SellLevelsNext, live.NextExpiry, live.NextBasis = e.lutNextWeekLevels(now, day, hhmm, shown, expStr)
+		}
 	}
 	// The other table set on the same shown prices (display only).
 	live.Alt = e.altLiveLocked(now, hhmm, shown, withGrid, levelsExp, levelsBasis, whatIf, dispMan.DTE != nil)

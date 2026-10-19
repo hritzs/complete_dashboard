@@ -131,7 +131,7 @@ export default function LutBuildTab() {
     const a = d.alt;
     return {
       ...d, eval: a.eval, grid: a.grid, grid_0920: a.grid_0920, sell_range: a.sell_range, sell_range_0920: a.sell_range_0920,
-      sell_levels: a.sell_levels, entry: a.entry, table_yes: a.table_yes, tables_error: a.tables_error,
+      sell_levels: a.sell_levels, sell_levels_next: undefined, entry: a.entry, table_yes: a.table_yes, tables_error: a.tables_error,
       tables: a.tables, tables_name: a.name, alt: { ...a, tables: d.tables, name: d.tables_name, eval: d.eval }
     };
   };
@@ -357,6 +357,30 @@ export default function LutBuildTab() {
                 </For>
               </tbody>
             </table>
+            <Show when={live()?.sell_levels_next?.length}>
+              <div style={{ 'margin-top': '12px' }}>
+                <strong>Next week ({live().next_expiry}) — where the same tables would sell</strong>
+                <div style={muted}>{live().next_basis}. Display only: next week's time to expiry, today's daily inputs.</div>
+              </div>
+              <table class="trade-position-table" style={{ 'margin-top': '6px' }}>
+                <thead><tr><th>Minute</th><th>Sell when ATM straddle is</th><th>Build IV at that level</th><th>TP bps there</th><th>Future · ATM</th><th>Straddle</th><th>Status</th></tr></thead>
+                <tbody>
+                  <For each={live().sell_levels_next}>
+                    {(l) => (
+                      <tr style={{ background: l.in_zone ? 'rgba(46,125,50,0.25)' : '' }}>
+                        <td><strong>{l.time}</strong></td>
+                        <td>{band(l)}</td>
+                        <td>{(l.ranges || []).length ? fmt(l.ranges[0].build_iv_from, 4) : '—'}</td>
+                        <td>{(l.ranges || []).length ? fmt(l.ranges[0].tp_bps_from, 2) : '—'}</td>
+                        <td>{fmt(l.future)} · {fmt(l.strike, 0)}</td>
+                        <td>₹{fmt(l.straddle)}</td>
+                        <td class={status({ ...l, done: false })[1]}>{status({ ...l, done: false })[0]}</td>
+                      </tr>
+                    )}
+                  </For>
+                </tbody>
+              </table>
+            </Show>
           </details>
         );
       })()}
