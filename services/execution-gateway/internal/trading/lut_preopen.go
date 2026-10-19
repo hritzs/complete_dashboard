@@ -27,16 +27,17 @@ type lutPreopen struct {
 // today's 09:16 from the last trading day recorded before today. expiry is
 // today's expiry (blank = whatever was current then). Caller holds e.mu.
 func (e *lutEngine) lutPreopenLocked(now time.Time, expiry string) (*OptionChainSnapshot, string) {
-	prevFut := 0.0
+	prevFut, prevStr := 0.0, 0.0
 	if e.inputsOK {
-		prevFut = e.inputs.PrevFuture
+		prevFut, prevStr = e.inputs.PrevFuture, e.inputs.PrevStraddle
 	}
-	key := fmt.Sprintf("%s|%s|%.2f", now.Format("2006-01-02"), expiry, prevFut)
+	key := fmt.Sprintf("%s|%s|%.2f|%.2f", now.Format("2006-01-02"), expiry, prevFut, prevStr)
 	if e.preopen.key == key && time.Since(e.preopenAt) < 5*time.Minute {
 		return e.preopen.chain, e.preopen.note
 	}
 	e.preopenAt = time.Now()
 	e.preopen = lutBuildPreopen(now, expiry, prevFut)
+	lutPreopenUseInputs(&e.preopen, prevFut, prevStr)
 	e.preopen.key = key
 	return e.preopen.chain, e.preopen.note
 }
@@ -123,4 +124,30 @@ func lutRepriceForToday(m lutChainMinute, day string, now time.Time) (*OptionCha
 	note := fmt.Sprintf("PRE-OPEN: previous close %s %s as recorded (not re-priced): future %.2f, ATM %.0f straddle %.2f. The sell levels below are where today's tables sell; live prices from 09:15",
 		day, m.Time, S, c.ATM, atmY)
 	return c, note, true
+}
+
+// lutPreopenUseInputs puts the daily inputs' previous close on the pre-open
+// chain (owner, 19 Oct: "Prev straddle" of the input sheet, 181.20, not the
+// recorded 15:29 minute's 184.45): future = the inputs' previous future, the
+// ATM CE / PE scaled together to the inputs' previous straddle.
+func lutPreopenUseInputs(p *lutPreopen, prevFut, prevStr float64) {
+	c := p.chain
+	if c == nil || prevFut <= 0 || prevStr <= 0 {
+		return
+	}
+	c.SyntheticFuture, c.SyntheticSpot = prevFut, prevFut
+	c.ATM = math.Round(prevFut/lutStrikeStep) * lutStrikeStep
+	for i := range c.Chain {
+		r := &c.Chain[i]
+		r.IsATM = r.Strike == c.ATM
+		if !r.IsATM || r.CELtp <= 0 || r.PELtp <= 0 {
+			continue
+		}
+		rec := r.CELtp + r.PELtp
+		k := prevStr / rec
+		r.CELtp = math.Round(r.CELtp*k*100) / 100
+		r.PELtp = math.Round(prevStr*100)/100 - r.CELtp
+		p.note = fmt.Sprintf("PRE-OPEN: previous close from the daily inputs: future %.2f, ATM %.0f straddle %.2f (recorded close minute had %.2f). The sell levels below are where today's tables sell; live prices from 09:15",
+			prevFut, c.ATM, prevStr, rec)
+	}
 }
