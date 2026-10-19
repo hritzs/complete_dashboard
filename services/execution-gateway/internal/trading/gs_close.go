@@ -41,7 +41,7 @@ const (
 	// get the close sooner.
 	gsClosePoll     = 40 * time.Millisecond
 	gsCloseInflight = 1
-	gsCloseDeadline = 1 * time.Second // after the boundary: then the feed close is used (user: wait 1 s at most; 95% of minutes are in by then)
+	gsCloseDeadline = 2 * time.Second // after the boundary: then the feed close is used
 	// gsCaptureStart: when the boundary capture starts asking (GreekSoft
 	// never had the candle earlier than ~+0.25-0.3 s; earlier asks only add
 	// load).
@@ -662,7 +662,7 @@ var gsLateLogged sync.Map // token -> logged once
 // gsOwnGrace: how long the minute record waits, after the ATM pair is in,
 // for the open trades' position-strike closes (prefetched at rank 1, so
 // normally ~0.1-0.3 s behind the ATM pair); after it, what is in is used.
-const gsOwnGrace = gsCloseDeadline
+const gsOwnGrace = 1500 * time.Millisecond
 
 // gsRowFor: the chain has a row carrying this token.
 func gsRowFor(cc *OptionChainSnapshot, tok int64) bool {
