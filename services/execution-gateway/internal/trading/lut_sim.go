@@ -521,16 +521,36 @@ func (s *Service) lutComputeLocked(now time.Time, day string, hhmm int, chain *O
 		b := now.Truncate(time.Minute)
 		if cc, ready := lutCloseChain(chain, b, now); ready {
 			toks := atmTokens(cc)
+			// The open trades' own (position) strikes too: the simulation
+			// that drives a LUT trade decides on this very row at the
+			// boundary, so its position strike must be on GreekSoft closes
+			// (and greeks from them) now -- not on the feed until the :03
+			// overlay (16 Oct 10:19: decided on the feed's 22950 price).
+			own := map[int64]bool{}
+			for t := range gsPlanOwn() {
+				if gsRowFor(cc, t) {
+					own[t] = true
+				}
+			}
 			if gsClosesOn() && e.gsKick != b.Unix() {
 				e.gsKick = b.Unix()
 				for t := range toks {
 					go s.gsCloseAt(t, b)
 				}
+				for t := range own {
+					go s.gsCloseAt(t, b)
+				}
 			}
+			ownReady := len(own) == 0 || gsHaveAll(own, b) || now.Sub(b) >= gsOwnGrace
 			switch {
 			case !gsClosesOn():
 				closed = cc // GreekSoft closes switched off: feed closes, no wait
-			case gsHaveAll(toks, b):
+			case gsHaveAll(toks, b) && ownReady:
+				for t := range own {
+					if gsHaveAll(map[int64]bool{t: true}, b) {
+						toks[t] = true // in already: applied with the ATM pair, no wait
+					}
+				}
 				n, fp := s.gsApplyCloses(cc, b, toks)
 				if n > 0 {
 					closeSrc, feedPx = "GreekSoft", fp

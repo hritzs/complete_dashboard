@@ -80,6 +80,18 @@ func gsOverlayApply(day, set string, mins map[string]lutChainMinute) {
 // strike from the OTM leg as the backtest does (simStrikeIV). Mixing close
 // prices with feed greeks flipped the 16 Oct 10:19 minute-end hedge.
 func gsOverlayApplyWith(ov gsOverlay, set string, mins map[string]lutChainMinute) {
+	// Every strike's greeks are recomputed by the simulation from the price
+	// it actually uses -- a GreekSoft close or, where GreekSoft has no candle
+	// for a leg (it skips some minutes even when the leg traded: 16 Oct 22950
+	// CE, 18 minutes), the feed close -- never the feed's stored greeks,
+	// which lag the price (16 Oct 10:19).
+	for t, m := range mins {
+		for i := range m.Rows {
+			r := &m.Rows[i]
+			r.CEDelta, r.CEGamma, r.PEDelta, r.PEGamma, r.CEIV, r.PEIV = 0, 0, 0, 0, 0, 0
+		}
+		mins[t] = m
+	}
 	if len(ov) == 0 {
 		return
 	}
@@ -97,8 +109,6 @@ func gsOverlayApplyWith(ov gsOverlay, set string, mins map[string]lutChainMinute
 				if px[1] > 0 {
 					m.Rows[i].PE = px[1]
 				}
-				r := &m.Rows[i]
-				r.CEDelta, r.CEGamma, r.PEDelta, r.PEGamma, r.CEIV, r.PEIV = 0, 0, 0, 0, 0, 0
 			}
 		}
 		if other {

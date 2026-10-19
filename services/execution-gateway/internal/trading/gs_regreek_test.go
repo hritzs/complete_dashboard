@@ -31,8 +31,8 @@ func TestGSOverlayRegreeksAtCloseOTMIV(t *testing.T) {
 	if r.CE != 223.15 || r.PE != 51.70 || r.CEDelta != 0 || r.PEDelta != 0 || r.CEIV != 0 {
 		t.Fatalf("overlaid strike keeps the feed's greeks: %+v", r)
 	}
-	if o := mins["10:19"].Rows[1]; o.CEDelta != 0.2 {
-		t.Fatalf("strike without a close lost its greeks: %+v", o)
+	if o := mins["10:19"].Rows[1]; o.CE != 40 || o.CEDelta != 0 {
+		t.Fatalf("strike without a close keeps its feed price but drops the feed greeks: %+v", o)
 	}
 	m := simMinute{Future: 23121.55, DTE: 3 + 321.0/385, chain: map[float64]lutChainRow{22950: r}}
 	_, dc, gc, _ := simPrice(m, 22950, "CE")
@@ -60,5 +60,20 @@ func TestGSRegreekLiveOTMIV(t *testing.T) {
 	}
 	if o := cc.Chain[1]; o.CEDelta != 0.2 || o.PEDelta != -0.8 {
 		t.Fatalf("untouched strike changed: %+v", o)
+	}
+}
+
+// A strike GreekSoft has no candle for keeps its feed price, but its greeks
+// are still recomputed from that price -- never the feed's stored ones.
+func TestGSOverlayDropsGreeksEverywhere(t *testing.T) {
+	mins := map[string]lutChainMinute{"12:43": {Time: "12:43", Future: 23050, ATM: 23050, Rows: []lutChainRow{
+		{K: 22950, CE: 213.15, PE: 44.2, CEDelta: 0.7, PEDelta: -0.3, CEGamma: 0.001, PEGamma: 0.001, CEIV: 12.4, PEIV: 12.4}}}}
+	gsOverlayApplyWith(gsOverlay{"12:43": {"23000": {171, 59}}}, "", mins)
+	r := mins["12:43"].Rows[0]
+	if r.CE != 213.15 || r.PE != 44.2 {
+		t.Fatalf("no GreekSoft close: the feed price stays, got %+v", r)
+	}
+	if r.CEDelta != 0 || r.PEDelta != 0 || r.CEIV != 0 {
+		t.Fatalf("the feed's stored greeks must be dropped: %+v", r)
 	}
 }

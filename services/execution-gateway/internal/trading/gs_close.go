@@ -597,6 +597,24 @@ func gsHaveAll(tokens map[int64]bool, b time.Time) bool {
 	return true
 }
 
+// gsOwnGrace: how long the minute record waits, after the ATM pair is in,
+// for the open trades' position-strike closes (prefetched at rank 1, so
+// normally ~0.1-0.3 s behind the ATM pair); after it, what is in is used.
+const gsOwnGrace = 1500 * time.Millisecond
+
+// gsRowFor: the chain has a row carrying this token.
+func gsRowFor(cc *OptionChainSnapshot, tok int64) bool {
+	if cc == nil || tok <= 0 {
+		return false
+	}
+	for _, r := range cc.Chain {
+		if r.CEToken == tok || r.PEToken == tok {
+			return true
+		}
+	}
+	return false
+}
+
 // atmTokens: the ATM CE / PE tokens of a chain.
 // atmBandTokens: CE + PE tokens of the strikes within band steps of the ATM
 // (from the synthetic future), plus the strike the ATM may flip to.
