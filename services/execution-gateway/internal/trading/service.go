@@ -3372,6 +3372,9 @@ type hedgeLegState struct {
 	filledBeforeCurrent int64 // baseline from a prior, now-dead order on this leg
 	currentOrderFilled  int64 // latest known cumulative fill of the current order
 	done                bool
+	// rejected: the leg's last order ended REJECTED by the broker (RMS etc.),
+	// a confirmed outcome -- unlike a missing / unknown confirmation.
+	rejected bool
 }
 
 func (l *hedgeLegState) totalFilled() int64 { return l.filledBeforeCurrent + l.currentOrderFilled }
@@ -3442,7 +3445,7 @@ func (s *Service) executeHedgeTranche(
 	ceSide, peSide string,
 	ceToken, peToken int64,
 	trancheQty int64,
-) (filledCE, filledPE int64, complete bool) {
+) (filledCE, filledPE int64, complete, bothRejected bool) {
 	const maxAttempts = 3 // buffer schedule: 1 (initial), 2 (1st modify), 4 (2nd modify)
 	// How long one attempt waits for both legs before re-pricing whichever
 	// is still short. A marketable LIMIT at bid/ask +-1 fills within
@@ -3545,12 +3548,15 @@ func (s *Service) executeHedgeTranche(
 		for i, l := range working {
 			u, err := waits[i].u, waits[i].err
 			if err != nil {
+				l.rejected = false // outcome unknown: never treated as a refusal
 				log.Printf("[HEDGE] trade=%s tranche=%d leg=%s order=%s: no terminal confirmation within %s: %v -- will re-price the same order next round", tradeUID, trancheIdx, l.leg, l.brokerOrderID, perAttemptTimeout, err)
 				continue
 			}
 
 			l.currentOrderFilled = u.FilledQty // cumulative for THIS order -- set, never added
-			switch strings.ToUpper(strings.TrimSpace(u.Status)) {
+			st := strings.ToUpper(strings.TrimSpace(u.Status))
+			l.rejected = st == "REJECTED"
+			switch st {
 			case "FILLED":
 				l.done = true
 			case "CANCELLED", "CANCELED", "REJECTED":
@@ -3589,7 +3595,17 @@ func (s *Service) executeHedgeTranche(
 		}
 	}
 
-	return legs[0].totalFilled(), legs[1].totalFilled(), allDone
+	// Both legs refused by the broker (confirmed REJECTED, nothing filled, no
+	// order left working): the only case the cut-shorts fallback may act on.
+	// A timeout / "not found" after a restart is NOT a refusal (19 Oct 12:15:
+	// unconfirmed orders had filled and the fallback hedged a second time).
+	both := true
+	for _, l := range legs {
+		if !l.rejected || l.totalFilled() != 0 || l.brokerOrderID != "" {
+			both = false
+		}
+	}
+	return legs[0].totalFilled(), legs[1].totalFilled(), allDone, both
 }
 
 // ManualHedgeLots is ManualHedge for an explicit number of synthetic lots.
@@ -3708,6 +3724,7 @@ func (s *Service) ManualHedgeLots(ctx context.Context, tradeUID string, lots int
 	remaining := totalQty
 	var totalVerifiedCE, totalVerifiedPE int64
 	var lastCE, lastPE int64 // the last tranche's fills (both 0 = nothing traded)
+	lastRefused := false     // ...and both its legs confirmed REJECTED by the broker
 	var bookErr error
 	trancheIdx := 0
 	incomplete := false
@@ -3723,13 +3740,13 @@ func (s *Service) ManualHedgeLots(ctx context.Context, tradeUID string, lots int
 			break
 		}
 
-		filledCE, filledPE, complete := s.executeHedgeTranche(
+		filledCE, filledPE, complete, refused := s.executeHedgeTranche(
 			ctx, executor, modifier, canceller, canCancel,
 			tr, tradeUID, trancheIdx, ceSide, peSide, hedgeCEToken, hedgePEToken, trancheQty,
 		)
 		totalVerifiedCE += filledCE
 		totalVerifiedPE += filledPE
-		lastCE, lastPE = filledCE, filledPE
+		lastCE, lastPE, lastRefused = filledCE, filledPE, refused
 		ev.CEFilled, ev.PEFilled, ev.Tranches = totalVerifiedCE, totalVerifiedPE, trancheIdx
 
 		// Book this tranche's real, broker-confirmed fill immediately --
@@ -3792,10 +3809,10 @@ func (s *Service) ManualHedgeLots(ctx context.Context, tradeUID string, lots int
 	switch {
 	case bookErr != nil:
 		return fmt.Errorf("hedge orders placed but booking failed (check broker position): %w", bookErr)
-	case incomplete && lastCE == 0 && lastPE == 0 && remaining > 0:
-		// Neither leg traded (e.g. the broker's RMS refused it): take the
-		// delta off by buying back shorts instead (hedge_cut_fallback.go).
-		log.Printf("[HEDGE-CUT] trade=%s tranche %d filled nothing on both legs -- cutting short %s legs for the %d delta still needed",
+	case incomplete && lastRefused && lastCE == 0 && lastPE == 0 && remaining > 0:
+		// Both legs REFUSED by the broker (e.g. its RMS MTM limit), nothing
+		// filled: take the delta off by buying back shorts (hedge_cut_fallback.go).
+		log.Printf("[HEDGE-CUT] trade=%s tranche %d refused by the broker on both legs -- cutting short %s legs for the %d delta still needed",
 			tradeUID, trancheIdx, map[string]string{"BUY": "CE", "SELL": "PE"}[ceSide], remaining)
 		got, sce, spe, cutErr := s.hedgeCutShorts(ctx, executor, tr, tradeUID, ceSide, remaining, chain)
 		if sce != 0 || spe != 0 {
