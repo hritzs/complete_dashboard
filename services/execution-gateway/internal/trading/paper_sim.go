@@ -1219,6 +1219,7 @@ func savePaperStarts(day string, cs []PaperSimConfig) error {
 type PaperActual struct {
 	TradeUID    string           `json:"trade_uid"`
 	Status      string           `json:"status"`
+	Expiry      string           `json:"expiry,omitempty"` // the expiry it was sold on (shown in that view only)
 	EntryTime   string           `json:"entry_time"`
 	Strike      float64          `json:"strike"`
 	CEEntry     float64          `json:"ce_entry"`
@@ -1230,6 +1231,21 @@ type PaperActual struct {
 	SimID       string           `json:"sim_id"`
 	ExitTime    string           `json:"exit_time,omitempty"`   // HH:MM of the last exit fill (closed trades)
 	ExitReason  string           `json:"exit_reason,omitempty"` // from the closed status
+}
+
+// paperSameExpiry: a trade sold on tradeExp belongs to the view showing
+// viewExp. Compared as dates (formats differ); a trade without an expiry
+// stays in the current view, as before.
+func paperSameExpiry(tradeExp, viewExp string, currentView bool) bool {
+	if strings.TrimSpace(tradeExp) == "" || strings.TrimSpace(viewExp) == "" {
+		return currentView
+	}
+	a, err1 := lutParseExpiry(tradeExp)
+	b, err2 := lutParseExpiry(viewExp)
+	if err1 != nil || err2 != nil {
+		return strings.EqualFold(strings.TrimSpace(tradeExp), strings.TrimSpace(viewExp))
+	}
+	return a.Equal(b)
 }
 
 // paperActualReason maps a closed trade status to the sim's exit reason.
@@ -1268,7 +1284,7 @@ func (s *Service) paperActuals(ctx context.Context, day string) []PaperActual {
 	}
 	var out []PaperActual
 	for _, t := range sums {
-		a := PaperActual{TradeUID: t.TradeUID, Status: t.Status, Strike: t.Strike, RealizedPnL: t.RealizedPnL}
+		a := PaperActual{TradeUID: t.TradeUID, Status: t.Status, Expiry: t.Expiry, Strike: t.Strike, RealizedPnL: t.RealizedPnL}
 		var ceV, peV float64
 		var ceQ, peQ int64
 		for _, e := range t.Executions {
@@ -1447,11 +1463,22 @@ func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 		c.Hedge, c.HedgeMode = hedge, hedgeMode
 		cfgs = append(cfgs, c)
 	}
+	// Real trades, each in the view of the expiry it was sold on (a next-
+	// week sell must not show -- or be simulated -- on the current expiry).
 	var actual []PaperActual
-	if view == "" { // real trades are on the current expiry
+	{
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		actual = h.Service.paperActuals(ctx, day)
+		all := h.Service.paperActuals(ctx, day)
 		cancel()
+		viewExp := ""
+		for i := len(mins) - 1; i >= 0 && viewExp == ""; i-- {
+			viewExp = mins[i].Expiry
+		}
+		for _, a := range all {
+			if paperSameExpiry(a.Expiry, viewExp, view == "") {
+				actual = append(actual, a)
+			}
+		}
 	}
 	for i := range actual {
 		id := "ACTUAL-" + actual[i].TradeUID

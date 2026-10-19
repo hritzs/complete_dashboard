@@ -51,3 +51,15 @@ func TestGSRankOrder(t *testing.T) {
 		t.Fatalf("band-only token after every held leg: %v", r)
 	}
 }
+
+func TestPaperSameExpiry(t *testing.T) {
+	if !paperSameExpiry("27-OCT-26", "27-OCT-26", false) || paperSameExpiry("27-OCT-26", "19-OCT-26", true) {
+		t.Fatalf("a next-week trade belongs to the next-week view only")
+	}
+	if !paperSameExpiry("2026-10-19", "19-OCT-26", true) {
+		t.Fatalf("formats differ, same date")
+	}
+	if !paperSameExpiry("", "19-OCT-26", true) || paperSameExpiry("", "27-OCT-26", false) {
+		t.Fatalf("no expiry: current view only")
+	}
+}
