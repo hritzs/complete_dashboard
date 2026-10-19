@@ -346,17 +346,15 @@ func (s *Service) gsTokens(band int) (toks map[int64]bool, atmCE, atmPE int64) {
 		}
 		cancel()
 	}
-	// The normal trades' held legs (not wings) and every trade's own strike:
-	// one price source per position, so its delta is consistent.
+	// Every trade's own strike. Held hedge legs are NOT fetched: the decision
+	// rests on the ATM pair (synthetic future) and the own strike; a leg's
+	// feed minute close moves its delta by thousandths (user, 19 Oct).
 	first := map[int64]bool{}
 	var lead int64
 	own := gsPlanOwn()
 	for t := range own {
 		toks[t] = true
 		first[t] = true
-	}
-	for t := range gsPlanLegs() {
-		toks[t] = true
 	}
 	// Open trades, per the minute-end plan (gsPlanNow, refreshed at :50):
 	// a sim-driven LUT trade needs only its expiry's ATM pair (the sim
@@ -904,7 +902,7 @@ func gsCaptureBand() int {
 func (s *Service) gsPlanNow() {
 	m := map[gsSymExp]int{}
 	own := map[int64]bool{}
-	legs := map[int64]int64{} // held legs of the NORMAL trades (LUT: own strike only)
+	legs := map[int64]int64{} // held hedge legs are not fetched (feed closes)
 	sim := false
 	for _, t := range s.Store.AllTrades() {
 		if isTerminalTradeStatus(t.Status) {
@@ -913,15 +911,6 @@ func (s *Service) gsPlanNow() {
 		own[t.CEToken], own[t.PEToken] = t.CEToken > 0, t.PEToken > 0
 		band := gsMinuteBand(t.TradeUID)
 		sim = sim || band == 0
-		if band > 0 {
-			if extra, err := s.extraOpenLegs(t.TradeUID, t); err == nil {
-				for _, l := range extra {
-					if q := abs64(l.Qty - l.WingQty); q > 0 {
-						legs[l.Token] += q
-					}
-				}
-			}
-		}
 		if strings.TrimSpace(t.Expiry) == "" {
 			continue
 		}

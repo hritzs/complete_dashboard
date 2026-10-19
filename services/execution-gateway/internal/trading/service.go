@@ -1279,17 +1279,9 @@ func (s *Service) minuteCloseChain(ctx context.Context, tradeUID string, trade S
 	for t := range atmTokens(closed) {
 		toks[t] = true
 	}
-	// ...its initial straddle strike, and -- a normal trade only -- every
-	// leg it holds (not wings). A sim-driven LUT trade needs no more: its
-	// hedges / exits are the sim's decisions.
+	// ...and its initial straddle strike. Held hedge legs are not fetched:
+	// they stay on the feed's minute close (their delta barely moves).
 	toks[trade.CEToken], toks[trade.PEToken] = trade.CEToken > 0, trade.PEToken > 0
-	if extra, xerr := s.extraOpenLegs(tradeUID, trade); xerr == nil && gsMinuteBand(tradeUID) > 0 {
-		for _, l := range extra {
-			if l.Qty-l.WingQty != 0 && (strings.TrimSpace(l.Expiry) == "" || strings.EqualFold(strings.TrimSpace(l.Expiry), strings.TrimSpace(trade.Expiry))) {
-				toks[l.Token] = true
-			}
-		}
-	}
 	// The decision rests on the ATM pair (synthetic future) and the own
 	// strike: those are waited for; the other held legs only gsLegGrace more.
 	core := atmTokens(closed)
@@ -1406,18 +1398,9 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 				return nil
 			}
 			// Minute-end tick: a leg in another expiry is priced at ITS
-			// minute close too (GreekSoft's when on, else the feed's).
+			// feed minute close (hedge legs are not fetched from GreekSoft).
 			if !minuteB.IsZero() {
 				if cc, _ := lutCloseChain(c, minuteB, time.Now()); cc != nil {
-					toks := map[int64]bool{}
-					for _, l := range extraLegs {
-						if strings.EqualFold(strings.TrimSpace(l.Expiry), key) {
-							toks[l.Token] = true
-						}
-					}
-					if gsClosesOn() {
-						s.gsApplyCloses(cc, minuteB, toks)
-					}
 					c = cc
 				}
 			}
