@@ -232,12 +232,19 @@ func (s *Service) gsCaptureLoop() {
 			continue
 		}
 		toks, atmCE, atmPE := s.gsTokens(gsCaptureBand())
-		gsGateSet(b.Unix(), atmCE, gsRankTokens(atmCE, atmPE, toks))
-		if atmCE > 0 {
-			go s.gsCloseAt(atmCE, b) // the lead first
+		lead, first := gsFirstGet()
+		if lead == 0 { // no trade open: the front ATM pair (the LUT record) first
+			lead, first = atmCE, map[int64]bool{atmCE: atmCE > 0, atmPE: atmPE > 0}
+		}
+		for t, ok := range first {
+			toks[t] = toks[t] || ok
+		}
+		gsGateSet(b.Unix(), lead, gsRankFirst(first, atmCE, atmPE, toks))
+		if lead > 0 {
+			go s.gsCloseAt(lead, b) // the lead first
 		}
 		for tok, ok := range toks {
-			if ok && tok != atmCE {
+			if ok && tok != lead {
 				go s.gsCloseAt(tok, b)
 			}
 		}
@@ -267,6 +274,45 @@ func gsAfterBoundary() {
 var gsDist struct {
 	sync.Mutex
 	m map[int64]int
+}
+
+// gsFirst: what the live trades need at the minute end, asked before
+// anything else -- each open trade's own CE / PE and its expiry's ATM pair;
+// lead: the first trade expiry's ATM CE. Empty with no trade open. From the
+// last gsTokens call.
+var gsFirst struct {
+	sync.Mutex
+	lead int64
+	m    map[int64]bool
+}
+
+func gsFirstGet() (int64, map[int64]bool) {
+	gsFirst.Lock()
+	defer gsFirst.Unlock()
+	out := make(map[int64]bool, len(gsFirst.m))
+	for t, ok := range gsFirst.m {
+		if ok && t > 0 {
+			out[t] = true
+		}
+	}
+	return gsFirst.lead, out
+}
+
+// chainATMPair: the ATM CE / PE tokens of c (ATM from its synthetic).
+func chainATMPair(c *OptionChainSnapshot) (ce, pe int64) {
+	if c == nil {
+		return 0, 0
+	}
+	atm := c.ATM
+	if S := lutUnderlying(c); S > 0 {
+		atm = math.Round(S/lutStrikeStep) * lutStrikeStep
+	}
+	for _, r := range c.Chain {
+		if math.Abs(r.Strike-atm) < 1e-6 {
+			return r.CEToken, r.PEToken
+		}
+	}
+	return 0, 0
 }
 
 func (s *Service) gsTokens(band int) (toks map[int64]bool, atmCE, atmPE int64) {
@@ -302,8 +348,12 @@ func (s *Service) gsTokens(band int) (toks map[int64]bool, atmCE, atmPE int64) {
 	}
 	// The normal trades' held legs (not wings) and every trade's own strike:
 	// one price source per position, so its delta is consistent.
-	for t := range gsPlanOwn() {
+	first := map[int64]bool{}
+	var lead int64
+	own := gsPlanOwn()
+	for t := range own {
 		toks[t] = true
+		first[t] = true
 	}
 	for t := range gsPlanLegs() {
 		toks[t] = true
@@ -314,19 +364,54 @@ func (s *Service) gsTokens(band int) (toks map[int64]bool, atmCE, atmPE int64) {
 	// strikes, CE + PE (its hedges open at the ATM). Fewer tokens = the
 	// candles in sooner: GreekSoft answers ~2 requests at a time.
 	if s.Snapshot != nil {
-		for se, b := range gsPlanGet() {
-			if se.exp == "" || (strings.EqualFold(se.exp, frontExpiry) && b <= band) {
-				continue // the front expiry's band is in already
+		plan := gsPlanGet()
+		exps := make([]gsSymExp, 0, len(plan))
+		for se := range plan {
+			exps = append(exps, se)
+		}
+		sort.Slice(exps, func(i, j int) bool { return exps[i].sym+exps[i].exp < exps[j].sym+exps[j].exp })
+		for _, se := range exps {
+			b := plan[se]
+			if se.exp == "" {
+				continue
+			}
+			if strings.EqualFold(se.exp, frontExpiry) && strings.EqualFold(se.sym, lutSymbol) {
+				first[atmCE], first[atmPE] = atmCE > 0, atmPE > 0 // a trade on the front expiry
+				if lead == 0 {
+					lead = atmCE
+				}
+				if b <= band {
+					continue // the front expiry's band is in already
+				}
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			if c, err := s.Snapshot.GetOptionChain(ctx, se.sym, se.exp); err == nil && c != nil {
 				for t, ok := range atmBandTokens(c, max(b, band)) {
 					toks[t] = toks[t] || ok
 				}
+				if ce, pe := chainATMPair(c); ce > 0 && pe > 0 {
+					first[ce], first[pe] = true, true
+					if lead == 0 {
+						lead = ce
+					}
+				}
 			}
 			cancel()
 		}
 	}
+	if lead == 0 { // a trade whose chain did not answer: its own CE leads
+		for t := range own {
+			if lead == 0 || t < lead {
+				lead = t
+			}
+		}
+	}
+	if len(own) == 0 {
+		lead, first = 0, nil
+	}
+	gsFirst.Lock()
+	gsFirst.lead, gsFirst.m = lead, first
+	gsFirst.Unlock()
 	gsDist.Lock()
 	gsDist.m = dist
 	gsDist.Unlock()
@@ -855,14 +940,38 @@ func gsRank(atmCE, atmPE int64, toks, own map[int64]bool, legs map[int64]int64) 
 // moved within the minute is in right behind), then the normal trades' held
 // legs largest first, then anything else.
 func gsRankWith(atmCE, atmPE int64, toks, own map[int64]bool, legs map[int64]int64, dist map[int64]int) map[int64]int {
+	return gsRankFirstWith(map[int64]bool{atmCE: atmCE > 0, atmPE: atmPE > 0}, atmCE, atmPE, toks, own, legs, dist)
+}
+
+// gsRankFirst: the boundary's ask order with first (the live trades' own
+// strikes and their expiry's ATM pair) at rank 0, the front ATM pair next.
+func gsRankFirst(first map[int64]bool, atmCE, atmPE int64, toks map[int64]bool) map[int64]int {
+	gsPlan.Lock()
+	own, legs := gsPlan.own, gsPlan.legs
+	gsPlan.Unlock()
+	gsDist.Lock()
+	dist := gsDist.m
+	gsDist.Unlock()
+	return gsRankFirstWith(first, atmCE, atmPE, toks, own, legs, dist)
+}
+
+func gsRankFirstWith(first map[int64]bool, atmCE, atmPE int64, toks, own map[int64]bool, legs map[int64]int64, dist map[int64]int) map[int64]int {
 	rank := map[int64]int{}
-	if atmCE > 0 {
-		rank[atmCE] = 0
-	}
-	if atmPE > 0 {
-		rank[atmPE] = 0
+	for t, ok := range first {
+		if ok && t > 0 {
+			rank[t] = 0
+		}
 	}
 	next := 1
+	pairNext := false
+	for _, t := range []int64{atmCE, atmPE} {
+		if _, done := rank[t]; t > 0 && !done {
+			rank[t], pairNext = next, true
+		}
+	}
+	if pairNext {
+		next++
+	}
 	ownTok := []int64{}
 	for t, ok := range own {
 		if _, done := rank[t]; ok && toks[t] && !done {

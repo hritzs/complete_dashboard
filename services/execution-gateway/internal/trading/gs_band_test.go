@@ -144,3 +144,23 @@ func TestGSGatePairFirst(t *testing.T) {
 		t.Fatal("the other legs must follow the ATM pair")
 	}
 }
+
+// A live next-week trade: its own strike and its expiry's ATM pair are asked
+// first (rank 0, the gate's pair); the front (LUT) ATM pair after them.
+func TestGSRankLiveTradeFirst(t *testing.T) {
+	first := map[int64]bool{51349: true, 51350: true, 51357: true, 51358: true} // next-week ATM 22900 + own 23000
+	toks := map[int64]bool{47155: true, 47156: true, 51349: true, 51350: true, 51357: true, 51358: true, 51352: true}
+	own := map[int64]bool{51357: true, 51358: true}
+	r := gsRankFirstWith(first, 47155, 47156, toks, own, map[int64]int64{51352: 65}, map[int64]int{})
+	for tok := range first {
+		if r[tok] != 0 {
+			t.Fatalf("live trade token %d rank %d, want 0: %v", tok, r[tok], r)
+		}
+	}
+	if r[47155] != 1 || r[47156] != 1 {
+		t.Fatalf("front ATM pair rank %d/%d, want 1: %v", r[47155], r[47156], r)
+	}
+	if r[51352] <= 1 {
+		t.Fatalf("held leg rank %d should follow: %v", r[51352], r)
+	}
+}
