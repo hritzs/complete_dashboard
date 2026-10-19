@@ -1280,8 +1280,8 @@ func (s *Service) minuteCloseChain(ctx context.Context, tradeUID string, trade S
 		toks[t] = true
 	}
 	// ...its initial straddle strike, and -- a normal trade only -- every
-	// leg it holds (not wings). A sim-driven LUT trade needs no more: the
-	// sim decides, and its gamma is the initial strike's.
+	// leg it holds (not wings). A sim-driven LUT trade needs no more: its
+	// hedges / exits are the sim's decisions.
 	toks[trade.CEToken], toks[trade.PEToken] = trade.CEToken > 0, trade.PEToken > 0
 	if extra, xerr := s.extraOpenLegs(tradeUID, trade); xerr == nil && gsMinuteBand(tradeUID) > 0 {
 		for _, l := range extra {
@@ -1424,10 +1424,6 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 		for _, t := range trade.Config.RiskExcludedTokens {
 			excluded[t] = true
 		}
-		// A sim-driven LUT trade's gamma is its initial straddle strike's
-		// only (as the backtest / sim: hedges are delta-1 synthetics): its
-		// hedge legs add delta, never gamma.
-		ownGammaOnly, _ := simDriveOwns(tradeUID)
 		for _, leg := range extraLegs {
 			var row *OptionChainRow
 			if legChain := chainFor(leg.Expiry); legChain != nil {
@@ -1476,9 +1472,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 					// shown below, kept out of every total
 				} else {
 					netDelta += d
-					if !ownGammaOnly {
-						netGamma += g
-					}
+					netGamma += g
 					netTheta += th
 					netVega += v
 					totalPNL += pnl
