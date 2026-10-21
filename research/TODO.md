@@ -335,3 +335,21 @@ Decision: choose the candidate with best validation net / MDD only if both valid
 - `sizing_equation.py`, `sizing_equation_v2.py`, `sizing_vrp.py`, `sizing_v3.py`–`sizing_v6_borderline.py`: completed sizing studies.
 - `SIZING_RESEARCH_HANDOFF.md`: detailed study history, data definitions, caveats, and decisions.
 - `output/RESEARCH_SUMMARY.md`: concise results and current research state.
+
+## Current risk work: stop losses, regimes and DD (2026-10-21)
+
+The owner prioritizes downside control and proper drawdown measurement.
+`GS_STOP_REGIME_RISK_SPEC.md` records the stop-risk research contract.
+`output/gs_stop_risk/gs_stop_risk_baseline.xlsx` saves the1430-date/794-trade
+frozen latest-GS daily series, DD episodes, rolling20/60/252-observation DD,
+period-reset versus global DD, and a CW stop-budget/exit audit. Maximum
+closed-day DD168.424258, worst traded day-78.552473. No account percentage
+returns are assumed. Intraday DD, MAE and first-hit labels require reconstruction
+from actual positions/cash and synchronized quotes; daily results cannot supply
+them. No optimal stop, fitted regime model or reduced-risk performance is claimed.
+
+Next: verify intraday ledger/terminal cash parity, construct a causal execution
+baseline, generate SL-before-recovery labels with censor flags, compare fixed
+tighter stops/regime exits/calibrated risk reduction chronologically, then paper
+trade forward. Keep original LUT penalties and mandatory delta/hard-stop controls.
+Account currency loss/day and drawdown budgets remain unspecified.

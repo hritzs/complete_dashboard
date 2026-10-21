@@ -1,0 +1,15 @@
+{
+  "Status": "DAILY_BASELINE_ONLY",
+  "Dates": 1430,
+  "Traded_dates": 794,
+  "Net": 10109.377523490557,
+  "Max_closed_day_DD": 168.42425845197704,
+  "Worst_traded_day": -78.55247256115784,
+  "Empirical_worst_5pct_traded_day_mean_PnL": -46.77745520368025,
+  "Tail_observations": 40,
+  "Longest_losing_trade_streak": 5,
+  "Intraday_DD_available": false,
+  "Model_fitted": false,
+  "Stops_optimized": false,
+  "PnL_units": "Normalized additive units; no account capital or percentage DD assumed"
+}

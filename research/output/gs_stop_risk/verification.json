@@ -1,0 +1,15 @@
+{
+  "Status": "PASS",
+  "Dates": 1430,
+  "Traded_dates": 794,
+  "Workbook_sheets": 7,
+  "Max_closed_day_DD": 168.42425845197704,
+  "Checks": [
+    "input/output hashes",
+    "independent equity/DD reconstruction",
+    "period net reconciliation",
+    "drawdown episode maximum",
+    "Excel/CSV reconciliation",
+    "intraday DD unavailable rather than fabricated"
+  ]
+}
