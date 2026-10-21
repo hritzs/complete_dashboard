@@ -53,18 +53,25 @@ func specialSessionsFile() string {
 
 var specialSessions struct {
 	sync.Mutex
-	path  string
-	mod   time.Time
-	byDay map[string]SpecialSession
+	path    string
+	mod     time.Time
+	checked time.Time // last stat of the file (at most every specialSessionsRecheck)
+	byDay   map[string]SpecialSession
 }
+
+const specialSessionsRecheck = 2 * time.Second
 
 // loadSpecialSessions returns the listed sessions by date, re-read when the
 // file changes. A missing or unreadable file means none.
 func loadSpecialSessions() map[string]SpecialSession {
 	p := specialSessionsFile()
-	st, err := os.Stat(p)
 	specialSessions.Lock()
 	defer specialSessions.Unlock()
+	if specialSessions.path == p && time.Since(specialSessions.checked) < specialSessionsRecheck {
+		return specialSessions.byDay
+	}
+	specialSessions.checked = time.Now()
+	st, err := os.Stat(p)
 	if err != nil {
 		specialSessions.path, specialSessions.byDay = p, nil
 		return nil
@@ -129,6 +136,12 @@ func specialSessionOn(t time.Time) (s SpecialSession, open, close time.Time, ok 
 	return s, open, close, true
 }
 
+// specialSessionDate: d's date (IST) is a listed special session.
+func specialSessionDate(d time.Time) bool {
+	_, ok := loadSpecialSessions()[d.In(lutIST()).Format("2006-01-02")]
+	return ok
+}
+
 // saveSpecialSessions writes the list (sorted by date) atomically.
 func saveSpecialSessions(list []SpecialSession) error {
 	for _, s := range list {
@@ -145,7 +158,13 @@ func saveSpecialSessions(list []SpecialSession) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err
 	}
-	return sbWriteAtomic(p, b)
+	if err := sbWriteAtomic(p, b); err != nil {
+		return err
+	}
+	specialSessions.Lock()
+	specialSessions.checked = time.Time{} // re-read at once
+	specialSessions.Unlock()
+	return nil
 }
 
 // specialSessionList: every listed session, sorted by date.

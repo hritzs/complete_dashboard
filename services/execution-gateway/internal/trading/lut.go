@@ -588,8 +588,9 @@ func lutBusDays(start time.Time, days int) int {
 	n := 0
 	d := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, start.Location())
 	for i := 0; i < days; i++ {
-		if wd := d.AddDate(0, 0, i).Weekday(); wd != time.Saturday && wd != time.Sunday {
-			n++
+		day := d.AddDate(0, 0, i)
+		if wd := day.Weekday(); (wd != time.Saturday && wd != time.Sunday) || specialSessionDate(day) {
+			n++ // a listed special session (Muhurat) is a trading day
 		}
 	}
 	return n

@@ -3,6 +3,7 @@
   import StraddleBuildTab from './StraddleBuildTab.jsx';
   import PaperSimTab from './PaperSimTab.jsx';
   import MockTab from './MockTab.jsx';
+  import MuhuratTab from './MuhuratTab.jsx';
   import SBPortfolioRows, { sbStore } from './SBPortfolioRows.jsx';
   import ManualLegPanel, { closeManualLeg, addManualLeg } from './ManualLegPanel.jsx';
   import PortfolioMTMPanel from './PortfolioMTMPanel.jsx';
@@ -2055,6 +2056,12 @@ function App() {
             onClick={() => setActiveTab('mock')}
           >
             Mock
+          </button>
+          <button
+            class={`tab-btn ${activeTab() === 'muhurat' ? 'active' : ''}`}
+            onClick={() => setActiveTab('muhurat')}
+          >
+            Muhurat
           </button>
           <button
             class={`tab-btn ${activeTab() === 'logs' ? 'active' : ''}`}
@@ -4290,6 +4297,10 @@ function App() {
 
         <Show when={activeTab() === 'mock'}>
           <MockTab />
+        </Show>
+
+        <Show when={activeTab() === 'muhurat'}>
+          <MuhuratTab />
         </Show>
 
         <Show when={activeTab() === 'logs'}>

@@ -86,3 +86,60 @@ func TestSpecialSessionValidate(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestLutBusDaysCountsAListedSession(t *testing.T) {
+	sun := time.Date(2026, 11, 8, 9, 15, 0, 0, lutIST())
+	withSpecialSessions(t, nil)
+	if n := lutBusDays(sun, 2); n != 1 {
+		t.Fatalf("no session: Sun+Mon = 1 business day, got %d", n)
+	}
+	withSpecialSessions(t, []SpecialSession{muhurat2026})
+	if n := lutBusDays(sun, 2); n != 2 {
+		t.Fatalf("Muhurat Sunday listed: Sun+Mon = 2 trading days, got %d", n)
+	}
+}
+
+func withMuhuratState(t *testing.T, c LUTBuildConfig) {
+	t.Helper()
+	t.Setenv("LUT_DATA_DIR", t.TempDir())
+	withSpecialSessions(t, []SpecialSession{muhurat2026})
+	if err := saveMuhuratBuildConfig(c); err != nil {
+		t.Fatal(err)
+	}
+	muh.Lock()
+	muh.d = MuhuratDay{Day: "2026-11-08"}
+	muh.Unlock()
+}
+
+func muhuratYES() (LUTEvaluation, *OptionChainSnapshot) {
+	return LUTEvaluation{Time: "09:16", Stage: "09:16", Strike: 23100, Underlying: 23104, TPBps: 20, Allowed: true},
+		&OptionChainSnapshot{Expiry: "09-NOV-26"}
+}
+
+func TestMuhuratBuildNotArmedNeverFires(t *testing.T) {
+	withMuhuratState(t, LUTBuildConfig{BrokerName: "greeksoft", AccountID: "147", Lots: 2})
+	rec, ch := muhuratYES()
+	muh.Lock()
+	(&Service{}).muhuratFireLocked(time.Date(2026, 11, 8, 14, 21, 1, 0, lutIST()), "14:21", rec, ch, nil)
+	b := muh.d.Build
+	muh.Unlock()
+	if b != nil {
+		t.Fatalf("not armed: nothing may fire, got %+v", b)
+	}
+}
+
+func TestMuhuratBuildExitIsBeforeTheSessionClose(t *testing.T) {
+	withMuhuratState(t, LUTBuildConfig{Armed: true, BrokerName: "greeksoft", AccountID: "147", Lots: 2})
+	rec, ch := muhuratYES()
+	// A YES after the exit time (15:27, 3 min before the 15:30 close) is refused, recorded, and never sent.
+	muh.Lock()
+	(&Service{}).muhuratFireLocked(time.Date(2026, 11, 8, 15, 28, 1, 0, lutIST()), "15:28", rec, ch, nil)
+	b := muh.d.Build
+	muh.Unlock()
+	if b == nil || b.Status != "REFUSED" || b.ExitTime != "15:27:00" {
+		t.Fatalf("want a REFUSED build with exit 15:27:00, got %+v", b)
+	}
+	if d := loadMuhuratDay("2026-11-08"); d.Build == nil || d.Build.Status != "REFUSED" {
+		t.Fatalf("the refusal must be saved before anything else: %+v", d.Build)
+	}
+}

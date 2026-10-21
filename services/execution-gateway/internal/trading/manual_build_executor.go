@@ -11,7 +11,8 @@ const (
 	BuildModeManual    BuildMode = "MANUAL"
 	BuildModeConfig    BuildMode = "CONFIG"
 	BuildModeAutomated BuildMode = "AUTOMATED"
-	BuildModeLUT       BuildMode = "LUT" // fired by the LUT's first YES (lut_build.go)
+	BuildModeLUT       BuildMode = "LUT"     // fired by the LUT's first YES (lut_build.go)
+	BuildModeMuhurat   BuildMode = "MUHURAT" // fired by the Muhurat tab's first YES (muhurat.go)
 )
 
 type FinalBuildRequest struct {

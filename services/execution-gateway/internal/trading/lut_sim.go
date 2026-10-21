@@ -755,7 +755,8 @@ func (s *Service) lutComputeLocked(now time.Time, day string, hhmm int, chain *O
 		if rec.Allowed {
 			s.lutFireBuildLocked(day, rec, lutMakeEntry(rec, closed, rc.Row, cfg.Lots, e.lotSize))
 		}
-		s.lutFirePendingTestLocked(rec) // a test armed for "the next minute"
+		s.lutFirePendingTestLocked(rec)         // a test armed for "the next minute"
+		s.muhuratRecordLocked(now, closed, cfg) // a listed special session only (muhurat.go)
 		if rec.Allowed && e.entry == nil {
 			e.entry = lutMakeEntry(rec, closed, rc.Row, cfg.Lots, e.lotSize)
 			e.entry.Source = "LUT YES"
