@@ -828,6 +828,128 @@ do not establish end-to-end unbiased strategy performance. Original taxes
 13/5/2/2/6 remain selection hurdles, not extra PnL deductions. Future work on
 entry timing, SL/TP or hedging must replay execution rather than edit saved PnL.
 
+### 4.22 Latest GammaShort entry/hedging/exits: matched replay (2026-10-21)
+
+The owner clarified that “new logic” means the latest GammaShort entry,
+hedging and exits. The immutable source snapshot is
+`output/logic_comparison_20261021/sources/7DResume_0.75_1.2.py`, SHA256
+`d4a69c4dfe1c2a99066725495ed1247806fe081a64cb02be99e6328dde92bb9b`.
+The shared filenames changed during inspection; the research run uses frozen
+copies exclusively. See `LOGIC_COMPARISON_SPEC.md` for the dated protocol.
+
+Three flat-size1 books share the original1430-date calendar. The archived
+research book retains its input vintage; freshly replayed old and latest
+engines share frozen current daily/event inputs and identical latest LUTs.
+The old and new NW-table locations currently differ24 versus23 YES cells;
+**both fresh books use the same latest23-cell table**. The five CW tables at
+the two locations are byte-identical. Compare fresh latest minus fresh old
+for implementation changes; fresh old minus archive also captures vintages.
+
+The main version differences are DTE1/2 minute hedge residual sign, clock
+versus entry-anchored post-entry marks, daily ADJ feature calculation, and the
+2026 EOD-grid switch date. The 75% minute / 1.2x hard hedge settings and costs
+remain source-version settings. The literal settings, rule comparison, actual
+entries/exits, CW costs and NW already-net accounting are exported separately.
+
+`compare_latest_logic.py` runs per-date paired checkpoints with input hashes
+and unchanged-during-read tick fingerprints. Six representative full/pruned
+new-source and native-loader parity cases passed, including expiry/DTE2;
+four direct source-kernel regression tests passed. The completed-run reporter
+and independent verifier refuse partial/failed histories. Earlier sizing
+studies remain **old-book** results and must not be presented as validated
+sizing on the latest engine. Source fill/backfill and LUT limitations remain;
+this comparison does not certify end-to-end causal execution.
+
+Completed1430-date replay (normalized units): archived10,522.04 / DD144.37;
+fresh old10,594.58 / DD144.37; latest10,109.38 / DD168.42. Both fresh engines
+enter the same794 trades (721CW,73NW);169 same-entry exits differ. Latest minus
+fresh old net is-485.20: gross-579.83 offset by94.63 lower CW hedge costs;
+entry costs and NW PnL match. The source changes were evaluated together,
+so these totals do not isolate the hedge-sign change alone. Fresh old minus
+archive+72.54 also reflects input/table vintage differences. Earlier sizing
+studies are not automatically results on either fresh book.
+
+The adapter's empty-expiry assumption failed on2026-06-10. Both original
+native engines were independently rerun and returned no trade; original error,
+fallback source and fingerprints are preserved, rather than assigning a PnL
+to an unresolved exception. See `replay_empty_expiry_native.py` and the
+workbook Native_fallbacks sheet. The source engines were not patched.
+
+Reports are `output/logic_comparison_20261021/REPORT.md` and
+`latest_logic_comparison.xlsx`; independent checks are in verification.json.
+No live or shared files are modified.
+
+### 4.23 Parallel directional long-gamma/vega complement (2026-10-21)
+
+Owner requested a complement to GS or better tick-based straddle entries and
+confirmed **alongside GS, with a separate risk limit**. The current screen is
+`COMPLEMENT_STRATEGY_SPEC.md` / `complement_strategy.py`, not a live change.
+It compares six fixed paths: directional call/put,2:1 tilted long straddle,
+and balanced long-straddle control, each with breakout-only or lower-AskIV
+entry gating. There is no futures neutralization, fitted neural model or
+future mean-size balancing. Premium budget100 is normalized research units,
+not an inferred account-risk percentage or executable whole-lot allocation.
+
+The sampled data audit is stored in
+`output/complement_strategy/data_audit.xlsx`: three09:15–09:25 samples each
+have600 CW timestamps and no subsecond rows. Source timestamps have a1900
+date placeholder. Bid/ask/quantity and IV fields are present, but aggressor
+side and full order depth are absent. This supports second/minute feature
+research, not reconstructed signed order flow or queue execution. Existing
+`simulate_legs` immediately neutralizes delta and is unsuitable unchanged.
+
+Signals use an opening-range breakout and five-minute path efficiency,
+strictly known data with a one-second source-availability lag. Entry pays ask,
+exit receives bid, plus declared adverse pricing and modeled fees. A15-minute
+hold or30% premium stop has delayed execution; missing exits raise errors.
+Both long structures retain positive gamma and vega; their directional delta
+is recorded at entry. The balanced control isolates the directional tilt.
+
+A no-signal fast path avoids unnecessary option quote reads only when every
+scan decision has zero direction. A direct regression test and a full/pruned
+three-day pilot check equivalence. Actual trades and risk budgets are repriced
+by `verify_complement_strategy.py`; all13 stand-alone/GS/combined daily paths
+and periods go to `output/complement_strategy/complement_strategy.xlsx`.
+The full screen and independent verification are complete:1,430 dates,
+8,580 policy-day rows,30 entries across the six alternatives but only8 distinct
+traded dates,13 daily paths and1,391 period rows. No variant reduces latest GS
+maximum daily DD below168.42. These are alternatives, not six simultaneous
+capital allocations.
+
+| Long sleeve | Full net / entries | 2022+ net / entries |
+|---|---:|---:|
+| Directional breakout | +5.27 /8 | -43.99 /7 |
+| Tilted breakout | +4.06 /8 | -19.04 /7 |
+| Balanced control | -3.77 /8 | -13.35 /7 |
+| Directional lower IV | +40.55 /2 | -8.71 /1 |
+| Tilted lower IV | +17.27 /2 | -5.83 /1 |
+| Balanced lower IV | +5.14 /2 | -4.44 /1 |
+
+The apparent lower-IV gain includes a2021 winner; it is not supported by the
+later comparison window. Plain breakout full net falls to+0.35 under double
+modeled fees; tilted breakout becomes-0.82. All2022+ add-ons lose money.
+They contribute zero on the worst GS decile in this sample. No complementary
+strategy is validated or adopted. The strict1-second ER>=0.30 gate is a
+coverage limitation; three audited sample days have maximum ER only0.119–0.159.
+A later coarser-timeframe or prior-data-calibrated direction model would be a
+new recorded study, not an adjustment to this frozen result.
+
+Eleven raw pre-entry admission failures were independently audited:5 dates
+outside the morning window,5 entire-file null-underlying columns,1 date with
+insufficient opening coverage. All dates remain in the calendar. Original raw
+exceptions, source schema/window checks and the original run manifest are
+preserved under the output folder. No missing exit or unexpected execution
+error was assigned zero. See `resolve_complement_eligibility.py` and the
+Eligibility_audit workbook sheet. Tick fingerprints match the GS replay.
+
+Combined drawdown is recomputed from combined daily PnL, never summed from
+strategy DDs. GS-loss-day attribution is descriptive, not an entry predictor.
+Additional premium is additional capital. Same-contract long positions may
+reduce GS exposure; that alone is not independent alpha. GS retains its old
+LUT/fill limitations, while the new sleeve also has modeled atomic-fill,
+quantity, fee and timestamp-provenance assumptions. The first screen does not
+implement the separate future GS entry-state-machine hypothesis.
+
 ## 5. Overall conclusion from the earlier studies
 
 The working answer is: keep the book at base size 1 and only cut size on

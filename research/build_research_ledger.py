@@ -80,7 +80,7 @@ def policy(name,pnl,size,active,entry,leg,exit_info=None):
 
 def load_iteration(config,raw):
     path=ROOT/'output'/config['source']; x=read(path)
-    kind=config['kind']; daily_sheet=config.get('daily','daily_comparison' if kind=='tick' else 'Daily_PnL' if kind=='wide' else 'Trades')
+    kind=config['kind']; daily_sheet=config.get('daily','daily_comparison' if kind=='tick' else 'Daily_PnL' if kind in ('wide','logic','portfolio') else 'Trades')
     source=x[daily_sheet].copy(); source['Date']=source.Date.astype(str).str[:10]
     if source.Date.duplicated().any(): raise ValueError('Duplicate dates: '+config['id'])
     # Tax source contains trades only: keep all production calendar days in range.
@@ -89,6 +89,12 @@ def load_iteration(config,raw):
     d=raw.set_index('Date').loc[list(dates)].reset_index()
     d=d.sort_values('Date').reset_index(drop=True)
     source=source.set_index('Date').reindex(d.Date).reset_index()
+    if kind=='portfolio':
+        # Its flat benchmark is the newly replayed GS book, not the old vintage.
+        actual=x['Latest_GS_daily'].copy();actual['Date']=actual.Date.astype(str).str[:10]
+        assert not actual.Date.duplicated().any()
+        d=actual.set_index('Date').loc[d.Date].reset_index()
+        d['Leg']=d.Leg.fillna('');d['Net_PnL']=d.Net_PnL.fillna(0.)
     base=d.Net_PnL.to_numpy(float); active=d.Leg.isin(['CW','NW']).to_numpy()
     entry=d.Entry_Time.fillna('').to_numpy(); leg=d.Leg.fillna('').to_numpy()
     policies=[policy('Flat size 1',base,np.ones(len(d)),active,entry,leg)]
@@ -99,6 +105,38 @@ def load_iteration(config,raw):
             np.testing.assert_allclose(values,base*sz,atol=1e-8)
             if name=='Flat size 1': continue
             policies.append(policy(name,values,sz,active&(sz>0),entry,leg))
+    elif kind=='logic':
+        # These are independently replayed engines, not old PnL times a size.
+        np.testing.assert_allclose(source['Flat size 1'],base,atol=1e-8,rtol=0)
+        for name,sheet in [('Old rules matched','Old_daily'),('Latest rules matched','New_daily')]:
+            actual=x[sheet].copy(); actual['Date']=actual.Date.astype(str).str[:10]
+            assert not actual.Date.duplicated().any()
+            actual=actual.set_index('Date').loc[d.Date].reset_index()
+            values=actual.Net_PnL.to_numpy(float)
+            np.testing.assert_allclose(source[name],values,atol=1e-8,rtol=0)
+            act=actual.Leg.isin(['CW','NW']).to_numpy()
+            exits=np.where(act,actual.Exit_Reason.fillna('').astype(str)+' '+actual.Exit_Time.fillna('').astype(str),'')
+            policies.append(policy(name,values,np.ones(len(d)),act,actual.Entry_Time.fillna(''),actual.Leg.fillna(''),exits))
+    elif kind=='portfolio':
+        np.testing.assert_allclose(source['Latest GS'],base,atol=1e-8,rtol=0)
+        actual=x['All_policy_days'].copy();actual['Date']=actual.Date.astype(str).str[:10]
+        names=list(actual.Policy.unique())
+        for name in names:
+            rows=actual[actual.Policy.eq(name)].set_index('Date').loc[d.Date].reset_index()
+            act=rows.Traded.to_numpy(bool);values=rows.Net_PnL.to_numpy(float)
+            tm=rows.Entry_Time.fillna('').to_numpy();ex=(rows.Exit_Reason.fillna('')+' '+rows.Exit_Time.fillna('')).to_numpy()
+            labels=np.where(act,'Long '+name.split()[0],'')
+            np.testing.assert_allclose(source[name],values,atol=1e-8,rtol=0)
+            single=policy(name,values,act.astype(float),act,tm,labels,ex);single['positions']=act.astype(int)
+            policies.append(single)
+            combo='GS + '+name;combined=base+values
+            np.testing.assert_allclose(source[combo],combined,atol=1e-8,rtol=0)
+            both=active&act;base_exit=(d.Exit_Reason.fillna('')+' '+d.Exit_Time.fillna('')).to_numpy()
+            times=np.where(both,['GS:'+str(entry[i])+' Long:'+str(tm[i]) for i in range(len(d))],np.where(act,tm,entry))
+            legs=np.where(both,['GS '+str(leg[i])+' Long '+name.split()[0] for i in range(len(d))],np.where(act,labels,leg))
+            exits=np.where(both,['GS:'+str(base_exit[i])+' Long:'+str(ex[i]) for i in range(len(d))],np.where(act,ex,base_exit))
+            combined_policy=policy(combo,combined,(active|act).astype(float),active|act,times,legs,exits)
+            combined_policy['positions']=active.astype(int)+act.astype(int);policies.append(combined_policy)
     elif kind=='legacy':
         if 'Net_PnL' in source:
             np.testing.assert_allclose(source.Net_PnL,base,atol=1e-4,rtol=0)
@@ -165,6 +203,8 @@ def summaries(config,d,policies,grouping):
         for label,mask in selections.items():
             if not mask.any(): continue
             stat=stats(p['pnl'][mask],p['active'][mask],p['size'][mask],d.Net_PnL.to_numpy()[mask])
+            if config['kind']=='portfolio':
+                stat['Underlying_strategy_entries']=int(p.get('positions',p['active'].astype(int))[mask].sum())
             stat.update(From=str(d.Date[mask].iloc[0]),To=str(d.Date[mask].iloc[-1]))
             out.append(dict(Iteration=config['id'],Policy=p['id'],Policy_name=p['name'],Period=label,**stat))
     return pd.DataFrame(out)
@@ -361,6 +401,7 @@ def main():
             action=np.where(p['active']&(p['entry']!=d.Entry_Time.fillna('').to_numpy()),'changed_entry',action)
             trade_columns[k+'_Size']=p['size']; trade_columns[k+'_PnL']=p['pnl']; trade_columns[k+'_Delta']=p['pnl']-base
             trade_columns[k+'_Action']=action; trade_columns[k+'_Entry']=p['entry']; trade_columns[k+'_Leg']=p['leg']
+            if c['kind']=='portfolio':trade_columns[k+'_Positions']=p.get('positions',p['active'].astype(int))
             trade_columns[k+'_Exit']=p['exit'] if p['exit'] is not None else np.where(p['active'],d.Exit_Reason.fillna('')+' '+d.Exit_Time.fillna(''),'')
             eq=np.cumsum(p['pnl']); dd=np.maximum.accumulate(np.r_[0.,eq])[1:]-eq
             daily_columns[k+'_PnL']=p['pnl']; daily_columns[k+'_Equity']=eq; daily_columns[k+'_DD']=dd
@@ -382,6 +423,18 @@ def main():
                 chart=LineChart(); chart.title=c['name']+' — '+metric; chart.width=25; chart.height=13
                 chart.y_axis.title='Normalized PnL'; chart.x_axis.title='Trading day'; chart.style=13
                 for col in (basecol,basecol+3*selected):
+                    chart.add_data(Reference(daily_ws,min_col=col,max_col=col,min_row=1,max_row=len(d)+1),titles_from_data=True)
+                charts.add_chart(chart,anchor+str(rowbase))
+        if prefix in ('19','20'):
+            from openpyxl.chart import LineChart, Reference
+            daily_ws=book[prefix+'_Daily']
+            rowbase=142 if prefix=='19' else 172
+            for metric,basecol,anchor in [('Equity',5,'A'),('DD',6,'Q')]:
+                chart=LineChart();chart.title=('Matched execution-version comparison' if prefix=='19' else 'Latest GS plus parallel long options')+' — '+metric;chart.width=25;chart.height=13
+                chart.y_axis.title='Normalized PnL';chart.x_axis.title='Trading day';chart.style=13
+                for j in range(len(policies)):
+                    if prefix=='20' and j!=0 and not policies[j]['name'].startswith('GS + '):continue
+                    col=basecol+3*j
                     chart.add_data(Reference(daily_ws,min_col=col,max_col=col,min_row=1,max_row=len(d)+1),titles_from_data=True)
                 charts.add_chart(chart,anchor+str(rowbase))
         for label,sheet in [('Overview','Summary'),('Quarter','Quarterly'),('Year','Yearly'),('Month','Monthly'),('FY','Financial_year')]:
@@ -411,6 +464,7 @@ def main():
     index.append(['Older candidate daily paths were not all saved. Coverage below identifies selected-only and rounded artifacts.'])
     index.append(['Modern full-history optimization is IN SAMPLE. Later overlays remain conditional on legacy LUT/fill assumptions.'])
     index.append(['Calendar quarters; Indian financial year starts April. PnL is normalized backtest units, not account returns.'])
+    index.append(['Iteration20 flat=latest GS; Entries=active portfolio days, Underlying_strategy_entries counts both sleeves. Size=policy coefficient; actual option quantities are in the source workbook.'])
     index.append([]); index.append(list(registry[0]))
     for r in registry:
         values=[]

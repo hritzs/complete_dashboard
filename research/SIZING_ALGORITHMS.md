@@ -1,5 +1,20 @@
 # What controls boosts, cuts and restrictions
 
+Iteration19 compares independent old/latest entry, hedging and exit replays
+at size1 with identical frozen inputs and tables, retaining the archive as a
+separate vintage reference (`LOGIC_COMPARISON_SPEC.md`). Iteration20 adds a
+separate premium-budgeted long-option screen alongside latest GS
+(`COMPLEMENT_STRATEGY_SPEC.md`). Neither reuses old PnL scaling as a new engine
+or treats additional capital as allocation alpha. A24/A25 document the methods.
+
+For20, flat means **latest GS**. Generic Entries counts active portfolio days;
+Underlying_strategy_entries counts the individual GS and long-option positions.
+Generic Size is the fixed policy coefficient, not option contract lots. The
+source workbook stores actual fractional quantities, premium budget, fees,
+entry greeks and combined paths. A30% premium stop can overshoot; additional
+modeled fees are not a verified statutory/broker fee schedule. No neural model
+or established profitable complement is claimed by the fixed first screen.
+
 Iteration18 extends17 with1944 fixed parameter combinations and chronological
 inner tuning/validation before each outer year. No normalization occurs. The
 new factors are risk-weight/quantile sensitivity, profit-score guards,

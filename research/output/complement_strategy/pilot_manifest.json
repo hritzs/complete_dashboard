@@ -1,0 +1,15 @@
+{
+  "Inputs": {
+    "complement_strategy.py": "ed7f6b9e8c42e9b001a5408e0334c78c1aceb7258a20a750332526073de3177d",
+    "COMPLEMENT_STRATEGY_SPEC.md": "a8b0fca1fb9e40611a578843106bcf9c40631e4a31b44db7a416a75f9b956cdb"
+  },
+  "Dates": [
+    "2021-01-04",
+    "2024-02-29",
+    "2026-10-13"
+  ],
+  "Status": "complete",
+  "Premium_budget": 100.0,
+  "Workers": 3,
+  "Failed_dates": []
+}

@@ -1,0 +1,11 @@
+{
+  "Audit_code_SHA256": "b79c95440a68b4bdf0de1d0d6a4045526f855015b4f039e32a09f7d57c77d901",
+  "Fixed_engine_SHA256": "ed7f6b9e8c42e9b001a5408e0334c78c1aceb7258a20a750332526073de3177d",
+  "Samples": [
+    "2021-01-04",
+    "2024-02-29",
+    "2026-10-13"
+  ],
+  "Strategy_PnL_calculated": false,
+  "Parameters_changed": false
+}

@@ -1,0 +1,38 @@
+{
+  "Inputs": {
+    "compare_latest_logic.py": "1f91a9827def50c4e0378b514d61094ca83dd12a2c7ff823e529a5fbb1f3c540",
+    "LOGIC_COMPARISON_SPEC.md": "c9d198db07f5fdaed48bd35428919ced1f584995da718deb16718b0d3b01c272",
+    "output/logic_comparison_20261021/sources/7DResume.py": "9e9e1933e96260e496152640332527a0e0a9cfc4f112ccab14d0adc1ce4ebd92",
+    "output/logic_comparison_20261021/sources/Archived_GammaShort_Backtest_Final.py": "debb230a3eeb1fa6ffbdafb7ac8a99f328e01857bab11939dd652aafb4a0ce75",
+    "output/logic_comparison_20261021/sources/7DResume_0.75_1.2.py": "d4a69c4dfe1c2a99066725495ed1247806fe081a64cb02be99e6328dde92bb9b",
+    "output/logic_comparison_20261021/sources/7DResume_0.75_1.2_141026.py": "ccfeac48cfe80be934b4d399fdd821dcca6b725d64c5f8b9ac3b06de8f081254",
+    "output/logic_comparison_20261021/sources/comparison_new_engine.py": "bc7cd9273eaf2801a4c3dbb76b517bd5ea7ccee4740a4d1aa5f12efed3af0c38",
+    "output/logic_comparison_20261021/sources/7DResume_FillSec.py": "2b46cea4681e5f4bc6e279cc200ae341d9d03da6ab77d3e31d682d79c75b907b",
+    "output/logic_comparison_20261021/sources/7DResume_0.75_1.2_191026.py": "75c18838233f713b8ffa6c0265fadbd82304690d474c27281cede93e7d923da3",
+    "output/logic_comparison_20261021/inputs/events.xlsx": "6666e0bf67d83a92b4dd55c6a37ac64e08dd3564fe5ffe59d68c23660ca77d3a",
+    "output/logic_comparison_20261021/inputs/daily.csv": "e66aea9edcf8de6578e46b1889ac3b902f46a7134b5ec0b2e1cfc6199fe1e9c2",
+    "output/logic_comparison_20261021/inputs/luts_old/LUT_0917.csv": "2d3814e7db0bccec8a5468160047dbfb5a9f0beb5589913499bec14f20bda48f",
+    "output/logic_comparison_20261021/inputs/luts_old/LUT_0919.csv": "3d0c637ac2880ed2feba244ee5b94a9c13190c52e2eb47b7003f0ce60e8400da",
+    "output/logic_comparison_20261021/inputs/luts_old/LUT_0918.csv": "3293771ec1eb80089512ebca55adb1c25b26673fadda200e0e0fba7e97afff37",
+    "output/logic_comparison_20261021/inputs/luts_old/LUT_0916.csv": "807319199a93e6cf5a5ee9833ee55253cd86aaa471a71e6df236df0e061815c4",
+    "output/logic_comparison_20261021/inputs/luts_old/NW_LUT.csv": "a0acb829c9fb275cc117d9cf4dae9a66f12680d043460b3c5cdfe207831e5720",
+    "output/logic_comparison_20261021/inputs/luts_old/LUT_0920_Onwards.csv": "131d9a1140f00c36df7b3d0c81df5aad455445230fe8260442cc76de0492be0d",
+    "output/logic_comparison_20261021/inputs/luts_new/LUT_0917.csv": "2d3814e7db0bccec8a5468160047dbfb5a9f0beb5589913499bec14f20bda48f",
+    "output/logic_comparison_20261021/inputs/luts_new/LUT_0919.csv": "3d0c637ac2880ed2feba244ee5b94a9c13190c52e2eb47b7003f0ce60e8400da",
+    "output/logic_comparison_20261021/inputs/luts_new/LUT_0918.csv": "3293771ec1eb80089512ebca55adb1c25b26673fadda200e0e0fba7e97afff37",
+    "output/logic_comparison_20261021/inputs/luts_new/LUT_0916.csv": "807319199a93e6cf5a5ee9833ee55253cd86aaa471a71e6df236df0e061815c4",
+    "output/logic_comparison_20261021/inputs/luts_new/NW_LUT.csv": "ff297ca5852bce9a010dab77f8a19498b0c83eaec67eaae666888a54ed44773a",
+    "output/logic_comparison_20261021/inputs/luts_new/LUT_0920_Onwards.csv": "131d9a1140f00c36df7b3d0c81df5aad455445230fe8260442cc76de0492be0d"
+  },
+  "Dates": [
+    "2021-01-19",
+    "2021-01-04",
+    "2021-02-10",
+    "2021-01-08",
+    "2024-02-29",
+    "2024-02-28"
+  ],
+  "Workers": 6,
+  "Status": "complete",
+  "Failed_dates": []
+}

@@ -1,6 +1,31 @@
 # GammaShort research summary and continuation state
 
-Updated 2026-10-19. This is offline research; it contains no authorization to change live trading behavior.
+Updated 2026-10-21. This is offline research; it contains no authorization to change live trading behavior.
+
+## 2026-10-21: latest GS and complementary long-option screen
+
+Both studies are complete and independently verified on the same1,430 dates.
+Latest matched GS is10,109.38 / maximum DD168.42 versus freshly replayed old
+rules10,594.58 /144.37, on the same794 entries. Full details and actual input
+vintages are in handoff4.22 and `logic_comparison_20261021/REPORT.md`.
+
+The owner authorized a separate-risk sleeve alongside GS. Six fixed
+long-option alternatives used100 normalized premium units at entry, with
+actual ask/bid execution models and declared fee drag. Plain directional
+call/put net is+5.27 across8 trades over all history, but **-43.99 across7
+trades from2022 onward**. Lower-IV directional net+40.55 comes from only2
+trades including the2021 winner;2022+ net is-8.71 across1 trade. All six later
+window add-ons lose money. None lowers GS DD168.42; none is adopted.
+
+See handoff4.23, `COMPLEMENT_STRATEGY_SPEC.md`,
+`complement_strategy/complement_strategy.xlsx` and its REPORT.md. Every
+individual/combined daily path, entry/exit, cost, Greek, formula and calendar
+period is retained.30 policy entries represent only8 distinct dates, not30
+independent observations. The sampled data has1-second timestamps with1900
+date placeholders, not subsecond order-event data.11 ineligible data/window
+dates were explicitly audited; raw exceptions remain preserved. No live code,
+.env or shared inputs changed. Neural models and a new GS entry state machine
+remain separate unimplemented hypotheses.
 
 ## Latest: chronological parameter sweep and allocation-placement test
 

@@ -1,0 +1,15 @@
+{
+  "Status": "preflight_only",
+  "Strategy_PnL_tested": false,
+  "Sample_dates": [
+    "2021-01-04",
+    "2024-02-29",
+    "2026-10-13"
+  ],
+  "Code_SHA256": "9ca53b1219650d31a8bd00ca658ef017ace48b5ccf59090f68390cbec7dc860d",
+  "Outputs": {
+    "data_audit.xlsx": "de84c707a8b7bf9683ce8c62f6c6c4c1a52e9ad12a2313edfe5310e7785d34aa",
+    "data_audit.csv": "97702232942cde198f878d97304d14e6809a7d9b69859492887da2a2347113c9"
+  },
+  "Limits": "Three sampled 09:15\u201309:25 prefixes; top quotes, not certified order-event provenance or executability; no live changes"
+}

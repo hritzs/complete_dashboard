@@ -1,14 +1,45 @@
 # GammaShort research ledger
 
-Open `GammaShort_Research_Ledger.xlsx`. This combines 18 saved research iterations
-and 225 daily policy paths. It does not refit strategies or change live trading.
+Open `GammaShort_Research_Ledger.xlsx`. This combines 20 saved research iterations
+and 241 daily policy paths. It does not refit strategies or change live trading.
 The original source workbooks remain unchanged.
+
+## Latest additions: matched execution19 and parallel long options20
+
+19_ retains the archived book separately from fresh old/latest engines, with
+identical frozen current inputs and LUTs in both fresh runs. Net/DD: archived
+10,522.04/144.37; fresh old10,594.58/144.37; latest10,109.38/168.42. Both fresh
+engines have794 identical entries;169 exits differ. Source changes are tested
+together. Earlier sizing findings remain on the old book.
+
+20_ uses **latest GS as Flat size1**, unlike earlier archive-based iterations.
+It preserves six long-option alternatives and each GS-plus-one-sleeve path;
+these alternatives are not all stacked together.100 normalized premium units
+are a separate budget; Size is the policy coefficient, not option contract
+lots. Entries counts active portfolio days; Underlying_strategy_entries and
+per-policy _Positions columns count both individual positions. Actual premiums,
+fractional quantities, costs, entry Greeks, formulas, all policy days and full
+trade logs are in `../complement_strategy/complement_strategy.xlsx`.
+
+Plain directional net is+5.27 on8 dates over all history, but-43.99 on7 dates
+from2022 onward. The lower-IV directional+40.55 depends on a2021 winner;
+later-window net is-8.71 on1 trade. All six2022+ add-ons lose money; none reduces
+GS maximum DD168.42. No new complement is validated or adopted.2021 is shown
+separately for comparison with older scored studies, not as model training.
+
+The separate replay reports and source snapshots are under
+`../logic_comparison_20261021/` and `../complement_strategy/`. Each has an
+independent verification.json. The empty-expiry adapter case and11 pre-entry
+ineligible data/window cases retain their original exceptions and explicit
+audits. No missing exit or unexpected execution error was converted into PnL.
+A24/A25 describe these methods; the scientific charts are embedded in the
+source workbooks and kept as PNG/SVG beside them. No live or shared files changed.
 
 ## Workbook navigation
 
 - **START_HERE**: iteration index, dates, coverage, research protocol and source.
 - **All_Iterations**: overall and saved split/warmup/scored-period metrics.
-- **01_… through 18_…**: separate sheets for each iteration, described below.
+- **01_… through 20_…**: separate sheets for each iteration, described below.
 - **Risk_Trade_Replay**: all 799 original risk predictions, raw instability
   readings, component ranks, realized outcomes, flags and verified replay.
 - **Risk_Excel_Formulas**: executable Excel formulas for those 799 trades.
@@ -31,9 +62,9 @@ The original source workbooks remain unchanged.
 
 The **Algo_** sheets add boost/cut explanations and executable sizing formulas:
 
-- **Algo_Catalog / Algo_Guide**:21 algorithm families, mathematical definitions,
+- **Algo_Catalog / Algo_Guide**:26 algorithm families, mathematical definitions,
   inputs, outputs, training protocol, limitations and source-code references.
-- **Algo_Policy_Map / Algo_Changes / Algo_Priority**: all189 saved policy IDs,
+- **Algo_Policy_Map / Algo_Changes / Algo_Priority**: all241 saved policy IDs,
   version changes and the exact precedence of risk cuts, warmup and boosts.
 - **Algo_Conviction / Algo_Profile_Feasibility**: all799 historical S1/S2 edge
   gates and why the Gentle profile could not satisfy its mean-one budget.

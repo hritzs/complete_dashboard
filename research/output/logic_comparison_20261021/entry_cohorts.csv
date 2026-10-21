@@ -1,0 +1,5 @@
+Cohort,Book,Dates,Net,MDD,Worst_day,Net_per_MDD,Entries,CW_entries,NW_entries,Wins,Losses,Mean_net_per_entry,Event_weighted_trade_units,CW_net,NW_net,CW_entry_cost,CW_hedge_cost
+Same entry,Old rules / matched current inputs,794,10594.58063481379,144.36588802633287,-61.27931499510323,73.38700838304199,794,721,73,565,229,13.343300547624422,772.0,10268.876377179655,325.704257634134,333.0,434.4150444263851
+Same entry,Latest rules / matched current inputs,794,10109.377523490562,168.42425845197704,-78.55247256115784,60.023286528959595,794,721,73,555,239,12.73221350565562,772.0,9783.673265856429,325.704257634134,333.0,339.78642181041766
+No trade both,Old rules / matched current inputs,636,0.0,0.0,0.0,,0,0,0,0,0,,0.0,0.0,0.0,0.0,0.0
+No trade both,Latest rules / matched current inputs,636,0.0,0.0,0.0,,0,0,0,0,0,,0.0,0.0,0.0,0.0,0.0

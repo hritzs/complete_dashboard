@@ -1,0 +1,11 @@
+{
+  "Status": "PASS",
+  "Dates": 1430,
+  "Engine_paths": 3,
+  "Pilot_full_and_loader_parity_days": 6,
+  "Period_rows_reconciled": 321,
+  "Errors": 0,
+  "Tick_fingerprints_unchanged": true,
+  "Verifier_SHA256": "e23cafb0534e31753869d2a1b9561d89e59c4bfaed1494423232ed954cc609fc",
+  "Report_manifest_SHA256": "88bf3b1c0985f247822ac61347087312d0272e71d63dc63892252d5261622d77"
+}

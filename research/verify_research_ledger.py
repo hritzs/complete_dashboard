@@ -43,6 +43,8 @@ def main():
             np.testing.assert_allclose(trades[name+'_PnL'].sum(),sum(p),atol=1e-8)
             executed=trades[name+'_Action'].ne('skip')
             assert int(executed.sum())==ref.Entries
+            if config['kind']=='portfolio':
+                assert int(trades[name+'_Positions'].sum())==ref.Underlying_strategy_entries
             counts[name]=executed
             count+=1
         for sheet in ('Quarterly','Yearly','Monthly','Financial_year'):
@@ -61,6 +63,8 @@ def main():
                     running+=value; peak=max(peak,running); mdd=max(mdd,peak-running)
                 np.testing.assert_allclose([sum(p),mdd],[row['Net'],row['MDD']],atol=1e-8)
                 assert int((counts[row['Policy']]&tmask).sum())==row['Entries']
+                if config['kind']=='portfolio':
+                    assert int(trades.loc[tmask,row['Policy']+'_Positions'].sum())==row['Underlying_strategy_entries']
                 periods+=1
     # Verify the separately recalculated spreadsheet, not just Python formulas.
     small=load_workbook(OUT/'Risk_Formulas_Calculated.xlsx',read_only=True,data_only=True)
