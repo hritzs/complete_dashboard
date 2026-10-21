@@ -178,6 +178,23 @@ func specialSessionList() []SpecialSession {
 	return out
 }
 
+// sessionExitCap: on a special-session date no timed exit is later than
+// muhuratExitBefore ahead of the session close (every build, as 15:37 is
+// ahead of 15:40 on a normal day). Any other date: t unchanged.
+func sessionExitCap(t time.Time) time.Time {
+	if t.IsZero() {
+		return t
+	}
+	_, _, close, ok := specialSessionOn(t)
+	if !ok {
+		return t
+	}
+	if c := close.Add(-muhuratExitBefore); t.After(c) {
+		return c
+	}
+	return t
+}
+
 // sessionHHMM is the LUT clock of a special session: minutes since its open
 // counted from 09:15 (the first minute after the open is 09:16, the 09:16
 // table). ok=false outside the session or on a normal day.

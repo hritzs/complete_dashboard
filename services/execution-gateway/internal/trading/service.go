@@ -1939,10 +1939,10 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 				}
 			}
 
-			if !trade.Config.SquareOffHardTime.IsZero() && !time.Now().Before(trade.Config.SquareOffHardTime) {
+			if hardExit := sessionExitCap(trade.Config.SquareOffHardTime); !hardExit.IsZero() && !time.Now().Before(hardExit) {
 				log.Printf(
 					"[RISK] TIME_TRIGGER trade=%s now=%s target=%s %s",
-					tradeUID, time.Now().Format(time.RFC3339), trade.Config.SquareOffHardTime.Format(time.RFC3339), snapshotFields,
+					tradeUID, time.Now().Format(time.RFC3339), hardExit.Format(time.RFC3339), snapshotFields,
 				)
 				s.executeAutoExit(tradeUID, "TIME", "CLOSED_TIME") // a hard stop even when sim-driven
 			}
@@ -1973,7 +1973,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 
 			timeStatus, remaining := "NOT_CONFIGURED", time.Duration(0)
 			if !trade.Config.SquareOffHardTime.IsZero() {
-				remaining = time.Until(trade.Config.SquareOffHardTime)
+				remaining = time.Until(sessionExitCap(trade.Config.SquareOffHardTime))
 				timeStatus = "OK"
 				if remaining <= 0 {
 					timeStatus = "BREACHED"
@@ -1982,7 +1982,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 			log.Printf(
 				"[MONITOR][%s] minute=%s check=TIME status=%s target=%s remaining=%s",
 				tradeUID, currentMinute.Format("15:04"), timeStatus,
-				trade.Config.SquareOffHardTime.Format("15:04:05"), remaining.Round(time.Second),
+				sessionExitCap(trade.Config.SquareOffHardTime).Format("15:04:05"), remaining.Round(time.Second),
 			)
 		}
 	}

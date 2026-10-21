@@ -99,47 +99,27 @@ func TestLutBusDaysCountsAListedSession(t *testing.T) {
 	}
 }
 
-func withMuhuratState(t *testing.T, c LUTBuildConfig) {
-	t.Helper()
-	t.Setenv("LUT_DATA_DIR", t.TempDir())
+func TestSessionExitCapOnlyOnASpecialDate(t *testing.T) {
 	withSpecialSessions(t, []SpecialSession{muhurat2026})
-	if err := saveMuhuratBuildConfig(c); err != nil {
+	ist := lutIST()
+	normal := time.Date(2026, 11, 9, 15, 37, 0, 0, ist)
+	if got := sessionExitCap(normal); !got.Equal(normal) {
+		t.Fatalf("a normal day keeps its exit: %v", got)
+	}
+	want := time.Date(2026, 11, 8, 15, 27, 0, 0, ist)
+	if got := sessionExitCap(time.Date(2026, 11, 8, 15, 37, 0, 0, ist)); !got.Equal(want) {
+		t.Fatalf("Muhurat: 15:37 capped to 3 min before the 15:30 close, got %v", got)
+	}
+	early := time.Date(2026, 11, 8, 15, 0, 0, 0, ist)
+	if got := sessionExitCap(early); !got.Equal(early) {
+		t.Fatalf("an exit before the cap stays: %v", got)
+	}
+	// Every build's risk config takes the capped exit.
+	var cfg MonitorConfig
+	if err := applyBuildRiskConfig(&cfg, &BuildRiskConfig{ExitTime: "15:37:00"}, time.Date(2026, 11, 8, 14, 22, 0, 0, ist)); err != nil {
 		t.Fatal(err)
 	}
-	muh.Lock()
-	muh.d = MuhuratDay{Day: "2026-11-08"}
-	muh.Unlock()
-}
-
-func muhuratYES() (LUTEvaluation, *OptionChainSnapshot) {
-	return LUTEvaluation{Time: "09:16", Stage: "09:16", Strike: 23100, Underlying: 23104, TPBps: 20, Allowed: true},
-		&OptionChainSnapshot{Expiry: "09-NOV-26"}
-}
-
-func TestMuhuratBuildNotArmedNeverFires(t *testing.T) {
-	withMuhuratState(t, LUTBuildConfig{BrokerName: "greeksoft", AccountID: "147", Lots: 2})
-	rec, ch := muhuratYES()
-	muh.Lock()
-	(&Service{}).muhuratFireLocked(time.Date(2026, 11, 8, 14, 21, 1, 0, lutIST()), "14:21", rec, ch, nil)
-	b := muh.d.Build
-	muh.Unlock()
-	if b != nil {
-		t.Fatalf("not armed: nothing may fire, got %+v", b)
-	}
-}
-
-func TestMuhuratBuildExitIsBeforeTheSessionClose(t *testing.T) {
-	withMuhuratState(t, LUTBuildConfig{Armed: true, BrokerName: "greeksoft", AccountID: "147", Lots: 2})
-	rec, ch := muhuratYES()
-	// A YES after the exit time (15:27, 3 min before the 15:30 close) is refused, recorded, and never sent.
-	muh.Lock()
-	(&Service{}).muhuratFireLocked(time.Date(2026, 11, 8, 15, 28, 1, 0, lutIST()), "15:28", rec, ch, nil)
-	b := muh.d.Build
-	muh.Unlock()
-	if b == nil || b.Status != "REFUSED" || b.ExitTime != "15:27:00" {
-		t.Fatalf("want a REFUSED build with exit 15:27:00, got %+v", b)
-	}
-	if d := loadMuhuratDay("2026-11-08"); d.Build == nil || d.Build.Status != "REFUSED" {
-		t.Fatalf("the refusal must be saved before anything else: %+v", d.Build)
+	if !cfg.SquareOffHardTime.Equal(want) {
+		t.Fatalf("build exit on the Muhurat day: %v, want 15:27", cfg.SquareOffHardTime)
 	}
 }

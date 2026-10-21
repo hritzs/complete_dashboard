@@ -1,22 +1,23 @@
 package trading
 
-// Muhurat tab: the LUT on a special session's own clock (special_session.go)
-// and a one-shot armed build. Nothing here runs on a date that is not listed.
+// Special session (Diwali Muhurat): the LUT sells exactly as on a normal day
+// -- only the session's open and close differ (special_session.go). Nothing
+// here runs on a date that is not listed.
 //
-//   - Each minute of the session the LUT engine's minute record (GreekSoft
-//     closes, lut_sim.go) is also evaluated on the session clock: the first
-//     minute after the open is the 09:16 table, the next 09:17, ... (the
-//     whole session lies before the 13:30 scan end). The opening gap is the
-//     first session minute's future against the previous trading day's.
-//     DTE is the normal calendar DTE plus only the session's remaining
-//     trading minutes (lutRawDTE); the listed date counts as a trading day.
-//   - Armed (typed confirmation), the first YES fires ONE real build -- the
-//     LUT build's request (delta-neutral, the strike the LUT evaluated) with
-//     the exit muhuratExitBefore ahead of the close; the trade is then run
-//     by the standard monitor (hedge / SL / TP / exit). It disarms itself
-//     when it fires and records the build before any order, so it never
-//     fires twice.
-//   - Its own files: muhurat_build.json (settings) and <day>_muhurat.json.
+//   - Each session minute the LUT engine's minute record (GreekSoft closes,
+//     lut_sim.go) is evaluated on the session clock: the first minute after
+//     the open is the 09:16 table, the next 09:17, ... (the whole session
+//     lies before the 13:30 scan end). The opening gap is the first session
+//     minute's future against the previous trading day's. DTE is the normal
+//     calendar DTE plus only the session's remaining trading minutes
+//     (lutRawDTE); the listed date counts as a trading day.
+//   - A YES there IS the day's LUT YES: the paper entry and, when armed on
+//     the LUT tab, the normal LUT build (lutFireBuildLocked: sim-driven,
+//     once per day, self-disarming), on the real minute. Every timed exit
+//     that day is capped muhuratExitBefore ahead of the close
+//     (sessionExitCap).
+//   - The Muhurat tab lists the session and shows the clock, DTE, greeks and
+//     each session minute's check (<day>_muhurat.json).
 
 import (
 	"context"
@@ -32,8 +33,6 @@ import (
 	"time"
 )
 
-const muhuratConfirm = "SELL MUHURAT"
-
 // MuhuratRecord is one session minute's LUT check.
 type MuhuratRecord struct {
 	Time  string        `json:"time"`  // the real minute, HH:MM
@@ -41,13 +40,12 @@ type MuhuratRecord struct {
 	Eval  LUTEvaluation `json:"eval"`
 }
 
-// MuhuratDay is the session day's state, saved as <day>_muhurat.json.
+// MuhuratDay is the session day's record, saved as <day>_muhurat.json.
 type MuhuratDay struct {
 	Day     string          `json:"day"`
 	U0916   float64         `json:"u0916"` // the first session minute's future (opening gap)
 	U0916At string          `json:"u0916_at,omitempty"`
 	Minutes []MuhuratRecord `json:"minutes"`
-	Build   *LUTBuildRun    `json:"build,omitempty"`
 }
 
 var muh struct {
@@ -55,25 +53,8 @@ var muh struct {
 	d MuhuratDay
 }
 
-func muhuratBuildFile() string { return filepath.Join(lutDataDir(), "muhurat_build.json") }
 func muhuratDayFile(day string) string {
 	return filepath.Join(lutDataDir(), day+"_muhurat.json")
-}
-
-func loadMuhuratBuildConfig() LUTBuildConfig {
-	var c LUTBuildConfig
-	if b, err := stateRead(muhuratBuildFile()); err == nil {
-		_ = json.Unmarshal(b, &c)
-	}
-	return lutBuildDefaults(c)
-}
-
-func saveMuhuratBuildConfig(c LUTBuildConfig) error {
-	b, _ := json.MarshalIndent(c, "", "  ")
-	if err := os.MkdirAll(lutDataDir(), 0o755); err != nil {
-		return err
-	}
-	return sbWriteAtomic(muhuratBuildFile(), b)
 }
 
 func loadMuhuratDay(day string) MuhuratDay {
@@ -82,9 +63,6 @@ func loadMuhuratDay(day string) MuhuratDay {
 		_ = json.Unmarshal(b, &d)
 	}
 	d.Day = day
-	if d.Build != nil && d.Build.Status == "FIRING" { // a restart while it was being sent
-		d.Build.Status = "UNKNOWN"
-	}
 	return d
 }
 
@@ -92,25 +70,19 @@ func saveMuhuratDayLocked() {
 	b, _ := json.MarshalIndent(muh.d, "", "  ")
 	if err := os.MkdirAll(lutDataDir(), 0o755); err == nil {
 		if err = sbWriteAtomic(muhuratDayFile(muh.d.Day), b); err != nil {
-			log.Printf("[MUHURAT] ⚠ day state not saved: %v", err)
+			log.Printf("[MUHURAT] ⚠ day record not saved: %v", err)
 		}
 	}
 }
 
-// muhuratExitTime: the timed exit of a build fired during the session.
-func muhuratExitTime(close time.Time) string {
-	return close.Add(-muhuratExitBefore).Format("15:04:05")
-}
-
 // muhuratRecordLocked runs inside the LUT engine's minute record (caller
 // holds lutEng.mu) with that minute's closed chain.
-func (s *Service) muhuratRecordLocked(now time.Time, closed *OptionChainSnapshot, cfg LUTConfig) {
+func (s *Service) muhuratRecordLocked(day string, now time.Time, closed *OptionChainSnapshot, cfg LUTConfig) {
 	clock, ok := sessionHHMM(now)
 	if !ok || clock < 916 || clock > lutLastScan || closed == nil {
 		return
 	}
 	e := lutEng
-	day := now.In(lutIST()).Format("2006-01-02")
 	minute := now.In(lutIST()).Format("15:04")
 	muh.Lock()
 	defer muh.Unlock()
@@ -128,7 +100,9 @@ func (s *Service) muhuratRecordLocked(now time.Time, closed *OptionChainSnapshot
 		}
 	}
 	mcfg := cfg
-	mcfg.Underlying0916 = muh.d.U0916
+	if mcfg.Underlying0916 <= 0 {
+		mcfg.Underlying0916 = muh.d.U0916
+	}
 	rc := e.evaluate(now, clock, closed, mcfg, LUTManual{})
 	if rc.Ev == nil || rc.Preview {
 		return
@@ -136,7 +110,7 @@ func (s *Service) muhuratRecordLocked(now time.Time, closed *OptionChainSnapshot
 	rec := *rc.Ev
 	rec.Preview, rec.NearestYes, rec.NearestYes0920 = false, nil, nil
 	clk := fmt.Sprintf("%02d:%02d", clock/100, clock%100)
-	rec.Time = clk
+	rec.Time = minute // the real minute: the build and its simulation run on the recorded minutes
 	muh.d.Minutes = append(muh.d.Minutes, MuhuratRecord{Time: minute, Clock: clk, Eval: rec})
 	saveMuhuratDayLocked()
 	verdict := "NO"
@@ -148,96 +122,37 @@ func (s *Service) muhuratRecordLocked(now time.Time, closed *OptionChainSnapshot
 	log.Printf("[MUHURAT] %s = table %s fut=%.2f atm=%.0f ce=%.2f pe=%.2f straddle=%.2f dte=%.3f/%.3f adj_iv=%.4f iv_ratio=%.4f str_ratio=%.4f coord=%s -> %s",
 		minute, rec.Stage, rec.Underlying, rec.Strike, rec.CELTP, rec.PELTP, rec.Straddle, rec.RawDTE, rec.TradingDTE,
 		rec.AdjBuildIV, rec.IVRatio, rec.StrRatio, rec.CoordText, verdict)
-	if rec.Allowed && muh.d.Build == nil {
-		s.muhuratFireLocked(now, minute, rec, closed, rc.Row)
-	}
-}
-
-// muhuratFireLocked: the session's first YES while armed (caller holds
-// muh and lutEng.mu). Recorded before any order; disarms itself.
-func (s *Service) muhuratFireLocked(now time.Time, minute string, rec LUTEvaluation, closed *OptionChainSnapshot, row *OptionChainRow) {
-	c := loadMuhuratBuildConfig()
-	if !c.Armed {
+	if !rec.Allowed {
 		return
 	}
-	_, _, close, ok := specialSessionOn(now)
-	if !ok {
-		return
+	// The day's LUT YES, as on a normal day: the real build when the LUT tab
+	// is armed (once per day), and the paper entry.
+	s.lutFireBuildLocked(day, rec, lutMakeEntry(rec, closed, rc.Row, cfg.Lots, e.lotSize))
+	if e.entry == nil {
+		e.entry = lutMakeEntry(rec, closed, rc.Row, cfg.Lots, e.lotSize)
+		e.entry.Source = "LUT YES (session clock " + clk + ")"
+		d := e.entry
+		log.Printf("[LUT] ✅ FIRST YES (special session, table %s) -- PAPER ENTRY %s NIFTY %s %.0f SELL CE %d + SELL PE %d fut %.2f adj build IV %.4f coord %s",
+			rec.Stage, d.Time, d.Expiry, d.Strike, d.Qty, d.Qty, d.Underlying, rec.AdjBuildIV, rec.CoordText)
+		e.saveDayLocked(day)
 	}
-	e := lutEng
-	if e.isEvent && e.sc != nil && e.sc.UseEvents {
-		c.Lots = max(1, int(float64(c.Lots)*lutEventSize))
-	}
-	c.ExitTime = muhuratExitTime(close)
-	entry := lutMakeEntry(rec, closed, row, c.Lots, e.lotSize)
-	run := &LUTBuildRun{Minute: minute + " (table " + rec.Time + ")", FiredAt: now.In(lutIST()).Format("15:04:05.000"),
-		Expiry: entry.Expiry, Strike: entry.Strike, Lots: c.Lots, ExitTime: c.ExitTime, Account: c.BrokerName + "/" + c.AccountID}
-	risk := lutBuildRisk(c, rec)
-	run.SLBps, run.TPBps = risk.SlBps, risk.TpBps
-	switch {
-	case strings.TrimSpace(c.BrokerName) == "" || strings.TrimSpace(c.AccountID) == "":
-		run.Status, run.Error = "REFUSED", "broker / account not set"
-	case entry.Expiry == "" || entry.Strike <= 0:
-		run.Status, run.Error = "REFUSED", "the YES has no expiry / strike"
-	default:
-		if err := risk.Validate(now); err != nil {
-			run.Status, run.Error = "REFUSED", err.Error()
-		} else {
-			run.Status = "FIRING"
-		}
-	}
-	muh.d.Build = run
-	saveMuhuratDayLocked() // recorded before any order: never fires twice
-	if run.Status != "FIRING" {
-		log.Printf("[MUHURAT-BUILD] ⛔ YES at %s but the REAL build was REFUSED: %s", run.Minute, run.Error)
-		return
-	}
-	log.Printf("[MUHURAT-BUILD] 🚀 YES at %s -> REAL BUILD %s %s %.0f straddle %d lot(s), delta-neutral, SL %.2f bps TP %.2f bps exit %s, %s, account %s",
-		run.Minute, lutSymbol, entry.Expiry, entry.Strike, c.Lots, risk.SlBps, risk.TpBps, c.ExitTime, lutWingsText(c.WingPct), run.Account)
-	req := lutBuildRequest(c, entry.Expiry, entry.Strike, risk)
-	req.Mode = BuildModeMuhurat
-	c.Armed, c.ArmedAt = false, ""
-	if err := saveMuhuratBuildConfig(c); err != nil {
-		log.Printf("[MUHURAT-BUILD] ⚠ could not save the disarm: %v (the day record still blocks another build)", err)
-	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-		defer cancel()
-		resp, err := s.ExecuteFinalBuild(ctx, req)
-		muh.Lock()
-		defer muh.Unlock()
-		run.FinishedAt = time.Now().In(lutIST()).Format("15:04:05.000")
-		if err != nil {
-			run.Status, run.Error = "FAILED", err.Error()
-			if resp != nil {
-				run.TradeUID = resp.TradeUID
-			}
-			log.Printf("[MUHURAT-BUILD] ❌ build failed: %v (trade %s) -- check Portfolio / broker", err, run.TradeUID)
-		} else {
-			run.Status, run.TradeUID = "BUILT", resp.TradeUID
-			run.Message = strings.TrimSpace(resp.Status + " " + resp.Message)
-			log.Printf("[MUHURAT-BUILD] ✅ build done: trade %s CE %d / PE %d status %s", resp.TradeUID, resp.CEQty, resp.PEQty, resp.Status)
-		}
-		saveMuhuratDayLocked()
-	}()
 }
 
 // MuhuratStatus is the tab's payload.
 type MuhuratStatus struct {
-	Success     bool             `json:"success"`
-	Error       string           `json:"error,omitempty"`
-	Now         string           `json:"now"`
-	Sessions    []SpecialSession `json:"sessions"`
-	Today       *SpecialSession  `json:"today,omitempty"`
-	Next        *SpecialSession  `json:"next,omitempty"`
-	Phase       string           `json:"phase"`
-	Clock       string           `json:"clock,omitempty"` // the LUT clock now (09:16 ...)
-	ExitTime    string           `json:"exit_time,omitempty"`
-	Config      LUTBuildConfig   `json:"config"`
-	Checks      []string         `json:"checks"`
-	ConfirmText string           `json:"confirm_text"`
-	Day         *MuhuratDay      `json:"day,omitempty"`
-	Live        *MuhuratLive     `json:"live,omitempty"`
+	Success  bool             `json:"success"`
+	Error    string           `json:"error,omitempty"`
+	Now      string           `json:"now"`
+	Sessions []SpecialSession `json:"sessions"`
+	Today    *SpecialSession  `json:"today,omitempty"`
+	Next     *SpecialSession  `json:"next,omitempty"`
+	Phase    string           `json:"phase"`
+	Clock    string           `json:"clock,omitempty"` // the LUT clock now (09:16 ...)
+	ExitTime string           `json:"exit_time,omitempty"`
+	LUTArmed bool             `json:"lut_armed"` // the LUT tab's real build
+	Build    *LUTBuildRun     `json:"build,omitempty"`
+	Day      *MuhuratDay      `json:"day,omitempty"`
+	Live     *MuhuratLive     `json:"live,omitempty"`
 }
 
 // MuhuratLive: the ATM now, with time to expiry and greeks on the session
@@ -259,7 +174,7 @@ type MuhuratLive struct {
 
 func (s *Service) muhuratStatus(now time.Time) MuhuratStatus {
 	st := MuhuratStatus{Success: true, Now: now.In(lutIST()).Format("2006-01-02 15:04:05"), Sessions: specialSessionList(),
-		ConfirmText: muhuratConfirm, Config: loadMuhuratBuildConfig()}
+		LUTArmed: loadLUTBuildConfig().Armed}
 	today := now.In(lutIST()).Format("2006-01-02")
 	for i := range st.Sessions {
 		ss := st.Sessions[i]
@@ -269,21 +184,15 @@ func (s *Service) muhuratStatus(now time.Time) MuhuratStatus {
 			st.Next = &ss
 		}
 	}
-	if !st.Config.Armed {
-		st.Checks = append(st.Checks, "not armed")
-	}
-	if strings.TrimSpace(st.Config.BrokerName) == "" || strings.TrimSpace(st.Config.AccountID) == "" {
-		st.Checks = append(st.Checks, "broker / account not set")
-	}
 	if st.Today == nil {
-		st.Phase = "no special session today -- nothing runs"
+		st.Phase = "no special session today -- the normal 09:15-15:40 clock"
 		if st.Next != nil {
-			st.Phase = fmt.Sprintf("next session %s %s %s-%s", st.Next.Name, st.Next.Date, st.Next.Open, st.Next.Close)
+			st.Phase = fmt.Sprintf("next special session %s %s %s-%s", st.Next.Name, st.Next.Date, st.Next.Open, st.Next.Close)
 		}
 		return st
 	}
 	_, open, close, _ := specialSessionOn(now)
-	st.ExitTime = muhuratExitTime(close)
+	st.ExitTime = close.Add(-muhuratExitBefore).Format("15:04:05")
 	switch clock, ok := sessionHHMM(now); {
 	case now.Before(open):
 		st.Phase = fmt.Sprintf("before the open (%s) -- the first check is %s as the 09:16 table", st.Today.Open, open.Add(time.Minute).Format("15:04"))
@@ -293,16 +202,18 @@ func (s *Service) muhuratStatus(now time.Time) MuhuratStatus {
 	default:
 		st.Phase = "session over"
 	}
+	lutEng.mu.Lock()
+	if b := lutEng.build; b != nil && lutEng.day == today {
+		bc := *b
+		st.Build = &bc
+	}
+	lutEng.mu.Unlock()
 	muh.Lock()
 	if muh.d.Day != today {
 		muh.d = loadMuhuratDay(today)
 	}
 	d := muh.d
 	d.Minutes = append([]MuhuratRecord(nil), muh.d.Minutes...)
-	if muh.d.Build != nil {
-		b := *muh.d.Build
-		d.Build = &b
-	}
 	muh.Unlock()
 	st.Day = &d
 	st.Live = s.muhuratLive(now)
@@ -350,8 +261,7 @@ func lutRawDTENormal(now, expiry time.Time) float64 {
 }
 
 // MuhuratHandler: GET /api/muhurat (status); POST {action, ...}:
-// session_save {session}, session_delete {date}, config {config},
-// arm {confirm}, disarm.
+// session_save {session}, session_delete {date}.
 func (h *Handlers) MuhuratHandler(w http.ResponseWriter, r *http.Request) {
 	s := h.Service
 	now := time.Now().In(lutIST())
@@ -363,8 +273,6 @@ func (h *Handlers) MuhuratHandler(w http.ResponseWriter, r *http.Request) {
 		Action  string         `json:"action"`
 		Session SpecialSession `json:"session"`
 		Date    string         `json:"date"`
-		Config  LUTBuildConfig `json:"config"`
-		Confirm string         `json:"confirm"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		lutJSON(w, http.StatusBadRequest, MuhuratStatus{Error: "bad json: " + err.Error()})
@@ -409,44 +317,6 @@ func (h *Handlers) MuhuratHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("[MUHURAT] session %s removed", body.Date)
-	case "config":
-		c := loadMuhuratBuildConfig()
-		n := body.Config
-		armed, armedAt := c.Armed, c.ArmedAt
-		c = lutBuildDefaults(n)
-		c.Armed, c.ArmedAt = armed, armedAt
-		if err := saveMuhuratBuildConfig(c); err != nil {
-			fail(err.Error())
-			return
-		}
-	case "arm":
-		if strings.TrimSpace(body.Confirm) != muhuratConfirm {
-			fail(fmt.Sprintf("type %q to arm", muhuratConfirm))
-			return
-		}
-		c := loadMuhuratBuildConfig()
-		if strings.TrimSpace(c.BrokerName) == "" || strings.TrimSpace(c.AccountID) == "" {
-			fail("broker / account not set")
-			return
-		}
-		if len(specialSessionList()) == 0 {
-			fail("no special session listed -- save the session first")
-			return
-		}
-		c.Armed, c.ArmedAt = true, now.Format("2006-01-02 15:04:05")
-		if err := saveMuhuratBuildConfig(c); err != nil {
-			fail(err.Error())
-			return
-		}
-		log.Printf("[MUHURAT-BUILD] ARMED: the first YES of a listed session fires ONE real build of %d lot(s) on %s/%s", c.Lots, c.BrokerName, c.AccountID)
-	case "disarm":
-		c := loadMuhuratBuildConfig()
-		c.Armed, c.ArmedAt = false, ""
-		if err := saveMuhuratBuildConfig(c); err != nil {
-			fail(err.Error())
-			return
-		}
-		log.Printf("[MUHURAT-BUILD] disarmed")
 	default:
 		fail("unknown action " + body.Action)
 		return

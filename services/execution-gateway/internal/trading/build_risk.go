@@ -46,6 +46,7 @@ func (r *BuildRiskConfig) Validate(entryAt time.Time) error {
 		if err != nil {
 			return fmt.Errorf("exit_time: %w", err)
 		}
+		exitAt = sessionExitCap(exitAt) // a special session (Muhurat): before its close
 		if !exitAt.After(entryAt) {
 			return fmt.Errorf("exit_time %s is not after entry_time %s",
 				exitAt.Format("15:04:05"), entryAt.In(exitAt.Location()).Format("15:04:05"))
@@ -76,7 +77,7 @@ func applyBuildRiskConfig(cfg *MonitorConfig, r *BuildRiskConfig, now time.Time)
 		if err != nil {
 			return fmt.Errorf("exit_time: %w", err)
 		}
-		cfg.SquareOffHardTime = exitAt
+		cfg.SquareOffHardTime = sessionExitCap(exitAt) // a special session (Muhurat): before its close
 	}
 	if r.SlBps > 0 {
 		cfg.SLPnLBpsOfSpot = r.SlBps

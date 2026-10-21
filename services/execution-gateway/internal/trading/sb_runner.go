@@ -884,6 +884,7 @@ func (s *Service) sbRiskLocked(r *sbRunner, chain *OptionChainSnapshot, now time
 	timeHit, timeAt := false, ""
 	if cfg.ExitTime != "" {
 		if at, err := ParseClockTodayIST(cfg.ExitTime, now); err == nil {
+			at = sessionExitCap(at) // a special session (Muhurat): before its close
 			timeAt, timeHit = at.Format("15:04:05"), !now.Before(at)
 		}
 	}
@@ -1009,7 +1010,8 @@ func (s *Service) sbRiskLocked(r *sbRunner, chain *OptionChainSnapshot, now time
 	}
 	if timeAt != "" {
 		remaining := "0s"
-		if at, err := ParseClockTodayIST(cfg.ExitTime, now); err == nil && at.After(now) {
+		if at, err := ParseClockTodayIST(cfg.ExitTime, now); err == nil && sessionExitCap(at).After(now) {
+			at = sessionExitCap(at)
 			remaining = at.Sub(now).Truncate(time.Second).String()
 		}
 		log.Printf("[MONITOR][%s] minute=%s check=TIME status=%s target=%s remaining=%s",

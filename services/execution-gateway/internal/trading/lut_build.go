@@ -190,6 +190,9 @@ func (s *Service) lutFireBuildLocked(day string, rec LUTEvaluation, entry *LUTEn
 		return
 	}
 	now := time.Now().In(lutIST())
+	if at, err := ParseClockTodayIST(c.ExitTime, now); err == nil && !sessionExitCap(at).Equal(at) {
+		c.ExitTime = sessionExitCap(at).Format("15:04:05") // a special session (Muhurat): before its close
+	}
 	if e.isEvent && e.sc != nil && e.sc.UseEvents { // event day: one third of the size (backtest EVENT_SIZE), at least one lot
 		c.Lots = max(1, int(float64(c.Lots)*lutEventSize))
 	}

@@ -3,11 +3,11 @@ import { postJSON } from './api.js';
 import { box, muted } from './styles.js';
 
 // MUHURAT -- a special trading session (NSE Diwali Muhurat, 2026: Sun 8 Nov,
-// timings per the NSE circular). Only a date listed here changes anything:
-// time to expiry counts only the session's trading minutes (gateway + feed
-// decoder greeks), the LUT is checked on the session clock (first minute
-// after the open = the 09:16 table) and, when armed, its first YES fires ONE
-// real build that exits 3 min before the close. Normal days are untouched.
+// timings per the NSE circular). It sells exactly as a normal day -- the LUT
+// tab's arming, build and monitoring -- only the open and close differ: the
+// LUT runs on the session clock (first minute after the open = the 09:16
+// table), time to expiry counts only the session's trading minutes and every
+// timed exit is 3 min before the close. Only a listed date changes anything.
 // Backend: services/execution-gateway/internal/trading/muhurat.go
 
 const th = { 'text-align': 'right', padding: '6px 8px', 'font-size': '11px', opacity: 0.7, 'white-space': 'nowrap' };
@@ -21,14 +21,11 @@ export default function MuhuratTab() {
   const [msg, setMsg] = createSignal('');
   const [busy, setBusy] = createSignal(false);
   const [sess, setSess] = createSignal({ date: '2026-11-08', name: 'Diwali Muhurat', pre_open: '', open: '', close: '' });
-  const [cfg, setCfg] = createSignal(null);
-  const [confirm, setConfirm] = createSignal('');
 
   const load = async () => {
     try {
       const d = await (await fetch('/api/muhurat')).json();
       setSt(d);
-      if (!cfg()) setCfg({ ...d.config });
     } catch (e) { setMsg(String(e)); }
   };
   const post = async (body) => {
@@ -38,27 +35,16 @@ export default function MuhuratTab() {
       const d = await postJSON('/api/muhurat', body);
       setSt(d);
       if (!d.success) setMsg(d.error || 'failed');
-      else setCfg({ ...d.config });
       return d;
     } catch (e) { setMsg(String(e)); } finally { setBusy(false); }
   };
   const setS = (k, v) => setSess({ ...sess(), [k]: v });
-  const setC = (k, v) => setCfg({ ...cfg(), [k]: v });
-  const num = (k) => (e) => setC(k, Number(e.currentTarget.value) || 0);
 
   const saveSession = () => post({ action: 'session_save', session: sess() });
   const editSession = (s) => setSess({ ...s });
   const deleteSession = (s) => {
     if (window.confirm(`Remove the special session ${s.date} (${s.open}-${s.close})?\n\nThat date then runs on the normal clock.`)) post({ action: 'session_delete', date: s.date });
   };
-  const saveConfig = () => post({ action: 'config', config: cfg() });
-  const arm = () => {
-    const c = st()?.config || {};
-    if (!window.confirm(`ARM the Muhurat build?\n\nThe FIRST LUT YES of a listed session sends ONE REAL build of ${c.lots} lot(s) on ${c.broker_name}/${c.account_id}, exiting 3 min before the close. It disarms itself when it fires.`)) return;
-    post({ action: 'arm', confirm: confirm() }).then(() => setConfirm(''));
-  };
-  const disarm = () => post({ action: 'disarm' });
-
   let timer;
   onMount(() => { load(); timer = setInterval(() => { if (!document.hidden && !busy()) load(); }, 5000); });
   onCleanup(() => clearInterval(timer));
@@ -139,45 +125,22 @@ export default function MuhuratTab() {
         </div>
       </Show>
 
-      <Show when={cfg()}>
-        <div style={{ ...box, border: st()?.config?.armed ? '2px solid #b23b3b' : box.border }}>
-          <div style={{ display: 'flex', 'align-items': 'center', gap: '12px', 'flex-wrap': 'wrap' }}>
-            <strong>Muhurat build</strong>
-            <span style={{ padding: '1px 8px', 'border-radius': '8px', background: st()?.config?.armed ? '#b23b3b' : '#455a64', 'font-size': '12px' }}>
-              {st()?.config?.armed ? `ARMED since ${st().config.armed_at}` : 'not armed'}
-            </span>
-            <span style={muted}>REAL orders on {st()?.config?.broker_name}/{st()?.config?.account_id} · its own settings, separate from the LUT tab</span>
-          </div>
-          <div style={muted}>
-            The first YES of the session fires ONE delta-neutral straddle build at the strike the LUT evaluated; the standard monitor then runs hedges, SL / TP and the timed exit (3 min before the close). It disarms itself when it fires and never fires twice.
-          </div>
-          <div style={{ display: 'flex', gap: '10px', 'flex-wrap': 'wrap', 'align-items': 'flex-end', 'margin-top': '8px' }}>
-            {field('Lots', <input class="symbol-select" style={{ width: '70px' }} inputmode="numeric" value={cfg().lots} onInput={num('lots')} />)}
-            {field('Lots / order (0 = auto)', <input class="symbol-select" style={{ width: '70px' }} inputmode="numeric" value={cfg().order_lots_per_call} onInput={num('order_lots_per_call')} />)}
-            {field('SL bps (0 = LUT)', <input class="symbol-select" style={{ width: '70px' }} inputmode="decimal" value={cfg().sl_bps} onInput={num('sl_bps')} />)}
-            {field('TP bps (0 = LUT)', <input class="symbol-select" style={{ width: '70px' }} inputmode="decimal" value={cfg().tp_bps} onInput={num('tp_bps')} />)}
-            {field('Wings %', <input class="symbol-select" style={{ width: '70px' }} inputmode="decimal" value={cfg().wing_pct} onInput={num('wing_pct')} />)}
-            {field('Buy buffer', <input class="symbol-select" style={{ width: '70px' }} inputmode="decimal" value={cfg().buy_buffer} onInput={num('buy_buffer')} />)}
-            {field('Sell buffer', <input class="symbol-select" style={{ width: '70px' }} inputmode="decimal" value={cfg().sell_buffer} onInput={num('sell_buffer')} />)}
-            {field('Account', <input class="symbol-select" style={{ width: '80px' }} value={cfg().account_id} onInput={(e) => setC('account_id', e.currentTarget.value)} />)}
-            <button class="tab-btn" disabled={busy()} onClick={saveConfig}>Save settings</button>
-          </div>
-          <div style={{ display: 'flex', gap: '10px', 'align-items': 'center', 'margin-top': '10px', 'flex-wrap': 'wrap' }}>
-            <Show when={!st()?.config?.armed} fallback={<button class="tab-btn" disabled={busy()} onClick={disarm}>Disarm</button>}>
-              <input class="symbol-select" style={{ width: '160px' }} placeholder={`type ${st()?.confirm_text}`} value={confirm()} onInput={(e) => setConfirm(e.currentTarget.value)} />
-              <button class="tab-btn" style={{ background: '#b23b3b' }} disabled={busy() || confirm() !== st()?.confirm_text} onClick={arm}>Arm</button>
-            </Show>
-            <Show when={(st()?.checks || []).length}><span style={{ color: '#e6a067', 'font-size': '12px' }}>would not fire: {st().checks.join('; ')}</span></Show>
-          </div>
-          <Show when={day()?.build}>
-            <div style={{ 'margin-top': '8px', 'font-size': '13px' }}>
-              <span style={{ padding: '1px 8px', 'border-radius': '8px', background: BUILD_BG[day().build.status] || '#455a64', 'margin-right': '8px' }}>{day().build.status}</span>
-              YES {day().build.minute} · {day().build.expiry} {day().build.strike} · {day().build.lots} lot(s) · SL {n2(day().build.sl_bps)} bps TP {n2(day().build.tp_bps)} bps · exit {day().build.exit_time}
-              {day().build.trade_uid ? ` · trade ${day().build.trade_uid}` : ''}{day().build.error ? ` · ${day().build.error}` : ''}
-            </div>
-          </Show>
+      <div style={box}>
+        <div style={{ display: 'flex', 'align-items': 'center', gap: '12px', 'flex-wrap': 'wrap' }}>
+          <strong>Selling</strong>
+          <span style={{ padding: '1px 8px', 'border-radius': '8px', background: st()?.lut_armed ? '#b23b3b' : '#455a64', 'font-size': '12px' }}>
+            LUT tab build {st()?.lut_armed ? 'ARMED' : 'not armed'}
+          </span>
+          <span style={muted}>as on a normal day: arm, size, SL / TP and wings are set on the LUT tab; the session's first YES is the day's LUT YES (paper entry + the real build when armed), driven by its simulation and the standard monitor</span>
         </div>
-      </Show>
+        <Show when={st()?.build}>
+          <div style={{ 'margin-top': '8px', 'font-size': '13px' }}>
+            <span style={{ padding: '1px 8px', 'border-radius': '8px', background: BUILD_BG[st().build.status] || '#455a64', 'margin-right': '8px' }}>{st().build.status}</span>
+            YES {st().build.minute} · {st().build.expiry} {st().build.strike} · {st().build.lots} lot(s) · SL {n2(st().build.sl_bps)} bps TP {n2(st().build.tp_bps)} bps · exit {st().build.exit_time}
+            {st().build.trade_uid ? ` · trade ${st().build.trade_uid}` : ''}{st().build.error ? ` · ${st().build.error}` : ''}
+          </div>
+        </Show>
+      </div>
 
       <Show when={st()?.today}>
         <div style={box}>
