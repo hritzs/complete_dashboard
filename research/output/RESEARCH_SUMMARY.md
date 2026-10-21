@@ -23,7 +23,10 @@ individual/combined daily path, entry/exit, cost, Greek, formula and calendar
 period is retained.30 policy entries represent only8 distinct dates, not30
 independent observations. The sampled data has1-second timestamps with1900
 date placeholders, not subsecond order-event data.11 ineligible data/window
-dates were explicitly audited; raw exceptions remain preserved. No live code,
+dates were explicitly audited:5 verified Diwali/Muhurat sessions outside
+the morning window,5 missing-underlying files and1 insufficient-opening date.
+See `MUHURAT_CALENDAR_AUDIT.md`; year-specific NSE hours and circulars are
+in the workbook. Raw exceptions remain preserved. No live code,
 .env or shared inputs changed. Neural models and a new GS entry state machine
 remain separate unimplemented hypotheses.
 

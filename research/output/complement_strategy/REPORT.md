@@ -13,7 +13,7 @@
 - Same-contract offset is diagnostic; buying existing GS shorts can reduce net exposure without creating independent return alpha.
 - Earlier research used these years; this screen is not an untouched holdout. No neural model, parameter optimization or alpha validation is claimed.
 - Zero-error complete histories and exact serial/pool pilot parity are required before reporting.
-- 11 pre-entry admission failures independently audited as ineligible; raw exceptions preserved, all dates retained. No execution/exit failures may be converted to zero.
+- 11 pre-entry admission failures audited: 5 verified Diwali/Muhurat sessions outside the fixed morning window, 5 missing-underlying files, 1 insufficient-opening-data date. Scheduled closures are not missing morning data. NSE F&O circulars and year-specific IST hours are recorded in Muhurat_calendar; all dates and original checkpoints/exceptions retained. Missing exits and unexpected execution failures remain fatal. No trading-hour shift, entry, PnL or DD changed.
 
 | Policy | Net | Maximum DD | Worst day | Active days | Entries |
 |---|---:|---:|---:|---:|---:|

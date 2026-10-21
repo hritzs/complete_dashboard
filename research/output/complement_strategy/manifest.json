@@ -1,10 +1,14 @@
 {
   "Inputs": {
-    "report_complement_strategy.py": "3ab04a0e7f6e525f72d1cc801493922ee6718850a3b30ab63c9098193b9867f9",
+    "report_complement_strategy.py": "e8ed5347a4120872d44eff12086b2f6590a9a8f60dd8279a6615e53ce402403e",
     "complement_strategy.py": "ed7f6b9e8c42e9b001a5408e0334c78c1aceb7258a20a750332526073de3177d",
     "COMPLEMENT_STRATEGY_SPEC.md": "a8b0fca1fb9e40611a578843106bcf9c40631e4a31b44db7a416a75f9b956cdb",
     "test_complement_strategy.py": "e8d65eaf581b93a78d4ea78e8e64a9215ddd683bebb4e05337e1cf4e677d9ac6",
-    "verify_complement_strategy.py": "1fc287d0752350562db4fd4e9333ad90baaab49f0a8a2a0eb6969165903f5d20",
+    "annotate_complement_calendar.py": "c422f5c2debf50d329173cd860043fd27bc056116aebc8e7504d395ca03b45f9",
+    "test_complement_calendar.py": "339ed66c76883bea03c10a72a4a173301b6c02b6d67357bfa1f8bfbfb8a0c34b",
+    "muhurat_sessions.csv": "47e3c1452c35b3d8069b83c32967e1d26b9d13be9662d479976e14e88f536827",
+    "output/complement_strategy/calendar_annotation_manifest.json": "76818686284d70f867207bc25a9ffa246a602cefed4544dab22bdf35e1a61766",
+    "verify_complement_strategy.py": "2222c5a0cfba22e9b767dd2a74deb4f2bc2309e7135d29a468073449b4ce3175",
     "resolve_complement_eligibility.py": "106c097d7656afa657db4f0b167ab09a90bdc0b21bb36a1f46e4b7e394a69d45",
     "complement_signal_audit.py": "b79c95440a68b4bdf0de1d0d6a4045526f855015b4f039e32a09f7d57c77d901",
     "complement_data_audit.py": "9ca53b1219650d31a8bd00ca658ef017ace48b5ccf59090f68390cbec7dc860d",
@@ -2891,23 +2895,24 @@
   "Outputs": {
     "sample_signal_audit.json": "605ae0dc8a24c8c3b207f5615b547547c744c068385b5104e2b1cbaf8b9a0ccc",
     "data_audit.xlsx": "de84c707a8b7bf9683ce8c62f6c6c4c1a52e9ad12a2313edfe5310e7785d34aa",
-    "eligibility_audit.csv": "3024b0adb7452a4320323296346b47430e1eeff5291f5c98bbce4294e67db67d",
-    "complement_equity_dd.svg": "90d8dc053ee34c5cb5f4a56ff0db6135d20d391c15596678d75d0aca83364241",
+    "eligibility_audit.csv": "d9d42276d50380f34b3885ad6c1b3882c656871df323a5aa4a7ee8176cb91af2",
+    "complement_equity_dd.svg": "261fd2b68f7a8dc76427bcb4168dfdb6a90b4b819b14efaa415b5debd2dd715f",
     "pilot_manifest.json": "7447c08f33cc39aa33c2d3789799a40dca43e7b6cc4d6c478425f18eb4ccccd0",
-    "REPORT.md": "08c37c4e932ef342ec8f7de2fde18c17ce433f61d38977d91dad00b1322871d2",
-    "eligibility_audit.xlsx": "e717334193f73bcd86692520981689ad95e80b1c490e0f4354a577d98999b91b",
+    "REPORT.md": "7cf0a4af49934afe13e0d234b35bc21962ef8eeea37e0a0a61b80b4893572225",
+    "eligibility_audit.xlsx": "b16f7335488a18e6e37ffb6c3c6ee2b47ee4dabb5577c946fd4a148ec3cc4079",
     "complement_equity_dd.png": "4776eaf0ab4e6d770bc7aafd3ae5491dc55289db0321f0c068b1a5e0ef2f7855",
     "data_audit.csv": "97702232942cde198f878d97304d14e6809a7d9b69859492887da2a2347113c9",
     "raw_run_manifest.json": "a266c74601a13492fd810481273613c88224752f8cd4b1071992ebf8cb425ced",
     "summary.csv": "aa063e3fec3df64c0b0dca7bb2e09e46bc0319b3fc3ecb4776b5338dc05311cc",
     "audit_manifest.json": "21a61975947d93164e4c73d53ee68f0f50897790354cbeeafc0065cf98585f45",
+    "calendar_annotation_manifest.json": "76818686284d70f867207bc25a9ffa246a602cefed4544dab22bdf35e1a61766",
     "sample_signal_coverage.xlsx": "a6fd0c38eae9986ac8cc5259e279566fd33d47df3623bd0a0ec472f5c087fc3d",
     "daily_pnl.csv": "45666a3f609717398190cce2aa86d52352efabdf5b0d526e19bbcffd18e49860",
     "run_manifest.json": "960e0e363c71ad2ae8e3fb749ef77138aed6a2bdae84e7e007267de794cd6d51",
     "combined_equity_dd.png": "914b8a7b9fe9e6e1f71a7300a4e80992f04bfabdce3043b802f094dedc830d7b",
-    "combined_equity_dd.svg": "779db5324958519a66a812bad6b919f46b2a2748a2eff77c30b65b1bc4859694",
-    "trades.csv": "7ae4af26fee1cb5bcd643d4c053b6c595ed9c8c57234d6200b8c1d021dabcd23",
+    "combined_equity_dd.svg": "97bcf22888827771616a420e815033091e7bc5d9c7cda0c0839c480360198daf",
+    "trades.csv": "dcd4f712ffab237c3c0bb090f17d4f7c23f88a7d850b6544603706f381a8f949",
     "sample_signal_coverage.csv": "185359e0073e1fa7c95dce0ff264043a14e3d9f5c884a5edf48f1bb7bee42289",
-    "complement_strategy.xlsx": "0820826229d3b7d643d517e89430c1fb866ae8fab53b6ba30d6ac7fc55964d4d"
+    "complement_strategy.xlsx": "a04667a4ad409b68a9f0b3920115671654700e139aa7af3d05f1b2d90cd9a966"
   }
 }

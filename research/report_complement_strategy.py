@@ -58,6 +58,13 @@ def load():
 
 def main():
     dates,trades,replay,gs,gs_records,run=load();policies=[s+' '+g for s,g in POLICIES]
+    from annotate_complement_calendar import verify as verify_calendar
+    verify_calendar()
+    eligibility=pd.read_csv(OUT/'eligibility_audit.csv',dtype={'Tick_mtime_ns':str})
+    for row in eligibility.itertuples(index=False):
+        mask=trades.Date.eq(row.Date)
+        assert not trades.loc[mask,'Traded'].any()
+        trades.loc[mask,'Reason']='Ineligible: '+row.Eligibility_reason
     daily=trades.pivot(index='Date',columns='Policy',values='Net_PnL').reindex(dates).reset_index()
     stress=trades.pivot(index='Date',columns='Policy',values='Double_fee_net').reindex(dates).reset_index()
     gs_active=gs.Leg.fillna('').isin(['CW','NW']).to_numpy();gs_pnl=gs.Net_PnL.to_numpy(float)
@@ -145,7 +152,8 @@ def main():
     ],columns=['Calculation','Equation','Interpretation'])
     if (OUT/'eligibility_audit.csv').exists():
         tables['Eligibility_audit']=pd.read_csv(OUT/'eligibility_audit.csv',dtype={'Tick_mtime_ns':str})
-        note=f"{len(tables['Eligibility_audit'])} pre-entry admission failures independently audited as ineligible; raw exceptions preserved, all dates retained. No execution/exit failures may be converted to zero."
+        tables['Muhurat_calendar']=pd.read_csv(ROOT/'muhurat_sessions.csv')
+        note='11 pre-entry admission failures audited: 5 verified Diwali/Muhurat sessions outside the fixed morning window, 5 missing-underlying files, 1 insufficient-opening-data date. Scheduled closures are not missing morning data. NSE F&O circulars and year-specific IST hours are recorded in Muhurat_calendar; all dates and original checkpoints/exceptions retained. Missing exits and unexpected execution failures remain fatal. No trading-hour shift, entry, PnL or DD changed.'
         notes.append(note);tables['Read_me']=pd.DataFrame({'Method':notes})
     if (OUT/'sample_signal_coverage.csv').exists():tables['Sample_signal_coverage']=pd.read_csv(OUT/'sample_signal_coverage.csv')
     files=charts(daily,paths,policies)
@@ -175,6 +183,7 @@ def main():
     lines+=['',*['!['+file+']('+file+')' for file in files],'']
     (OUT/'REPORT.md').write_text('\n'.join(lines))
     inputs=[Path(__file__),ROOT/'complement_strategy.py',ROOT/'COMPLEMENT_STRATEGY_SPEC.md',ROOT/'test_complement_strategy.py',
+        ROOT/'annotate_complement_calendar.py',ROOT/'test_complement_calendar.py',ROOT/'muhurat_sessions.csv',OUT/'calendar_annotation_manifest.json',
         ROOT/'verify_complement_strategy.py',ROOT/'resolve_complement_eligibility.py',ROOT/'complement_signal_audit.py',ROOT/'complement_data_audit.py',
         OUT/'data_audit.csv',OUT/'audit_manifest.json',*sorted((OUT/'raw_ineligible_days').glob('*.pkl')),
         OUT/'run_manifest.json',OUT/'pilot_manifest.json',*sorted((OUT/'days').glob('*.pkl')),*sorted((OUT/'pilot_days').glob('*.pkl')),

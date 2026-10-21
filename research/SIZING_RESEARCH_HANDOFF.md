@@ -935,12 +935,16 @@ A later coarser-timeframe or prior-data-calibrated direction model would be a
 new recorded study, not an adjustment to this frozen result.
 
 Eleven raw pre-entry admission failures were independently audited:5 dates
-outside the morning window,5 entire-file null-underlying columns,1 date with
+verified Diwali/Muhurat sessions outside the morning window (scheduled closures,
+not missing morning data),5 entire-file null-underlying columns,1 date with
 insufficient opening coverage. All dates remain in the calendar. Original raw
 exceptions, source schema/window checks and the original run manifest are
 preserved under the output folder. No missing exit or unexpected execution
 error was assigned zero. See `resolve_complement_eligibility.py` and the
-Eligibility_audit workbook sheet. Tick fingerprints match the GS replay.
+Eligibility_audit and Muhurat_calendar workbook sheets. Exact year-specific IST
+hours and NSE F&O circulars are in `muhurat_sessions.csv`; see
+`MUHURAT_CALENDAR_AUDIT.md`. No special-session hours were shifted into the
+morning strategy. Tick fingerprints match the GS replay.
 
 Combined drawdown is recomputed from combined daily PnL, never summed from
 strategy DDs. GS-loss-day attribution is descriptive, not an entry predictor.

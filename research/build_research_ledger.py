@@ -377,6 +377,9 @@ def main():
         input_sheet=next((n for n in ('Daily_risk','Trade_comparison','Trades','Daily','Daily_opportunity','daily_comparison') if n in source),None)
         original_inputs=source[input_sheet] if input_sheet else source['Daily_PnL']
         table(book,prefix+'_Inputs',original_inputs)
+        if c.get('kind')=='portfolio' and 'Muhurat_calendar' in source:
+            table(book,prefix+'_Calendar',source['Muhurat_calendar'])
+            table(book,prefix+'_Eligibility',source['Eligibility_audit'])
         risk_columns=[col for col in ('Loss_probability','Expected_downside','Loss_rank','Downside_rank','Instability',
             'Risk_score','Risk_threshold','Dicey','Flag_reason','Strong_estimated_edge','Boost_eligible',
             'Strong_plus2','Strong_plus4','Warmup','Training_cutoff','Premium_percentile60','Residual_z','Spread_pct',

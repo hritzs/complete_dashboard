@@ -4,7 +4,8 @@
   "Long_policy_days": 8580,
   "Long_entries_repriced": 30,
   "Daily_paths": 13,
+  "Calendar_classification": "5 Diwali/Muhurat sessions; 5 missing underlying; 1 insufficient opening; all retained",
   "Period_rows_checked": 1391,
   "Tick_fingerprints_unchanged": true,
-  "Verifier_SHA256": "1fc287d0752350562db4fd4e9333ad90baaab49f0a8a2a0eb6969165903f5d20"
+  "Verifier_SHA256": "2222c5a0cfba22e9b767dd2a74deb4f2bc2309e7135d29a468073449b4ce3175"
 }

@@ -25,6 +25,8 @@ def fingerprint(date):
 
 
 def main():
+    from annotate_complement_calendar import verify as verify_calendar
+    verify_calendar()
     manifest=json.loads((OUT/'manifest.json').read_text())
     for name,digest in manifest['Inputs'].items():assert hashlib.sha256((ROOT/name).read_bytes()).hexdigest()==digest,name
     for name,digest in manifest['Outputs'].items():assert hashlib.sha256((OUT/name).read_bytes()).hexdigest()==digest,name
@@ -85,6 +87,7 @@ def main():
                 mask=np.asarray(periods==str(row.Period))
                 np.testing.assert_allclose([row.Net,row.MDD],metric(p[mask]),atol=1e-8,rtol=0);period_rows+=1
     result={'Status':'PASS','Dates':1430,'Long_policy_days':8580,'Long_entries_repriced':count,'Daily_paths':13,
+        'Calendar_classification':'5 Diwali/Muhurat sessions; 5 missing underlying; 1 insufficient opening; all retained',
         'Period_rows_checked':period_rows,'Tick_fingerprints_unchanged':True,
         'Verifier_SHA256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
     (OUT/'verification.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result,indent=2))
