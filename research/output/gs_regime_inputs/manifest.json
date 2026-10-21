@@ -1,0 +1,22 @@
+{
+  "Status": "INPUT_AUDIT_ONLY",
+  "Strategy_PnL_tested": false,
+  "Dates": [
+    "2021-01-04",
+    "2024-02-29",
+    "2026-10-13",
+    "2021-03-25"
+  ],
+  "Inputs": {
+    "gs_regime_input_audit.py": "652066fa6d8ad76c7e18a9f80a994ffae5d21c7b2b83032105abc781f28cba56",
+    "GS_REGIME_COMPLEMENT_SPEC.md": "f4f7f3d964a5cd9972cd18a918291e7951caf944f229594c877ea10d1d50545a"
+  },
+  "Outputs": {
+    "REPORT.md": "8e788bd2204875609e6858ded3e85bcee6bfcb23463ce209dd8975354d9d55e3",
+    "summary.csv": "24cfadcf59607a33c7edf7621c5a654b7d8a95e36e381709fcc0eae14180466d",
+    "oi_changes.csv": "7188f87afecbe8e14b1190c7ee77c7b18d6ceb441be42772b08d1fd458c0e9f2",
+    "regime_input_audit.xlsx": "bf5e2887bf15b68f72abc4592a949a70d99b84f6441b7acfb9385223bec3151b",
+    "contracts.csv": "6758be6a3b890f8563ef35d2223d6d506de4b819c09140cd464afc91cc5023ff"
+  },
+  "Limits": "Four sampled morning prefixes, not all history. OI value-change cadence is not exchange publication latency. No order/aggressor inference; no validated trading rule."
+}

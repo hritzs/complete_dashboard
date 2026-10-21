@@ -1,0 +1,5 @@
+Date,Selection,Window,Expiry,Contracts,ATM_reference_U_before_0920,Median_OI_change_gap_seconds,Median_OI_unchanged_fraction,OI_change_events,Volume_decrease_events,Fractional_second_rows,Tick_size,Tick_mtime_ns
+2021-01-04,Previously fixed data-audit sample,09:15–10:30 IST,2021-01-07,18,14098.65,181.0,0.993865845175445,447,29047,0,216480965,1769697776507707800
+2024-02-29,Previously fixed data-audit sample,09:15–10:30 IST,2024-02-29,18,21925.4,180.0,0.992943183883018,458,33367,0,306460636,1766621725905414500
+2026-10-13,Previously fixed data-audit sample,09:15–10:30 IST,2026-10-13,18,22446.65,60.0,0.9723247194788632,1350,25196,0,414305188,1791921647261867300
+2021-03-25,Ex-post worst-GS stress diagnostic,09:15–10:30 IST,2021-03-25,18,14484.1,181.0,0.9942336523278728,449,36615,0,239105069,1766610084962183800

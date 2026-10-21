@@ -1044,3 +1044,22 @@ Keep the method:
   running;
 - TEST reported once;
 - a shuffle check for any candidate that wins.
+
+## 8. GS regime complement: input feasibility and candidate (2026-10-21)
+
+See `GS_REGIME_COMPLEMENT_SPEC.md` and
+`output/gs_regime_inputs/regime_input_audit.xlsx`. This is an input audit and
+a proposed intraday regime policy, not a PnL replay or validated iteration.
+Four morning samples (72 fixed option contracts) show median OI value-change
+gaps60–181seconds, no fractional-second timestamps and frequent within-contract
+Volume decreases. OI cannot serve as a second-by-second confirmation; the
+Volume definition requires vendor verification before differencing. The worst
+GS date was explicitly selected ex post as a diagnostic stress case.
+
+Candidate: completed-bar price persistence plus RV/IV repricing and cross-strike
+breadth; OI only secondary confirmation. Compare partial GS reduction and a
+premium-capped directional long-gamma sleeve, using combined-book Greeks and
+hard delta controls. Whipsaw without direction should not trigger directional
+longs. Provisional thresholds are research choices, not optimized results.
+A versioned execution specification and chronological replay remain required.
+No live code, previous strategy results or shared inputs changed.
