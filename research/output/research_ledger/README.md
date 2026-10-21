@@ -1,8 +1,17 @@
 # GammaShort research ledger
 
-Open `GammaShort_Research_Ledger.xlsx`. This combines 20 saved research iterations
-and 241 daily policy paths. It does not refit strategies or change live trading.
+Open `GammaShort_Research_Ledger.xlsx`. This combines 21 saved research iterations
+and 246 daily policy paths. It does not refit strategies or change live trading.
 The original source workbooks remain unchanged.
+
+## Latest addition: stop/regime prefix exits21
+
+21_ uses the frozen latest GS baseline at unchanged entry size. Four fixed CW
+overlays compare tighter stops and completed-bar regime exits using actual
+source-position cash/cost prefixes. NW remains unchanged. The21_Intraday_proxy
+sheet records source-model DD, which inherits legacy averaged fills/backfills
+and is not certified executable account DD. All policy paths and actual exit
+metadata are kept; no fitted model, optimal stop or forward validation is claimed.
 
 ## Latest additions: matched execution19 and parallel long options20
 

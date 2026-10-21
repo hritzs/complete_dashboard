@@ -2,6 +2,20 @@
 
 Research is isolated under `research/`. Do not translate a research result into `services/` or `ui/` without the owner's explicit direction.
 
+## 2026-10-21: intraday stop / regime exit replay (iteration21, handoff 4.24)
+
+Complete and verified (PASS); ledger rebuilt and verified with iteration21.
+Fixed CW overlays on the frozen latest-GS book (same entries, size1, NW unchanged):
+baseline 10,109.38 net / daily DD 168.42 / source-model intraday DD 179.00;
+stop x0.75 8,896.47 / 208.93 / 230.80; x0.875 9,641.42 / 171.22 / 190.16;
+regime exit 4,147.05 / 151.35 / 175.86; x0.875+regime 3,912.07 / 181.61 / 206.12.
+None adopted. Tighter stops cost profit and do not lower full-history DD; the
+regime exit lowers DD only by giving up ~55-60% of profit. Intraday DD is a
+source-model proxy, not executable account DD.
+
+Next gate: causal quote/position/cash execution baseline, then censored
+SL-before-recovery labels and chronological calibrated risk reduction.
+
 ## 2026-10-21: latest GS and complementary long-option screen
 
 Both studies are complete and independently verified on the same1,430 dates.

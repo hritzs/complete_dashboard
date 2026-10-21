@@ -1,0 +1,14 @@
+{
+  "Status": "PASS",
+  "Dates": 1430,
+  "Policies": 5,
+  "Policy_days": 7150,
+  "Traded_policy_days": 3970,
+  "Second_source_model_marks": 12221406,
+  "Prefix_cash_exits_checked": 3970,
+  "Changed_policy_exits": 1611,
+  "Period_rows_checked": 535,
+  "Regime_windows_independently_recomputed_after_entry": 183215,
+  "Limits": "Reconciled legacy source-model paths; not a causal fill certification or independent alpha validation",
+  "Verifier_SHA256": "2ff3c955ee727c36c08a44d4a70edcc64c0e3606e794aa8a927d0674bc6ab976"
+}

@@ -1,0 +1,40 @@
+{
+  "Date": "2023-11-06",
+  "Traded": false,
+  "Policies": [
+    {
+      "Date": "2023-11-06",
+      "Policy": "Baseline",
+      "Net_PnL": 0.0,
+      "Changed_exit": false
+    },
+    {
+      "Date": "2023-11-06",
+      "Policy": "Stop075",
+      "Net_PnL": 0.0,
+      "Changed_exit": false
+    },
+    {
+      "Date": "2023-11-06",
+      "Policy": "Stop0875",
+      "Net_PnL": 0.0,
+      "Changed_exit": false
+    },
+    {
+      "Date": "2023-11-06",
+      "Policy": "RegimeExit",
+      "Net_PnL": 0.0,
+      "Changed_exit": false
+    },
+    {
+      "Date": "2023-11-06",
+      "Policy": "Stop0875_Regime",
+      "Net_PnL": 0.0,
+      "Changed_exit": false
+    }
+  ],
+  "Error": "",
+  "Seconds": 1.7354540079977596,
+  "Tick_size": 208956189,
+  "Tick_mtime_ns": "1769707603575611400"
+}

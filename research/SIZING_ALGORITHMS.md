@@ -229,3 +229,15 @@ LUT construction and fill assumptions still prevent an end-to-end unbiased
 claim. Previously researched historical years are not an untouched holdout.
 These two reruns do not add iteration12 conviction gates or iteration13
 higher-tax boosts, and do not change the live system.
+
+## Iteration21: fixed CW stop/regime exits, unchanged sizing
+
+Algorithm A26. The baseline is the frozen latest GS book at size1. Four fixed
+overlays use gross CW stop multipliers0.75/0.875, a persistent completed-bar
+underlying regime exit, or0.875 plus that exit. Exit cash uses the current
+option/futures position and accrued hedge costs, discarding all later hedges.
+It is not daily-PnL clipping, not an old PnL multiplier and not a sizing study.
+NW remains unchanged. Source-model intraday DD carries prior intraday equity
+peaks across days; it inherits legacy source fills/backfills and is not
+certified executable account DD. The complete predeclared recipe is in
+`GS_INTRADAY_STOP_REPLAY_SPEC.md`; no model or optimized stop is adopted.

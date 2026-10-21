@@ -50,4 +50,18 @@ class ExecutionBookTests(unittest.TestCase):
         self.assertEqual(combined.Entries,2);self.assertEqual(combined.Underlying_strategy_entries,3)
 
 
+    def test_stop_overlay_retains_full_size_and_actual_early_exit(self):
+        baseline=self.book['Old_daily'].copy()
+        actual=baseline.copy();actual['Policy']='Stop075';actual['Traded']=[True,False]
+        actual['Net_PnL']=[-4.,0.];actual.loc[0,'Exit_Time']='09:30';actual.loc[0,'Exit_Reason']='Tighter_SL'
+        self.book={'Latest_GS_daily':baseline,'All_policy_days':actual,
+            'Daily_PnL':pd.DataFrame({'Date':baseline.Date,'Baseline':[10.,0.],'Stop075':[-4.,0.]})}
+        self.config['kind']='stops';self.raw['Net_PnL']=[1000.,1000.]
+        d,policies,_=self.load()
+        np.testing.assert_array_equal(d.Net_PnL,[10.,0.])
+        np.testing.assert_array_equal(policies[1]['pnl'],[-4.,0.])
+        np.testing.assert_array_equal(policies[1]['size'],[1.,1.])
+        self.assertEqual(policies[1]['exit'][0],'Tighter_SL 09:30')
+
+
 if __name__=='__main__':unittest.main()

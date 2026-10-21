@@ -80,7 +80,7 @@ def policy(name,pnl,size,active,entry,leg,exit_info=None):
 
 def load_iteration(config,raw):
     path=ROOT/'output'/config['source']; x=read(path)
-    kind=config['kind']; daily_sheet=config.get('daily','daily_comparison' if kind=='tick' else 'Daily_PnL' if kind in ('wide','logic','portfolio') else 'Trades')
+    kind=config['kind']; daily_sheet=config.get('daily','daily_comparison' if kind=='tick' else 'Daily_PnL' if kind in ('wide','logic','portfolio','stops') else 'Trades')
     source=x[daily_sheet].copy(); source['Date']=source.Date.astype(str).str[:10]
     if source.Date.duplicated().any(): raise ValueError('Duplicate dates: '+config['id'])
     # Tax source contains trades only: keep all production calendar days in range.
@@ -89,7 +89,7 @@ def load_iteration(config,raw):
     d=raw.set_index('Date').loc[list(dates)].reset_index()
     d=d.sort_values('Date').reset_index(drop=True)
     source=source.set_index('Date').reindex(d.Date).reset_index()
-    if kind=='portfolio':
+    if kind in ('portfolio','stops'):
         # Its flat benchmark is the newly replayed GS book, not the old vintage.
         actual=x['Latest_GS_daily'].copy();actual['Date']=actual.Date.astype(str).str[:10]
         assert not actual.Date.duplicated().any()
@@ -117,6 +117,19 @@ def load_iteration(config,raw):
             act=actual.Leg.isin(['CW','NW']).to_numpy()
             exits=np.where(act,actual.Exit_Reason.fillna('').astype(str)+' '+actual.Exit_Time.fillna('').astype(str),'')
             policies.append(policy(name,values,np.ones(len(d)),act,actual.Entry_Time.fillna(''),actual.Leg.fillna(''),exits))
+    elif kind=='stops':
+        np.testing.assert_allclose(source['Baseline'],base,atol=1e-8,rtol=0)
+        policies[0]['exit']=np.where(active,d.Exit_Reason.fillna('')+' '+d.Exit_Time.fillna(''),'')
+        actual=x['All_policy_days'].copy();actual['Date']=actual.Date.astype(str).str[:10]
+        for name in source.columns.drop('Date'):
+            if name=='Baseline':continue
+            rows=actual[actual.Policy.eq(name)].set_index('Date').loc[d.Date].reset_index()
+            values=rows.Net_PnL.to_numpy(float);act=rows.Traded.to_numpy(bool)
+            np.testing.assert_allclose(source[name],values,atol=1e-8,rtol=0)
+            np.testing.assert_array_equal(act,active)
+            np.testing.assert_array_equal(rows.Entry_Time.fillna(''),entry)
+            ex=np.where(act,rows.Exit_Reason.fillna('')+' '+rows.Exit_Time.fillna(''),'')
+            policies.append(policy(name,values,np.ones(len(d)),act,entry,leg,ex))
     elif kind=='portfolio':
         np.testing.assert_allclose(source['Latest GS'],base,atol=1e-8,rtol=0)
         actual=x['All_policy_days'].copy();actual['Date']=actual.Date.astype(str).str[:10]
@@ -380,6 +393,10 @@ def main():
         if c.get('kind')=='portfolio' and 'Muhurat_calendar' in source:
             table(book,prefix+'_Calendar',source['Muhurat_calendar'])
             table(book,prefix+'_Eligibility',source['Eligibility_audit'])
+        if c.get('kind')=='stops':
+            table(book,prefix+'_Intraday_proxy',source['All_policy_days'][['Date','Policy','Source_model_intraday_peak',
+                'Source_model_DD_at_close','Source_model_day_max_DD','Source_model_running_MDD','Day_local_MDD']])
+            table(book,prefix+'_Method',source['Read_me'])
         risk_columns=[col for col in ('Loss_probability','Expected_downside','Loss_rank','Downside_rank','Instability',
             'Risk_score','Risk_threshold','Dicey','Flag_reason','Strong_estimated_edge','Boost_eligible',
             'Strong_plus2','Strong_plus4','Warmup','Training_cutoff','Premium_percentile60','Residual_z','Spread_pct',

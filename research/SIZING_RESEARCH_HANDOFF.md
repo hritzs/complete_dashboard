@@ -1,6 +1,6 @@
 # GammaShort sizing / opportunity research: where it stands
 
-Updated 2026-10-19. The sizing studies through v6 and the preregistered
+Updated 2026-10-21 (latest: 4.24, intraday stop/regime replay). The sizing studies through v6 and the preregistered
 relaxed-entry rerun are complete. The derived-strategy simulator remains a
 scaffold (see sections 4.9, 4.10, and 7). The latest owner request is exact risk
 formulas and a persistent Excel iteration ledger in section4.17, extended with
@@ -954,6 +954,54 @@ LUT/fill limitations, while the new sleeve also has modeled atomic-fill,
 quantity, fee and timestamp-provenance assumptions. The first screen does not
 implement the separate future GS entry-state-machine hypothesis.
 
+### 4.24 CW stop and regime exits with intraday source-model DD (2026-10-21)
+
+Iteration21. Spec `GS_INTRADAY_STOP_REPLAY_SPEC.md` (frozen before results),
+engine `gs_intraday_replay.py`, report `report_gs_intraday_stops.py`, independent
+check `verify_gs_intraday_stops.py`; outputs in `output/gs_intraday_stops/`
+(`gs_intraday_stop_comparison.xlsx`, REPORT.md, full second paths in
+`paths/*.parquet` -- 293 MB, kept locally and in offline backups but not in git;
+regenerate with `gs_intraday_replay.py`, file hashes in `manifest.json`). Benchmark: the frozen latest-GS book of 4.22 (1,430 dates,
+794 trades), same entries and size1 in every policy; NW unchanged.
+
+The immutable engine was instrumented in memory to capture each CW trade's
+second-by-second positions, source-model mark and cost path. An overlay exit
+replays the exact PREFIX: closes the current option and futures positions under
+the source's own exit conventions, books hedge costs to that second, drops all
+later hedge cash flows, and keeps the terminal cash for the rest of the day.
+Five fixed candidates, no fitting or threshold selection: baseline; CW stop
+x0.75; x0.875; a persistent directional/whipsaw regime exit (completed
+underlying bars >=2 s old, 20-minute warmup, two consecutive decision minutes);
+and x0.875 plus the regime exit. Intraday DD is a SOURCE-MODEL mark proxy
+(legacy forward option averages, futures averages, backfills, synthetic
+hedges), not executable account DD.
+
+Verification PASS: 7,150 policy-days, 3,970 traded, 12.2M second marks, every
+prefix cash exit and 1,611 changed exits reconciled, 535 period rows, 183,215
+regime windows recomputed. Ledger rebuilt and verified with iteration21
+(21 iterations, 246 policy paths, 26,322 period rows, 275 sheets).
+
+| Policy | Net | Daily DD | Intraday DD | Changed exits | Profit kept |
+|---|---:|---:|---:|---:|---:|
+| Baseline | 10,109.38 | 168.42 | 179.00 | 0 | 100% |
+| Stop x0.75 | 8,896.47 | 208.93 | 230.80 | 172 | 88.0% |
+| Stop x0.875 | 9,641.42 | 171.22 | 190.16 | 106 | 95.4% |
+| Regime exit | 4,147.05 | 151.35 | 175.86 | 656 | 41.0% |
+| x0.875 + regime | 3,912.07 | 181.61 | 206.12 | 677 | 38.7% |
+
+- Over all dates no tighter stop lowers DD: x0.75 raises daily DD by 40.5 and
+  intraday DD by 51.8 (it turns recoverable drawdowns into realized losses);
+  x0.875 is roughly neutral on DD at -468 net.
+- In the later retrospective blocks the tighter stops shave a little DD:
+  2022+ x0.875 daily DD 163.69 (-4.7) and intraday 170.96 (-8.0) for -298 net;
+  2025+ both stops -4.7 to -7.4 DD for -104 to -142 net. These years were
+  researched before; they are not untouched tests.
+- The regime exit lowers DD (daily -17.1 all dates; -47.0 in 2025+) but keeps
+  only 41-48% of the profit: it exits 656 of 794 trades early, i.e. it mostly
+  cuts winners. Adding it to the x0.875 stop is worse on both.
+- No policy is adopted or called an optimal stop. Fixed thresholds were
+  research choices, reported as frozen.
+
 ## 5. Overall conclusion from the earlier studies
 
 The working answer is: keep the book at base size 1 and only cut size on
@@ -1076,8 +1124,13 @@ returns are assumed. Intraday DD, MAE and first-hit labels require reconstructio
 from actual positions/cash and synchronized quotes; daily results cannot supply
 them. No optimal stop, fitted regime model or reduced-risk performance is claimed.
 
-Next: verify intraday ledger/terminal cash parity, construct a causal execution
-baseline, generate SL-before-recovery labels with censor flags, compare fixed
-tighter stops/regime exits/calibrated risk reduction chronologically, then paper
-trade forward. Keep original LUT penalties and mandatory delta/hard-stop controls.
+Done (4.24): intraday ledger/terminal cash parity verified on the source model
+for every trade, and the fixed tighter-stop / regime-exit comparison. Result: no
+fixed overlay improves the whole book; tighter stops cost profit for at most a
+few points of DD in later blocks; the regime exit trades ~55-60% of the profit
+for DD.
+
+Next: construct a causal execution baseline (quotes, positions, cash), generate
+SL-before-recovery labels with censor flags, then compare calibrated risk
+reduction chronologically and paper trade forward. Keep original LUT penalties and mandatory delta/hard-stop controls.
 Account currency loss/day and drawdown budgets remain unspecified.

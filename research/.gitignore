@@ -3,3 +3,5 @@ output/tmp/
 output/numba_cache/
 __pycache__/
 output/logic_comparison_20261021/runtime/
+output/gs_intraday_stops/paths/
+output/gs_intraday_stops/runtime/
