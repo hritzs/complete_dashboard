@@ -568,11 +568,17 @@ func lutRawDTE(now time.Time, expiry time.Time) float64 {
 	closeT := today.Add(15*time.Hour + 40*time.Minute) // session 09:15-15:40
 	remaining := closeT.Sub(now).Seconds()
 	session := closeT.Sub(open).Seconds()
+	limit := session
+	if _, so, sc, ok := specialSessionOn(now); ok {
+		// A special session (Muhurat): only its own remaining trading
+		// minutes count, as a share of a normal day.
+		remaining, limit = sc.Sub(now).Seconds(), sc.Sub(so).Seconds()
+	}
 	if remaining < 0 {
 		remaining = 0
 	}
-	if remaining > session {
-		remaining = session
+	if remaining > limit {
+		remaining = limit
 	}
 	return days + remaining/session
 }

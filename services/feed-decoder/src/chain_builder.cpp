@@ -1,4 +1,5 @@
 #include "decoder/chain_builder.hpp"
+#include "decoder/special_session.hpp"
 
 #include <cmath>
 #include <iostream>
@@ -133,7 +134,16 @@ static double calculate_dte(const std::string& expiry) {
     const double total_trading_minutes = end_minutes - start_minutes;
 
     double fraction = 0.0;
-    if (current_minutes < start_minutes) {
+    char ymd[11];
+    std::strftime(ymd, sizeof(ymd), "%Y-%m-%d", &tm_now);
+    SpecialSessionWindow sp;
+    if (special_session_for(ymd, sp)) {
+        // Special session (Muhurat): only its own remaining trading minutes,
+        // as a share of a normal day.
+        double rem = sp.close_min - current_minutes;
+        double len = sp.close_min - sp.open_min;
+        fraction = std::max(0.0, std::min(rem, len)) / total_trading_minutes;
+    } else if (current_minutes < start_minutes) {
         fraction = 1.0;
     } else if (current_minutes >= end_minutes) {
         fraction = 0.0;
