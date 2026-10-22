@@ -1,7 +1,7 @@
 {
   "Status": "PASS",
-  "Iterations": 21,
-  "Daily_policy_paths": 246,
+  "Iterations": 22,
+  "Daily_policy_paths": 253,
   "Periodic_reconciliation": [
     {
       "Iteration": "01",
@@ -149,6 +149,13 @@
       "Days": 1430,
       "Trade_rows": 794,
       "Periodic_reconciliation": "PASS"
+    },
+    {
+      "Iteration": "22",
+      "Policies": 7,
+      "Days": 1430,
+      "Trade_rows": 794,
+      "Periodic_reconciliation": "PASS"
     }
   ],
   "Risk_replay": {
@@ -165,8 +172,8 @@
     "Dicey": 175
   },
   "Algorithms": {
-    "Algorithms": 27,
-    "Mapped_policies": 246,
+    "Algorithms": 28,
+    "Mapped_policies": 253,
     "Conviction_rows": 799,
     "Strong": 166,
     "Eligible": 32,

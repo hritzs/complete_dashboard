@@ -1,0 +1,22 @@
+{
+  "Status": "complete",
+  "Inputs": {
+    "gs_adjustment_overlays.py": "ba9099a9f2dff88f622b6023f4b242a9370dc1ac5647038d6606ca410d03eec3",
+    "gs_intraday_replay.py": "661b44a24568a3c2365753aeb03e4f220b0d510e82f4696136d56e1c391ebe6d",
+    "GS_ADJUSTMENT_OVERLAY_SPEC.md": "f4343401fa53d2b99539233de4ebaf20828417833cce353818e8a5e6adaa5640",
+    "output/gs_intraday_stops/run_manifest.json": "4c40a9ef7bf7b75e83e1e24acb4d0a5b90fd4849b96ed38b9b3613ccf090a420"
+  },
+  "Dates": [
+    "2021-01-19",
+    "2021-01-04",
+    "2021-02-01",
+    "2021-01-07",
+    "2021-01-06",
+    "2021-02-10",
+    "2021-03-25",
+    "2021-01-01"
+  ],
+  "Workers": 8,
+  "Scope": "Fixed adjustment overlays on source-model CW paths; not causal execution",
+  "Failed_dates": []
+}

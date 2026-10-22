@@ -241,3 +241,13 @@ NW remains unchanged. Source-model intraday DD carries prior intraday equity
 peaks across days; it inherits legacy source fills/backfills and is not
 certified executable account DD. The complete predeclared recipe is in
 `GS_INTRADAY_STOP_REPLAY_SPEC.md`; no model or optimized stop is adopted.
+
+## Iteration22: position-adjustment implementation audit
+
+A27 compares unchanged GS with protective wings, a roll, a tested-side long
+option, an untested-side short option, a next-week long straddle and extra
+short straddles. Entries/base sizes are unchanged; additional positions and
+rolls have their own modeled costs. These are exploratory saved implementation
+paths, with raw quote accounting separated from failed strike-at-fill recipe
+conformance. Original trades are retained and every deviation is reported.
+See `GS_ADJUSTMENT_AUDIT_NOTES.md`. No policy is adopted or labeled causal.

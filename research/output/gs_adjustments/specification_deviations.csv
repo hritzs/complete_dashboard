@@ -1,0 +1,11 @@
+Date,Policy,Selection_time,Fill_time,Selected_ATM,Fill_ATM,Actual_legs,Specification_status
+2021-05-14,Wings,11:05:02,11:05:03,14700.0,14650.0,"[[""cw"", 15000.0, ""CE"", 1, 1.0], [""cw"", 14400.0, ""PE"", 1, 1.0]]",FAIL: strike fixed before actual fill ATM
+2022-05-24,Wings,10:35:02,10:35:04,16150.0,16100.0,"[[""cw"", 16450.0, ""CE"", 1, 1.0], [""cw"", 15850.0, ""PE"", 1, 1.0]]",FAIL: strike fixed before actual fill ATM
+2024-04-02,SellMore,10:15:02,10:15:03,22400.0,22450.0,"[[""cw"", 22400.0, ""CE"", -1, 0.5], [""cw"", 22400.0, ""PE"", -1, 0.5]]",FAIL: strike fixed before actual fill ATM
+2025-02-20,BuyTested,09:47:02,09:47:03,22800.0,22850.0,"[[""cw"", 22800.0, ""PE"", 1, 0.5]]",FAIL: strike fixed before actual fill ATM
+2025-02-20,SellUntested,09:47:02,09:47:03,22800.0,22850.0,"[[""cw"", 22800.0, ""CE"", -1, 0.5]]",FAIL: strike fixed before actual fill ATM
+2025-02-20,Wings,09:47:02,09:47:04,22800.0,22850.0,"[[""cw"", 23250.0, ""CE"", 1, 1.0], [""cw"", 22350.0, ""PE"", 1, 1.0]]",FAIL: strike fixed before actual fill ATM
+2025-12-18,BuyTested,10:13:02,10:13:03,25850.0,25800.0,"[[""cw"", 25850.0, ""CE"", 1, 0.5]]",FAIL: strike fixed before actual fill ATM
+2025-12-18,NWLongStraddle,10:13:02,10:13:03,25850.0,25800.0,"[[""nw"", 25850.0, ""CE"", 1, 0.5], [""nw"", 25850.0, ""PE"", 1, 0.5]]",FAIL: strike fixed before actual fill ATM
+2025-12-18,SellUntested,10:13:02,10:13:03,25850.0,25800.0,"[[""cw"", 25850.0, ""PE"", -1, 0.5]]",FAIL: strike fixed before actual fill ATM
+2025-12-18,Wings,10:13:02,10:13:03,25850.0,25800.0,"[[""cw"", 26350.0, ""CE"", 1, 1.0], [""cw"", 25350.0, ""PE"", 1, 1.0]]",FAIL: strike fixed before actual fill ATM

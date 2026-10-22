@@ -1,9 +1,9 @@
 {
   "Status": "PASS",
-  "Iterations": 21,
-  "Policies": 246,
-  "Period_rows_checked": 26322,
-  "Sheets": 275,
+  "Iterations": 22,
+  "Policies": 253,
+  "Period_rows_checked": 27071,
+  "Sheets": 288,
   "Spreadsheet_engine": "LibreOffice headless; stored cached formula results verified",
   "Spreadsheet_risk_rows": 799,
   "Maximum_formula_errors": {

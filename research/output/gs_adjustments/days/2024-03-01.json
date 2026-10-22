@@ -1,0 +1,77 @@
+{
+  "Date": "2024-03-01",
+  "Error": "",
+  "Rows": [
+    {
+      "Date": "2024-03-01",
+      "Policy": "Baseline",
+      "Leg": "",
+      "Traded": false,
+      "Net_PnL": 0.0,
+      "Base_PnL": 0.0,
+      "Adjusted": false,
+      "Status": "no_cw_trade"
+    },
+    {
+      "Date": "2024-03-01",
+      "Policy": "Wings",
+      "Leg": "",
+      "Traded": false,
+      "Net_PnL": 0.0,
+      "Base_PnL": 0.0,
+      "Adjusted": false,
+      "Status": "no_cw_trade"
+    },
+    {
+      "Date": "2024-03-01",
+      "Policy": "Roll",
+      "Leg": "",
+      "Traded": false,
+      "Net_PnL": 0.0,
+      "Base_PnL": 0.0,
+      "Adjusted": false,
+      "Status": "no_cw_trade"
+    },
+    {
+      "Date": "2024-03-01",
+      "Policy": "BuyTested",
+      "Leg": "",
+      "Traded": false,
+      "Net_PnL": 0.0,
+      "Base_PnL": 0.0,
+      "Adjusted": false,
+      "Status": "no_cw_trade"
+    },
+    {
+      "Date": "2024-03-01",
+      "Policy": "SellUntested",
+      "Leg": "",
+      "Traded": false,
+      "Net_PnL": 0.0,
+      "Base_PnL": 0.0,
+      "Adjusted": false,
+      "Status": "no_cw_trade"
+    },
+    {
+      "Date": "2024-03-01",
+      "Policy": "NWLongStraddle",
+      "Leg": "",
+      "Traded": false,
+      "Net_PnL": 0.0,
+      "Base_PnL": 0.0,
+      "Adjusted": false,
+      "Status": "no_cw_trade"
+    },
+    {
+      "Date": "2024-03-01",
+      "Policy": "SellMore",
+      "Leg": "",
+      "Traded": false,
+      "Net_PnL": 0.0,
+      "Base_PnL": 0.0,
+      "Adjusted": false,
+      "Status": "no_cw_trade"
+    }
+  ],
+  "Seconds": 0.6326975350020803
+}

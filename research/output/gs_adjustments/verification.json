@@ -1,0 +1,115 @@
+{
+  "Status": "PASS_ACCOUNTING_SPEC_DEVIATIONS",
+  "Accounting_status": "PASS",
+  "Specification_status": "FAIL",
+  "Execution_certified": false,
+  "Dates": 1430,
+  "Adjusted_rows_checked": 2941,
+  "Added_legs_repriced": 3890,
+  "Rolls_checked": 656,
+  "Mismatches": [],
+  "Spec_deviations": [
+    {
+      "Date": "2021-05-14",
+      "Policy": "Wings",
+      "Selection_time": "11:05:02",
+      "Fill_time": "11:05:03",
+      "Selected_ATM": 14700.0,
+      "Fill_ATM": 14650.0,
+      "Actual_legs": "[[\"cw\", 15000.0, \"CE\", 1, 1.0], [\"cw\", 14400.0, \"PE\", 1, 1.0]]",
+      "Specification_status": "FAIL: strike fixed before actual fill ATM"
+    },
+    {
+      "Date": "2022-05-24",
+      "Policy": "Wings",
+      "Selection_time": "10:35:02",
+      "Fill_time": "10:35:04",
+      "Selected_ATM": 16150.0,
+      "Fill_ATM": 16100.0,
+      "Actual_legs": "[[\"cw\", 16450.0, \"CE\", 1, 1.0], [\"cw\", 15850.0, \"PE\", 1, 1.0]]",
+      "Specification_status": "FAIL: strike fixed before actual fill ATM"
+    },
+    {
+      "Date": "2024-04-02",
+      "Policy": "SellMore",
+      "Selection_time": "10:15:02",
+      "Fill_time": "10:15:03",
+      "Selected_ATM": 22400.0,
+      "Fill_ATM": 22450.0,
+      "Actual_legs": "[[\"cw\", 22400.0, \"CE\", -1, 0.5], [\"cw\", 22400.0, \"PE\", -1, 0.5]]",
+      "Specification_status": "FAIL: strike fixed before actual fill ATM"
+    },
+    {
+      "Date": "2025-02-20",
+      "Policy": "BuyTested",
+      "Selection_time": "09:47:02",
+      "Fill_time": "09:47:03",
+      "Selected_ATM": 22800.0,
+      "Fill_ATM": 22850.0,
+      "Actual_legs": "[[\"cw\", 22800.0, \"PE\", 1, 0.5]]",
+      "Specification_status": "FAIL: strike fixed before actual fill ATM"
+    },
+    {
+      "Date": "2025-02-20",
+      "Policy": "SellUntested",
+      "Selection_time": "09:47:02",
+      "Fill_time": "09:47:03",
+      "Selected_ATM": 22800.0,
+      "Fill_ATM": 22850.0,
+      "Actual_legs": "[[\"cw\", 22800.0, \"CE\", -1, 0.5]]",
+      "Specification_status": "FAIL: strike fixed before actual fill ATM"
+    },
+    {
+      "Date": "2025-02-20",
+      "Policy": "Wings",
+      "Selection_time": "09:47:02",
+      "Fill_time": "09:47:04",
+      "Selected_ATM": 22800.0,
+      "Fill_ATM": 22850.0,
+      "Actual_legs": "[[\"cw\", 23250.0, \"CE\", 1, 1.0], [\"cw\", 22350.0, \"PE\", 1, 1.0]]",
+      "Specification_status": "FAIL: strike fixed before actual fill ATM"
+    },
+    {
+      "Date": "2025-12-18",
+      "Policy": "BuyTested",
+      "Selection_time": "10:13:02",
+      "Fill_time": "10:13:03",
+      "Selected_ATM": 25850.0,
+      "Fill_ATM": 25800.0,
+      "Actual_legs": "[[\"cw\", 25850.0, \"CE\", 1, 0.5]]",
+      "Specification_status": "FAIL: strike fixed before actual fill ATM"
+    },
+    {
+      "Date": "2025-12-18",
+      "Policy": "NWLongStraddle",
+      "Selection_time": "10:13:02",
+      "Fill_time": "10:13:03",
+      "Selected_ATM": 25850.0,
+      "Fill_ATM": 25800.0,
+      "Actual_legs": "[[\"nw\", 25850.0, \"CE\", 1, 0.5], [\"nw\", 25850.0, \"PE\", 1, 0.5]]",
+      "Specification_status": "FAIL: strike fixed before actual fill ATM"
+    },
+    {
+      "Date": "2025-12-18",
+      "Policy": "SellUntested",
+      "Selection_time": "10:13:02",
+      "Fill_time": "10:13:03",
+      "Selected_ATM": 25850.0,
+      "Fill_ATM": 25800.0,
+      "Actual_legs": "[[\"cw\", 25850.0, \"PE\", -1, 0.5]]",
+      "Specification_status": "FAIL: strike fixed before actual fill ATM"
+    },
+    {
+      "Date": "2025-12-18",
+      "Policy": "Wings",
+      "Selection_time": "10:13:02",
+      "Fill_time": "10:13:03",
+      "Selected_ATM": 25850.0,
+      "Fill_ATM": 25800.0,
+      "Actual_legs": "[[\"cw\", 26350.0, \"CE\", 1, 1.0], [\"cw\", 25350.0, \"PE\", 1, 1.0]]",
+      "Specification_status": "FAIL: strike fixed before actual fill ATM"
+    }
+  ],
+  "Verifier_SHA256": "5a5ff93a49db984ad5d20fa5d5b93853d2881e595801ba5fd55b15096b96d9d2",
+  "Limits": "Exact raw entry/exit quote-window repricing and roll prefix identity; legacy base/roll fills, stale-exit convention, added-leg timing and portfolio-hedge limitations remain. No live validation."
+}

@@ -1,6 +1,6 @@
 # GammaShort sizing / opportunity research: where it stands
 
-Updated 2026-10-21 (latest: 4.24, intraday stop/regime replay). The sizing studies through v6 and the preregistered
+Updated 2026-10-22 (latest: 4.25, adjustment accounting/specification audit). The sizing studies through v6 and the preregistered
 relaxed-entry rerun are complete. The derived-strategy simulator remains a
 scaffold (see sections 4.9, 4.10, and 7). The latest owner request is exact risk
 formulas and a persistent Excel iteration ledger in section4.17, extended with
@@ -1001,6 +1001,47 @@ regime windows recomputed. Ledger rebuilt and verified with iteration21
   cuts winners. Adding it to the x0.875 stop is worse on both.
 - No policy is adopted or called an optimal stop. Fixed thresholds were
   research choices, reported as frozen.
+
+### 4.25 Position adjustments: accounting verified, specification deviations retained (2026-10-22)
+
+Iteration22 preserves the completed 1,430-date replay (794 original GS trades)
+and compares six fixed adjustments with the same latest-GS baseline. Results
+are normalized source-model units, not account returns or certified execution.
+
+| Policy | Net PnL | Closing-day DD | Intraday DD proxy |
+|---|---:|---:|---:|
+| Baseline | 10,109.38 | 168.42 | 179.00 |
+| Protective wings | 6,749.97 | 167.08 | 230.99 |
+| Roll | 9,054.60 | 237.98 | 272.85 |
+| Buy tested side | 9,377.12 | 197.93 | 224.09 |
+| Sell untested side | 11,139.90 | 263.03 | 314.26 |
+| Next-week long straddle | 6,975.34 | 221.85 | 298.61 |
+| Sell more in whipsaw | 11,702.69 | 235.00 | 263.13 |
+
+No candidate improves profit and both DD measures in any of the four saved
+comparison windows. Extra selling increases exposure and DD; wings reduce
+closing DD only slightly while reducing profit substantially and worsening the
+intraday proxy. No policy is adopted.
+
+Independent accounting checks cover 2,941 adjusted rows, 3,890 added option
+legs and 656 roll-prefix identities: no arithmetic/quote repricing mismatches.
+However, 10 policy/date rows across five dates fail the declared strike-at-fill
+recipe: implementation selected strikes before the eventual fill, while its
+ATM metadata was recomputed at fill. Trades and PnL remain unchanged; accounting
+PASS is explicitly separate from specification FAIL and execution certification
+is false. See `GS_ADJUSTMENT_AUDIT_NOTES.md` and the workbook's Verification,
+Specification_deviations and Execution_audit_notes sheets. Original reports are
+archived under `output/gs_adjustments/provenance/`.
+
+Additional limitations: legacy averaged base/roll fills, stale-quote exits,
+added-leg Greeks excluded from base hedge decisions, and short-unit caps that
+are not currency/Greek risk budgets. Rolling resets the trade stop without a
+total daily loss budget. Double-fee sensitivity stresses only added option fees.
+The original 09:16 LUT penalty13 and GS entries/event scaling are preserved.
+
+Next gate remains a separately versioned causal quote/position/cash baseline,
+followed by censored SL-before-recovery labels and chronological validation.
+No live trading code, environment secrets or shared input files were changed.
 
 ## 5. Overall conclusion from the earlier studies
 

@@ -1,8 +1,17 @@
 # GammaShort research ledger
 
-Open `GammaShort_Research_Ledger.xlsx`. This combines 21 saved research iterations
-and 246 daily policy paths. It does not refit strategies or change live trading.
+Open `GammaShort_Research_Ledger.xlsx`. This combines 22 saved research iterations
+and 253 daily policy paths. It does not refit strategies or change live trading.
 The original source workbooks remain unchanged.
+
+## Position-adjustment audit22
+
+22_ preserves seven exploratory implementation paths, including unchanged GS.
+Independent raw-quote accounting is separate from specification conformance:
+strike-at-fill discrepancies remain flagged in the source workbook. Legacy
+base/roll fills, delayed strike selection, stale exits and unhedged additional
+legs prevent treating these as live-validated strategies. Added selling makes
+more profit with materially larger DD; no adjustment is adopted.
 
 ## Latest addition: stop/regime prefix exits21
 

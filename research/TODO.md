@@ -2,6 +2,20 @@
 
 Research is isolated under `research/`. Do not translate a research result into `services/` or `ui/` without the owner's explicit direction.
 
+## 2026-10-22: adjustment audit (iteration22, handoff 4.25)
+
+Saved replay/report complete; independent accounting PASS, specification FAIL
+on 10 policy/date rows across five dates. Original trades/PnL are preserved.
+No tested adjustment increases profit while reducing both closing-day and
+intraday proxy DD. Extra selling earns more with larger DD; protective wings
+sacrifice profit and worsen intraday DD. No adjustment is adopted.
+
+See `GS_ADJUSTMENT_AUDIT_NOTES.md` and
+`output/gs_adjustments/gs_adjustment_comparison.xlsx` for all trades, periods,
+charts, formulas and deviations. Next: causal execution baseline, daily loss
+budget carried across rolls, then chronological SL-before-recovery research.
+Live code and original LUT penalties remain unchanged.
+
 ## 2026-10-21: intraday stop / regime exit replay (iteration21, handoff 4.24)
 
 Complete and verified (PASS); ledger rebuilt and verified with iteration21.

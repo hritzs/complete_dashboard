@@ -1,0 +1,31 @@
+{
+  "Status": "FAIL",
+  "Dates": 1425,
+  "Adjusted_rows_checked": 2918,
+  "Added_legs_repriced": 3860,
+  "Rolls_checked": 651,
+  "Mismatches": [
+    [
+      "2021-05-14",
+      "Traceback (most recent call last):\n  File \"/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/verify_gs_adjustments_fast.py\", line 102, in main\n    c,l,r,d,m=future.result();checked+=c;legs+=l;rolls+=r;days+=d;bad+=m\n              ~~~~~~~~~~~~~^^\n  File \"/usr/lib/python3.14/concurrent/futures/_base.py\", line 443, in result\n    return self.__get_result()\n           ~~~~~~~~~~~~~~~~~^^\n  File \"/usr/lib/python3.14/concurrent/futures/_base.py\", line 395, in __get_result\n    raise self._exception\n  File \"/usr/lib/python3.14/concurrent/futures/thread.py\", line 86, in run\n    result = ctx.run(self.task)\n  File \"/usr/lib/python3.14/concurrent/futures/thread.py\", line 73, in run\n    return fn(*args, **kwargs)\n  File \"/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/verify_gs_adjustments_fast.py\", line 69, in verify_date\n    assert [tuple(l) for l in legs]==want,(date,name)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: ('2021-05-14', 'Wings')\n"
+    ],
+    [
+      "2022-05-24",
+      "Traceback (most recent call last):\n  File \"/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/verify_gs_adjustments_fast.py\", line 102, in main\n    c,l,r,d,m=future.result();checked+=c;legs+=l;rolls+=r;days+=d;bad+=m\n              ~~~~~~~~~~~~~^^\n  File \"/usr/lib/python3.14/concurrent/futures/_base.py\", line 443, in result\n    return self.__get_result()\n           ~~~~~~~~~~~~~~~~~^^\n  File \"/usr/lib/python3.14/concurrent/futures/_base.py\", line 395, in __get_result\n    raise self._exception\n  File \"/usr/lib/python3.14/concurrent/futures/thread.py\", line 86, in run\n    result = ctx.run(self.task)\n  File \"/usr/lib/python3.14/concurrent/futures/thread.py\", line 73, in run\n    return fn(*args, **kwargs)\n  File \"/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/verify_gs_adjustments_fast.py\", line 69, in verify_date\n    assert [tuple(l) for l in legs]==want,(date,name)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: ('2022-05-24', 'Wings')\n"
+    ],
+    [
+      "2024-04-02",
+      "Traceback (most recent call last):\n  File \"/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/verify_gs_adjustments_fast.py\", line 102, in main\n    try:\n    \n  File \"/usr/lib/python3.14/concurrent/futures/_base.py\", line 443, in result\n    return self.__get_result()\n           ~~~~~~~~~~~~~~~~~^^\n  File \"/usr/lib/python3.14/concurrent/futures/_base.py\", line 395, in __get_result\n    raise self._exception\n  File \"/usr/lib/python3.14/concurrent/futures/thread.py\", line 86, in run\n    result = ctx.run(self.task)\n  File \"/usr/lib/python3.14/concurrent/futures/thread.py\", line 73, in run\n    return fn(*args, **kwargs)\n  File \"/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/verify_gs_adjustments_fast.py\", line 69, in verify_date\n    'SellMore':[('cw',K,'CE',-1,.5),('cw',K,'PE',-1,.5)]}[name]\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: ('2024-04-02', 'SellMore')\n"
+    ],
+    [
+      "2025-02-20",
+      "Traceback (most recent call last):\n  File \"/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/verify_gs_adjustments_fast.py\", line 102, in main\n    try:\n    \n  File \"/usr/lib/python3.14/concurrent/futures/_base.py\", line 443, in result\n    return self.__get_result()\n           ~~~~~~~~~~~~~~~~~^^\n  File \"/usr/lib/python3.14/concurrent/futures/_base.py\", line 395, in __get_result\n    raise self._exception\n  File \"/usr/lib/python3.14/concurrent/futures/thread.py\", line 86, in run\n    result = ctx.run(self.task)\n  File \"/usr/lib/python3.14/concurrent/futures/thread.py\", line 73, in run\n    return fn(*args, **kwargs)\n  File \"/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/verify_gs_adjustments_fast.py\", line 69, in verify_date\n    'SellMore':[('cw',K,'CE',-1,.5),('cw',K,'PE',-1,.5)]}[name]\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: ('2025-02-20', 'Wings')\n"
+    ],
+    [
+      "2025-12-18",
+      "Traceback (most recent call last):\n  File \"/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/verify_gs_adjustments_fast.py\", line 102, in main\n    try:\n    \n  File \"/usr/lib/python3.14/concurrent/futures/_base.py\", line 443, in result\n    return self.__get_result()\n           ~~~~~~~~~~~~~~~~~^^\n  File \"/usr/lib/python3.14/concurrent/futures/_base.py\", line 395, in __get_result\n    raise self._exception\n  File \"/usr/lib/python3.14/concurrent/futures/thread.py\", line 86, in run\n    result = ctx.run(self.task)\n  File \"/usr/lib/python3.14/concurrent/futures/thread.py\", line 73, in run\n    return fn(*args, **kwargs)\n  File \"/home/ubuntu/Desktop/api_gs/trading-platform-git-recover/research/verify_gs_adjustments_fast.py\", line 69, in verify_date\n    'SellMore':[('cw',K,'CE',-1,.5),('cw',K,'PE',-1,.5)]}[name]\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: ('2025-12-18', 'Wings')\n"
+    ]
+  ],
+  "Verifier_SHA256": "7de504ccf131cbf0ec8d2eb301f72575af3584a4ed13734704041576b4c5992c",
+  "Limits": "Exact raw entry/exit quote-window repricing and roll prefix identity; legacy base/roll fills, stale-exit convention, added-leg timing and portfolio-hedge limitations remain. No live validation."
+}

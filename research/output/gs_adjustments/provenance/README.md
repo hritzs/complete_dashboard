@@ -1,0 +1,1 @@
+Pre-audit report artifacts are preserved here. Frozen replay checkpoints and mark arrays remain unchanged. The initial strict-check output is diagnostic only; the final verification.json and its exact auditor SHA256 are authoritative for accounting and specification-deviation status. Reports must not describe the implementation as specification-conformant or causally executable.
