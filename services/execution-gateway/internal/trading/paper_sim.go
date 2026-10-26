@@ -1112,6 +1112,10 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 				DeltaBefore: pt.NetDelta, DeltaAfter: after.NetDelta, PointsOut: pt.PointsOut, Allowed: pt.PointsAllowed, Future: m.Future, Source: pt.Source})
 			ev := fmt.Sprintf("HEDGE synthetic %+.2f contracts @%.2f (%+.4f -> %+.4f per qty): delta %+.2f -> %+.2f, out %.1f -> %.1f (allowed %.1f)",
 				dq, m.Future, old/float64(q), book.futQty/float64(q), pt.NetDelta, after.NetDelta, pt.PointsOut, simOut(after), pt.PointsAllowed)
+			if exHas {
+				res.Hedges[len(res.Hedges)-1].Source = pt.Source + " (executed live)"
+				ev += fmt.Sprintf(" (executed live: %.1f%% of delta)", 100*mfrac)
+			}
 			keep := pt
 			pt = after
 			posMarks(m, &pt)
@@ -1119,6 +1123,9 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 				keep.ATMStraddle, keep.PointsOut, keep.PointsAllowed, keep.HedgeFloor, keep.HedgeCheck, keep.HedgeTarget
 			pt.Event = ev
 			pt.PointsOut, pt.Before = simOut(pt), simBeforeOf(keep)
+		}
+		if exHas && exMin.Frac <= 0 && pt.Event == "" {
+			pt.Event = "live trade: no hedge order this minute (under one lot of live delta)"
 		}
 		if exit == "" && c.HedgeMode == "lots" && !decided && d.Hedge && d.Lots > 0 {
 			if ceSide, peSide, ok := hedgeSidesFromSignedDelta(pt.NetDelta); ok {
