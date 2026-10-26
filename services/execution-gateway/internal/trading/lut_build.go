@@ -222,6 +222,7 @@ func (s *Service) lutFireBuildLocked(day string, rec LUTEvaluation, entry *LUTEn
 	// trade is watched by the standard monitor). Another entry is the
 	// user's to place with another build, or by arming again.
 	req := lutBuildRequest(c, entry.Expiry, entry.Strike, risk)
+	req.SizingCEDelta, req.SizingPEDelta = lutSizingDeltas(rec, entry.Strike)
 	c.Armed, c.ArmedAt = false, ""
 	if err := saveLUTBuildConfig(c); err != nil {
 		log.Printf("[LUT-BUILD] ⚠ could not save the disarm after firing: %v (the once-per-day record still blocks another build today)", err)
@@ -229,6 +230,28 @@ func (s *Service) lutFireBuildLocked(day string, rec LUTEvaluation, entry *LUTEn
 		log.Printf("[LUT-BUILD] 🔒 DISARMED automatically after firing -- the LUT only monitors now; arm again or use another build for a new entry")
 	}
 	s.lutSendBuild(run, req)
+}
+
+// lutSizingDeltas: the CE / PE delta of the strike at the LUT minute's
+// prices -- its future and the strike's IV from the OTM leg, Black-76 on raw
+// DTE, exactly what the Paper Sim enters (and neutralises) at. The build
+// used to size its CE:PE ratio off the live chain a moment later
+// (2026-10-26 09:16:01: deltas 0.5357 / -0.4643 = future ~22527.5 vs the
+// minute's 22519.25), so the live book was neutral ~8 points away from the
+// simulation's and every later delta / hedge differed by ~250. 0, 0 when the
+// minute can't price the strike (the live chain is used then).
+func lutSizingDeltas(rec LUTEvaluation, strike float64) (ce, pe float64) {
+	F, T := rec.Underlying, math.Max(rec.RawDTE/365, 1e-5)
+	if F <= 0 || strike <= 0 || rec.Strike != strike || rec.CELTP <= 0 || rec.PELTP <= 0 {
+		return 0, 0
+	}
+	iv := simStrikeIV(F, strike, T, rec.CELTP, rec.PELTP)
+	if iv <= 0 {
+		return 0, 0
+	}
+	_, ce, _ = simBlack76(true, F, strike, T, iv)
+	_, pe, _ = simBlack76(false, F, strike, T, iv)
+	return ce, pe
 }
 
 // lutBuildRequest is THE request a LUT build sends -- the real YES and the
@@ -406,7 +429,9 @@ func (s *Service) lutFirePendingTestLocked(rec LUTEvaluation) {
 	e.saveDayLocked(e.day)
 	log.Printf("[LUT-BUILD] 🧪 TEST FIRE at minute %s (as the real build) -> REAL ORDERS %s %s %.0f straddle %d lot(s), SL %.2f bps TP %.2f bps exit %s, %s",
 		rec.Time, lutSymbol, run.Expiry, rec.Strike, run.Lots, risk.SlBps, risk.TpBps, run.ExitTime, lutWingsText(c.WingPct))
-	s.lutSendBuild(run, lutBuildRequest(c, run.Expiry, rec.Strike, risk))
+	req := lutBuildRequest(c, run.Expiry, rec.Strike, risk)
+	req.SizingCEDelta, req.SizingPEDelta = lutSizingDeltas(rec, rec.Strike) // as the real build
+	s.lutSendBuild(run, req)
 }
 
 // LUTBuildTestHandler: POST /api/lut/build/test {"confirm": "SELL LIVE"}.

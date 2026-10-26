@@ -416,6 +416,12 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 	if req.DeltaNeutral && ceRow != nil && peRow != nil {
 		ceDelta := math.Abs(ceRow.CEDelta)
 		peDelta := math.Abs(peRow.PEDelta)
+		sizingSrc := "live chain"
+		if req.SizingCEDelta > 0 && req.SizingPEDelta < 0 {
+			ceDelta, peDelta, sizingSrc = req.SizingCEDelta, -req.SizingPEDelta, "LUT minute (as the Paper Sim)"
+			log.Printf("⚖️ DELTA SIZING from the %s: CE Δ %.4f PE Δ %.4f (live chain now CE Δ %.4f PE Δ %.4f)",
+				sizingSrc, req.SizingCEDelta, req.SizingPEDelta, ceRow.CEDelta, peRow.PEDelta)
+		}
 		totalWeight := ceDelta + peDelta
 
 		if totalWeight > 1e-6 {
@@ -439,8 +445,8 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 				peLots = calculatedPELots
 			}
 
-			log.Printf("⚖️ DELTA SIZING | Base: %d lots | CE Δ: %.4f | PE Δ: %.4f | CE Lots: %d | PE Lots: %d",
-				req.Lots, ceRow.CEDelta, peRow.PEDelta, ceLots, peLots)
+			log.Printf("⚖️ DELTA SIZING | Base: %d lots | CE Δ: %.4f | PE Δ: %.4f | CE Lots: %d | PE Lots: %d | from %s",
+				req.Lots, ceDelta, -peDelta, ceLots, peLots, sizingSrc)
 		}
 	}
 

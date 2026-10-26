@@ -121,6 +121,11 @@ type DeployStraddleRequest struct {
 	// sent. Set only by the automated/config build path; takes precedence
 	// over the raw fields above if both are somehow present.
 	Risk *BuildRiskConfig `json:"-"`
+
+	// Delta-neutral sizing deltas to use instead of the live chain's (the
+	// LUT build: its minute's prices, as the Paper Sim). Internal only.
+	SizingCEDelta float64 `json:"-"`
+	SizingPEDelta float64 `json:"-"`
 }
 
 type CustomStraddleRequest struct {
