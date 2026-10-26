@@ -307,3 +307,77 @@ func TestPaperSim_NewLogicRules(t *testing.T) {
 		t.Fatalf("old logic has no TV exit: %s", r.ExitReason)
 	}
 }
+
+// An intra-minute hedge the live trade executed (sim_drive.go pin) is applied
+// at exactly that tick on every re-run -- even when the minute's finalised
+// data no longer breaches there and the tick itself was compacted away --
+// and it is the minute's only intra-minute hedge (2026-10-26 09:25:59.671).
+func TestPaperSim_PinnedIntraMinute(t *testing.T) {
+	quiet := func() []simMinute {
+		mins := mkMinutes(5, func(i int) float64 { return 22600 })
+		for s := 1; s < 60; s++ { // small moves only: no natural intra-minute breach
+			mins[1].secs = append(mins[1].secs, simSec{T: fmt.Sprintf("09:17:%02d", s), F: 22605})
+		}
+		return mins
+	}
+	cfg := PaperSimConfig{Entry: "09:16", Lots: 10, HedgeMode: "synthetic", SLBps: 500, HedgeRule: "new"}
+	for _, h := range RunPaperSim(quiet(), cfg, 65, nil).Hedges {
+		if h.Kind == "INTRA_MINUTE" {
+			t.Fatalf("no pin, quiet minute: unexpected %+v", h)
+		}
+	}
+	// pinned tick not among the recorded seconds (compacted away)
+	cfg.ForcedIntra = map[int]simSec{917: {T: "09:17:45.671", F: 22750}}
+	var intra []PaperSimHedge
+	for _, h := range RunPaperSim(quiet(), cfg, 65, nil).Hedges {
+		if h.Kind == "INTRA_MINUTE" {
+			intra = append(intra, h)
+		}
+	}
+	if len(intra) != 1 || intra[0].Time != "09:17:45.671" || intra[0].Future != 22750 || intra[0].Source != "seconds (executed live)" {
+		t.Fatalf("want the executed hedge at 09:17:45.671 @22750, got %+v", intra)
+	}
+	if math.Abs(intra[0].FutQty+intra[0].DeltaBefore) > 1e-6 || intra[0].DeltaAfter != 0 {
+		t.Fatalf("executed intra-minute hedge takes the complete delta: %+v", intra[0])
+	}
+	// a natural breach earlier in the minute does not add a second hedge: the executed one is the minute's only one
+	mins := mkMinutes(5, func(i int) float64 { return 22600 })
+	for s := 1; s < 60; s++ {
+		f := 22600.0
+		if s >= 30 {
+			f = 22750
+		}
+		mins[1].secs = append(mins[1].secs, simSec{T: fmt.Sprintf("09:17:%02d", s), F: f})
+	}
+	cfg.ForcedIntra = map[int]simSec{917: {T: "09:17:50", F: 22750}}
+	intra = intra[:0]
+	for _, h := range RunPaperSim(mins, cfg, 65, nil).Hedges {
+		if h.Kind == "INTRA_MINUTE" {
+			intra = append(intra, h)
+		}
+	}
+	if len(intra) != 1 || intra[0].Time != "09:17:50" {
+		t.Fatalf("want only the executed hedge at 09:17:50, got %+v", intra)
+	}
+}
+
+// Executed intra-minute pins persist per day and come back after a restart.
+func TestSimPinsPersist(t *testing.T) {
+	t.Setenv("LUT_DATA_DIR", t.TempDir())
+	simPins.mu.Lock()
+	simPins.day, simPins.m = "", nil
+	simPins.mu.Unlock()
+	addSimPin("2026-10-26", "TRD_X", "09:25:59.671", 22439.35)
+	addSimPin("2026-10-26", "TRD_X", "09:25:59.900", 22430) // same minute: the first one stays
+	addSimPin("2026-10-26", "TRD_X", "", 22430)             // ignored
+	simPins.mu.Lock()
+	simPins.day, simPins.m = "", nil // as after a restart: read the file
+	simPins.mu.Unlock()
+	got := simPinsFor("2026-10-26", "TRD_X")
+	if len(got) != 1 || got[925].T != "09:25:59.671" || got[925].F != 22439.35 {
+		t.Fatalf("%+v", got)
+	}
+	if len(simPinsFor("2026-10-26", "OTHER")) != 0 {
+		t.Fatal("pins are per trade")
+	}
+}
