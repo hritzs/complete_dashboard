@@ -47,6 +47,9 @@ func (c *Client) doJSON(
 	reqBody interface{},
 	resBody interface{},
 ) (*http.Response, []byte, error) {
+	ctx, timing := traceOrderHTTP(ctx)
+	stage, status, responseBytes := "encode", 0, 0
+	defer func() { timing.finish(stage, status, responseBytes) }()
 	var bodyReader io.Reader
 
 	if reqBody != nil {
@@ -57,6 +60,7 @@ func (c *Client) doJSON(
 		bodyReader = bytes.NewBuffer(bodyBytes)
 	}
 
+	stage = "request_setup"
 	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create request: %w", err)
@@ -70,27 +74,36 @@ func (c *Client) doJSON(
 		req.Header.Set("Authorization", sessionToken)
 	}
 
+	stage = "http_round_trip"
+	timing.event("http_do", false)
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return nil, nil, fmt.Errorf("http request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	status = resp.StatusCode
+	stage = "read_body"
 
 	rawBody, readErr := io.ReadAll(resp.Body)
+	responseBytes = len(rawBody)
+	timing.event("body_read_done", readErr != nil)
 	if readErr != nil {
 		return resp, nil, fmt.Errorf("failed to read response body: %w", readErr)
 	}
 
+	stage = "http_status"
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return resp, rawBody, fmt.Errorf("api error: status=%d body=%s", resp.StatusCode, string(rawBody))
 	}
 
+	stage = "decode"
 	if resBody != nil && len(rawBody) > 0 {
 		if err := json.Unmarshal(rawBody, resBody); err != nil {
 			return resp, rawBody, fmt.Errorf("failed to decode json response: %w body=%s", err, string(rawBody))
 		}
 	}
 
+	stage = "done"
 	return resp, rawBody, nil
 }
 

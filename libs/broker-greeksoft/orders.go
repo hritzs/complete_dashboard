@@ -159,6 +159,7 @@ func (c *Client) PlaceOrder(ctx context.Context, intent *broker.OrderIntent) (*b
 	var resBody newOrderResponse
 	rawReq, _ := json.Marshal(reqBody)
 	log.Printf("[GREEKSOFT ORDER REQUEST] %s", string(rawReq))
+	ctx = context.WithValue(ctx, orderTimingKey{}, intent.IntentID)
 	_, raw, err := c.postJSON(ctx, url, c.Session.AuthToken, reqBody, &resBody)
 	if err != nil {
 		log.Printf("[GREEKSOFT ORDER] failed err=%v raw=%s", err, string(raw))
