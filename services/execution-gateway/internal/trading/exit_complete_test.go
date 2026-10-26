@@ -135,3 +135,16 @@ func TestAggressiveExitReason(t *testing.T) {
 		}
 	}
 }
+
+func TestNeutralBeforeExit(t *testing.T) {
+	for _, r := range []string{"SL", "sl", "TIME", "TP", "MTM", "SQUARE_OFF"} {
+		if !neutralBeforeExit(r) {
+			t.Fatalf("%s should hedge to neutral first", r)
+		}
+	}
+	for _, r := range []string{"PORTFOLIO", "EMERGENCY", "MANUAL"} {
+		if neutralBeforeExit(r) {
+			t.Fatalf("%s should keep the fastest path", r)
+		}
+	}
+}
