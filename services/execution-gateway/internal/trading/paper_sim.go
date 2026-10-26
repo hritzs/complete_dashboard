@@ -28,28 +28,40 @@ import (
 )
 
 // PaperSimConfig is one simulated entry.
+// ExecHedge: one hedge decision a sim-driven live trade acted on.
+type ExecHedge struct {
+	T    string  `json:"t"`    // the simulation event's time (HH:MM, or HH:MM:SS.mmm for an intra-minute tick)
+	F    float64 `json:"f"`    // the future the simulation acted on
+	Kind string  `json:"kind"` // INTRA_MINUTE / RISK_BREACH / ATM_LOTS
+	Frac float64 `json:"frac"` // share of the delta actually hedged (0 = no order)
+}
+
 type PaperSimConfig struct {
-	// ForcedIntra: intra-minute hedges the live trade already executed on
-	// this simulation's signal, minute (HHMM) -> the tick it acted on (time
-	// HH:MM:SS.mmm and the future). A re-run applies each at exactly that
-	// tick even if the minute's finalised data (GreekSoft close overlay) no
-	// longer breaches there or the tick was compacted away, and takes no
-	// other intra-minute hedge in that minute -- so the simulation, its card
-	// and every later decision follow what was actually done.
-	ForcedIntra map[int]simSec `json:"-"`
-	ID          string         `json:"id"`
-	Source      string         `json:"source"` // "09:16" auto / "start now" / "actual trade ..."
-	Entry       string         `json:"entry"`  // HH:MM
-	Lots        int            `json:"lots"`
-	SLBps       float64        `json:"sl_bps"` // default 14
-	TPBps       float64        `json:"tp_bps"` // 0 = the LUT's TP at the entry minute
-	ExitTime    string         `json:"exit_time"`
-	StraddleDiv float64        `json:"straddle_div"`
-	HedgeDiv    float64        `json:"hedge_div"`
-	HedgeMinBps float64        `json:"hedge_min_bps"`
-	Hedge       bool           `json:"hedge"`          // legacy: true = HedgeMode "lots"
-	HedgeMode   string         `json:"hedge_mode"`     // synthetic (default) / lots / off
-	View        string         `json:"view,omitempty"` // "" current expiry / "next"
+	// Executed: the hedges a sim-driven live trade already acted on, keyed
+	// "HH:MM|KIND" (the simulation event's minute and kind), with the tick
+	// (time, future) and the share of the simulation's delta the live trade
+	// actually hedged (live lots / live delta; 0 = decided, no order). Up to
+	// ExecThrough (HH:MM:SS.mmm, the driver's last pass) the simulation takes
+	// ONLY these hedges, at their tick and share -- even if the minute's
+	// finalised data (GreekSoft close) no longer breaches there or the tick
+	// was compacted away -- and none of its own; after it, its normal rules.
+	// So the simulation, its card and every later decision follow what was
+	// actually done (2026-10-26 09:25:59.671).
+	Executed    map[string]ExecHedge `json:"-"`
+	ExecThrough string               `json:"-"`
+	ID          string               `json:"id"`
+	Source      string               `json:"source"` // "09:16" auto / "start now" / "actual trade ..."
+	Entry       string               `json:"entry"`  // HH:MM
+	Lots        int                  `json:"lots"`
+	SLBps       float64              `json:"sl_bps"` // default 14
+	TPBps       float64              `json:"tp_bps"` // 0 = the LUT's TP at the entry minute
+	ExitTime    string               `json:"exit_time"`
+	StraddleDiv float64              `json:"straddle_div"`
+	HedgeDiv    float64              `json:"hedge_div"`
+	HedgeMinBps float64              `json:"hedge_min_bps"`
+	Hedge       bool                 `json:"hedge"`          // legacy: true = HedgeMode "lots"
+	HedgeMode   string               `json:"hedge_mode"`     // synthetic (default) / lots / off
+	View        string               `json:"view,omitempty"` // "" current expiry / "next"
 	// PointsAllowed > 0 replaces the computed points allowed and its bps
 	// floor (a sim-driven test trade with a small hedge band).
 	PointsAllowed float64 `json:"points_allowed,omitempty"`
@@ -906,8 +918,8 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 		res.Series = append(res.Series, pt)
 	}
 	intraMinute := func(m simMinute) {
-		_, pinnedHere := c.ForcedIntra[m.HHMM]
-		if !rule.Intra || c.HedgeMode == "off" || (len(m.secs) == 0 && !pinnedHere) || len(res.Series) == 0 {
+		ex, pinned := c.Executed[m.Time+"|INTRA_MINUTE"]
+		if !rule.Intra || c.HedgeMode == "off" || (len(m.secs) == 0 && !pinned) || len(res.Series) == 0 {
 			return
 		}
 		ref := book.value(m, q)
@@ -922,12 +934,14 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 			}
 		}
 		secs := m.secs
-		pin, force := c.ForcedIntra[m.HHMM] // an intra-minute hedge the live trade executed in this minute
+		force := pinned
 		if force {
-			secs = []simSec{pin} // exactly the tick it acted on; no other intra-minute hedge in this minute
+			secs = []simSec{{T: ex.T, F: ex.F}} // exactly the tick it acted on; no other intra-minute hedge in this minute
 		}
-		pinned := pin.T
 		for _, s := range secs {
+			if !force && c.ExecThrough != "" && s.T <= c.ExecThrough {
+				continue // already decided by the live trade: only its executed hedges count
+			}
 			nd, ng := book.futQty, 0.0
 			for k, l := range book.legs {
 				if l.qty == 0 || ivs[k] <= 0 {
@@ -952,19 +966,27 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 				}
 				old := book.futQty
 				pre := tickPoint(m, s)
-				book.fillFut(-nd, s.F)
-				src, what := "seconds", fmt.Sprintf("synthetic %+.2f contracts", -nd)
+				frac, src := 1.0, "seconds"
 				if force {
-					src, what = "seconds (executed live)", what+" (executed live at "+pinned+")"
+					frac, src = ex.Frac, "seconds (executed live)"
 				}
-				res.Hedges = append(res.Hedges, PaperSimHedge{Time: s.T, Mode: "synthetic", Kind: "INTRA_MINUTE", Qty: int64(math.Round(-nd)), FutQty: -nd,
-					OldHedge: old / float64(q), NewHedge: book.futQty / float64(q), CEPrice: s.F, DeltaBefore: nd, DeltaAfter: 0,
+				if frac <= 0 {
+					return // decided, no order on the live trade
+				}
+				dq := -frac * nd
+				book.fillFut(dq, s.F)
+				what := fmt.Sprintf("synthetic %+.2f contracts", dq)
+				if force {
+					what += fmt.Sprintf(" (executed live at %s: %.1f%% of delta)", ex.T, 100*frac)
+				}
+				res.Hedges = append(res.Hedges, PaperSimHedge{Time: s.T, Mode: "synthetic", Kind: "INTRA_MINUTE", Qty: int64(math.Round(dq)), FutQty: dq,
+					OldHedge: old / float64(q), NewHedge: book.futQty / float64(q), CEPrice: s.F, DeltaBefore: nd, DeltaAfter: nd + dq,
 					PointsOut: out, Allowed: d.EffectiveAllowed, Future: s.F, Source: src})
-				intraRow(m, s, d.EffectiveAllowed, out, nd, 0, old, what, pre)
+				intraRow(m, s, d.EffectiveAllowed, out, nd, nd+dq, old, what, pre)
 				return
 			}
-			if force && (!d.Hedge || d.Lots <= 0) {
-				d.Lots = int64(math.Round(math.Abs(nd) / float64(lotSize))) // executed live: complete delta in lots
+			if force { // executed live: its share of the delta, in lots
+				d.Lots = int64(math.Round(ex.Frac * math.Abs(nd) / float64(lotSize)))
 				d.Hedge = d.Lots > 0
 			}
 			if !d.Hedge || d.Lots <= 0 {
@@ -1073,9 +1095,16 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 			}
 		}
 		d := hedgeCheck(m, &pt)
-		if exit == "" && c.HedgeMode == "synthetic" && pt.HedgeCheck == "RISK_BREACH" {
+		// Minutes the live trade already decided: only its executed hedge, at its share.
+		decided := c.ExecThrough != "" && m.Time <= c.ExecThrough
+		exMin, exHas := c.Executed[m.Time+"|RISK_BREACH"]
+		mfrac := rule.minuteFrac(pt.PointsOut, pt.PointsAllowed) // old: all of it; new: points out -> 25 % of allowed
+		if exHas {
+			mfrac = exMin.Frac
+		}
+		if exit == "" && c.HedgeMode == "synthetic" && (exHas || (!decided && pt.HedgeCheck == "RISK_BREACH")) && mfrac > 0 && math.Abs(pt.NetDelta) > 1e-9 {
 			old := book.futQty
-			dq := -rule.minuteFrac(pt.PointsOut, pt.PointsAllowed) * pt.NetDelta // old: all of it; new: points out -> 25 % of allowed
+			dq := -mfrac * pt.NetDelta
 			book.fillFut(dq, m.Future)
 			after := book.value(m, q)
 			res.Hedges = append(res.Hedges, PaperSimHedge{Time: m.Time, Mode: "synthetic", Kind: "RISK_BREACH", Strike: 0, Qty: int64(math.Round(dq)), FutQty: dq,
@@ -1091,7 +1120,7 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 			pt.Event = ev
 			pt.PointsOut, pt.Before = simOut(pt), simBeforeOf(keep)
 		}
-		if exit == "" && c.HedgeMode == "lots" && d.Hedge && d.Lots > 0 {
+		if exit == "" && c.HedgeMode == "lots" && !decided && d.Hedge && d.Lots > 0 {
 			if ceSide, peSide, ok := hedgeSidesFromSignedDelta(pt.NetDelta); ok {
 				hq := d.Lots * lotSize
 				cpx, _, _, cs := simPrice(m, m.ATM, "CE")
@@ -1560,22 +1589,22 @@ func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 	for i := range actual {
 		actualIdx[actual[i].SimID] = i
 	}
-	// Executed intra-minute hedges of sim-driven trades (sim_drive.go): the
-	// trade's own simulation and the LUT simulation it is shown as apply them
-	// at the tick the trade acted on, so the card shows exactly what was done.
+	// Hedges sim-driven trades executed (sim_drive.go): the trade's own
+	// simulation and the LUT simulation it is shown as take exactly those up
+	// to the driver's last pass, so the card shows what was actually done.
 	if view == "" {
 		for _, a := range actual {
 			if _, ok := simDrivenRun(day, a.TradeUID); !ok {
 				continue
 			}
-			pins := simPinsFor(day, a.TradeUID)
-			if len(pins) == 0 {
+			ex, through := simExecutedFor(day, a.TradeUID)
+			if through == "" {
 				continue
 			}
 			for i := range cfgs {
 				lutSim := cfgs[i].ID == "LUT-"+strings.ToUpper(driving) && sets.Tables == driving && cfgs[i].Entry == a.EntryTime
 				if lutSim || cfgs[i].Source == "simulation that drove "+a.TradeUID {
-					cfgs[i].ForcedIntra = pins
+					cfgs[i].Executed, cfgs[i].ExecThrough = ex, through
 				}
 			}
 		}

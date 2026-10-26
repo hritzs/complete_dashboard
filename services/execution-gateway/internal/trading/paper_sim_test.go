@@ -308,11 +308,11 @@ func TestPaperSim_NewLogicRules(t *testing.T) {
 	}
 }
 
-// An intra-minute hedge the live trade executed (sim_drive.go pin) is applied
-// at exactly that tick on every re-run -- even when the minute's finalised
-// data no longer breaches there and the tick itself was compacted away --
-// and it is the minute's only intra-minute hedge (2026-10-26 09:25:59.671).
-func TestPaperSim_PinnedIntraMinute(t *testing.T) {
+// An intra-minute hedge the live trade executed (sim_drive.go) is applied at
+// exactly that tick and share on every re-run -- even when the minute's
+// finalised data no longer breaches there and the tick itself was compacted
+// away -- and it is the minute's only intra-minute hedge (2026-10-26 09:25:59.671).
+func TestPaperSim_ExecutedIntraMinute(t *testing.T) {
 	quiet := func() []simMinute {
 		mins := mkMinutes(5, func(i int) float64 { return 22600 })
 		for s := 1; s < 60; s++ { // small moves only: no natural intra-minute breach
@@ -320,25 +320,33 @@ func TestPaperSim_PinnedIntraMinute(t *testing.T) {
 		}
 		return mins
 	}
+	intraOf := func(r PaperSimResult) (out []PaperSimHedge) {
+		for _, h := range r.Hedges {
+			if h.Kind == "INTRA_MINUTE" {
+				out = append(out, h)
+			}
+		}
+		return out
+	}
 	cfg := PaperSimConfig{Entry: "09:16", Lots: 10, HedgeMode: "synthetic", SLBps: 500, HedgeRule: "new"}
-	for _, h := range RunPaperSim(quiet(), cfg, 65, nil).Hedges {
-		if h.Kind == "INTRA_MINUTE" {
-			t.Fatalf("no pin, quiet minute: unexpected %+v", h)
-		}
+	if got := intraOf(RunPaperSim(quiet(), cfg, 65, nil)); len(got) != 0 {
+		t.Fatalf("nothing executed, quiet minute: unexpected %+v", got)
 	}
-	// pinned tick not among the recorded seconds (compacted away)
-	cfg.ForcedIntra = map[int]simSec{917: {T: "09:17:45.671", F: 22750}}
-	var intra []PaperSimHedge
-	for _, h := range RunPaperSim(quiet(), cfg, 65, nil).Hedges {
-		if h.Kind == "INTRA_MINUTE" {
-			intra = append(intra, h)
-		}
-	}
+	// executed tick not among the recorded seconds (compacted away)
+	cfg.Executed = map[string]ExecHedge{"09:17|INTRA_MINUTE": {T: "09:17:45.671", F: 22750, Kind: "INTRA_MINUTE", Frac: 1}}
+	cfg.ExecThrough = "09:17:45.671"
+	intra := intraOf(RunPaperSim(quiet(), cfg, 65, nil))
 	if len(intra) != 1 || intra[0].Time != "09:17:45.671" || intra[0].Future != 22750 || intra[0].Source != "seconds (executed live)" {
 		t.Fatalf("want the executed hedge at 09:17:45.671 @22750, got %+v", intra)
 	}
 	if math.Abs(intra[0].FutQty+intra[0].DeltaBefore) > 1e-6 || intra[0].DeltaAfter != 0 {
-		t.Fatalf("executed intra-minute hedge takes the complete delta: %+v", intra[0])
+		t.Fatalf("executed complete hedge takes the complete delta: %+v", intra[0])
+	}
+	// the share the live trade actually hedged (whole lots), not the rule's
+	cfg.Executed["09:17|INTRA_MINUTE"] = ExecHedge{T: "09:17:45.671", F: 22750, Kind: "INTRA_MINUTE", Frac: 2600 / 2637.4}
+	intra = intraOf(RunPaperSim(quiet(), cfg, 65, nil))
+	if len(intra) != 1 || math.Abs(intra[0].DeltaAfter-intra[0].DeltaBefore*(1-2600/2637.4)) > 1e-6 {
+		t.Fatalf("want %.4f of the delta hedged, got %+v", 2600/2637.4, intra)
 	}
 	// a natural breach earlier in the minute does not add a second hedge: the executed one is the minute's only one
 	mins := mkMinutes(5, func(i int) float64 { return 22600 })
@@ -349,35 +357,78 @@ func TestPaperSim_PinnedIntraMinute(t *testing.T) {
 		}
 		mins[1].secs = append(mins[1].secs, simSec{T: fmt.Sprintf("09:17:%02d", s), F: f})
 	}
-	cfg.ForcedIntra = map[int]simSec{917: {T: "09:17:50", F: 22750}}
-	intra = intra[:0]
-	for _, h := range RunPaperSim(mins, cfg, 65, nil).Hedges {
-		if h.Kind == "INTRA_MINUTE" {
-			intra = append(intra, h)
-		}
-	}
-	if len(intra) != 1 || intra[0].Time != "09:17:50" {
+	cfg.Executed = map[string]ExecHedge{"09:17|INTRA_MINUTE": {T: "09:17:50", F: 22750, Kind: "INTRA_MINUTE", Frac: 1}}
+	cfg.ExecThrough = "09:17:50"
+	if intra = intraOf(RunPaperSim(mins, cfg, 65, nil)); len(intra) != 1 || intra[0].Time != "09:17:50" {
 		t.Fatalf("want only the executed hedge at 09:17:50, got %+v", intra)
 	}
 }
 
-// Executed intra-minute pins persist per day and come back after a restart.
-func TestSimPinsPersist(t *testing.T) {
+// Minute-end decisions the live trade took are replayed with the share it
+// hedged (0 = no order), and up to the last decision the simulation adds none
+// of its own; after it the rules run as usual.
+func TestPaperSim_ExecutedMinuteEnd(t *testing.T) {
+	trend := func() []simMinute { return mkMinutes(12, func(i int) float64 { return 22600 + 60*float64(i) }) }
+	cfg := PaperSimConfig{Entry: "09:16", Lots: 10, HedgeMode: "synthetic", SLBps: 5000, TPBps: 5000, HedgeRule: "new"}
+	var free []PaperSimHedge
+	for _, h := range RunPaperSim(trend(), cfg, 65, nil).Hedges {
+		if h.Kind == "RISK_BREACH" {
+			free = append(free, h)
+		}
+	}
+	if len(free) < 3 {
+		t.Fatalf("test needs a few minute-end hedges, got %+v", free)
+	}
+	first, second := free[0], free[1]
+	cfg.Executed = map[string]ExecHedge{
+		first.Time + "|RISK_BREACH":  {T: first.Time, F: first.Future, Kind: "RISK_BREACH", Frac: 0},     // no order live
+		second.Time + "|RISK_BREACH": {T: second.Time, F: second.Future, Kind: "RISK_BREACH", Frac: 0.5}, // half live
+	}
+	cfg.ExecThrough = second.Time
+	var got []PaperSimHedge
+	for _, h := range RunPaperSim(trend(), cfg, 65, nil).Hedges {
+		if h.Kind == "RISK_BREACH" || h.Kind == "INTRA_MINUTE" {
+			got = append(got, h)
+		}
+	}
+	if len(got) == 0 || got[0].Time != second.Time || math.Abs(got[0].DeltaAfter-0.5*got[0].DeltaBefore) > 1e-6 {
+		t.Fatalf("want first hedge = executed half at %s, got %+v", second.Time, got)
+	}
+	for _, h := range got[1:] {
+		if h.Time <= second.Time {
+			t.Fatalf("simulation hedge before the last executed decision: %+v", h)
+		}
+	}
+	if len(got) < 2 {
+		t.Fatalf("rules run again after the executed decisions: %+v", got)
+	}
+}
+
+// Executed decisions persist per day; "through" is the last one; restart reads the file.
+func TestSimExecutedPersist(t *testing.T) {
 	t.Setenv("LUT_DATA_DIR", t.TempDir())
 	simPins.mu.Lock()
 	simPins.day, simPins.m = "", nil
 	simPins.mu.Unlock()
-	addSimPin("2026-10-26", "TRD_X", "09:25:59.671", 22439.35)
-	addSimPin("2026-10-26", "TRD_X", "09:25:59.900", 22430) // same minute: the first one stays
-	addSimPin("2026-10-26", "TRD_X", "", 22430)             // ignored
+	recordSimExec("2026-10-26", "TRD_X", PaperSimHedge{Time: "09:25:59.671", Future: 22439.35, Kind: "INTRA_MINUTE"}, 2600/2637.4)
+	recordSimExec("2026-10-26", "TRD_X", PaperSimHedge{Time: "09:25:59.900", Future: 22430, Kind: "INTRA_MINUTE"}, 1) // same key: first stays
+	recordSimExec("2026-10-26", "TRD_X", PaperSimHedge{Time: "09:26", Future: 22438.65, Kind: "RISK_BREACH"}, 0)
+	recordSimExec("2026-10-26", "TRD_X", PaperSimHedge{Time: "09:30", Future: 22525.40, Kind: "RISK_BREACH"}, 2015/2537.4)
+	recordSimExec("2026-10-26", "TRD_X", PaperSimHedge{Time: "", Kind: "RISK_BREACH"}, 1) // ignored
 	simPins.mu.Lock()
 	simPins.day, simPins.m = "", nil // as after a restart: read the file
 	simPins.mu.Unlock()
-	got := simPinsFor("2026-10-26", "TRD_X")
-	if len(got) != 1 || got[925].T != "09:25:59.671" || got[925].F != 22439.35 {
-		t.Fatalf("%+v", got)
+	ex, through := simExecutedFor("2026-10-26", "TRD_X")
+	if through != "09:30" || len(ex) != 3 {
+		t.Fatalf("through %q, %+v", through, ex)
 	}
-	if len(simPinsFor("2026-10-26", "OTHER")) != 0 {
-		t.Fatal("pins are per trade")
+	if e := ex["09:25|INTRA_MINUTE"]; e.T != "09:25:59.671" || e.F != 22439.35 || e.Frac != 2600/2637.4 {
+		t.Fatalf("%+v", e)
+	}
+	if e, ok := ex["09:26|RISK_BREACH"]; !ok || e.Frac != 0 {
+		t.Fatalf("no-order decision kept with share 0: %+v", e)
+	}
+	if ex, _ := simExecutedFor("2026-10-26", "OTHER"); len(ex) != 0 {
+		t.Fatal("decisions are per trade")
 	}
 }

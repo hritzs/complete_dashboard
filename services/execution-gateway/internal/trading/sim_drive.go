@@ -252,7 +252,8 @@ func (s *Service) simDriveTick() {
 	mins := simWithTicks(day, simDriveMinutes(day), entry)
 	cfg := simDriveConfigOf(run, tr.Strike, lutDrivingRule().Key)
 	cfg.ExitTime = exitTime
-	cfg.ForcedIntra = simPinsFor(day, uid) // intra-minute hedges already executed: applied at their tick
+	// Decisions already taken (up to the last pass): exactly what the live trade did.
+	cfg.Executed, cfg.ExecThrough = simExecutedFor(day, uid)
 	res := RunPaperSim(mins, cfg, lot, nil)
 	// Finished minutes: keep only what decides the same next time.
 	cut := map[int]string{}
@@ -261,9 +262,12 @@ func (s *Service) simDriveTick() {
 			cut[lutHHMM(h.Time[:5])] = h.Time
 		}
 	}
-	for hm, p := range cfg.ForcedIntra {
-		if c, ok := cut[hm]; !ok || p.T > c {
-			cut[hm] = p.T // never compact away a tick the live trade acted on
+	for _, e := range cfg.Executed {
+		if e.Kind != "INTRA_MINUTE" || len(e.T) < 5 {
+			continue
+		}
+		if hm := lutHHMM(e.T[:5]); cut[hm] == "" || e.T > cut[hm] {
+			cut[hm] = e.T // never compact away a tick the live trade acted on
 		}
 	}
 	nowIST := time.Now().In(lutIST())
@@ -345,9 +349,6 @@ func simDriveSizing(snap TradeSnapshot, h PaperSimHedge, rule hedgeRule, deltaBa
 }
 
 func (s *Service) simDriveHedge(d *simDriver, tr StoredTrade, run LUTBuildRun, h PaperSimHedge, lot int64) {
-	if h.Kind == "INTRA_MINUTE" {
-		addSimPin(d.day, tr.TradeUID, h.Time, h.Future) // the simulation took it: every re-run must too
-	}
 	a := SimDriveAction{At: time.Now().In(lutIST()).Format("15:04:05.000"), SimTime: h.Time, Kind: h.Kind, SimDelta: h.DeltaBefore,
 		DecideMs: simEventAge(h.Time)}
 	frac, how := hedgeIntraFrac, "complete live delta"
@@ -388,6 +389,13 @@ func (s *Service) simDriveHedge(d *simDriver, tr StoredTrade, run LUTBuildRun, h
 			a.Result = "hedged"
 		}
 	}
+	// What the trade actually did (share of its live delta; 0 = nothing): the
+	// simulation follows exactly this from now on.
+	done := 0.0
+	if a.Result == "hedged" && a.Delta != 0 {
+		done = math.Min(1, float64(a.Lots*lot)/math.Abs(a.Delta))
+	}
+	recordSimExec(d.day, tr.TradeUID, h, done)
 	log.Printf("[SIM-DRIVE][%s] %s %s -> %s", tr.TradeUID, h.Kind, h.Time, a.Result)
 	d.record(a)
 }
@@ -409,24 +417,25 @@ func (s *Service) simDriveExit(d *simDriver, uid string, res PaperSimResult) {
 	d.record(a)
 }
 
-// Intra-minute hedges a sim-driven trade executed, kept per day in
-// <day>_simdrive_pins.json ({trade: {"HHMM": {"t": tick time, "f": future}}})
-// so every re-run of its simulation -- the driver's next passes, the Paper
-// Sim card, after a gateway restart -- applies them at exactly that tick
-// (PaperSimConfig.ForcedIntra). Without this a minute finalised with the
-// GreekSoft close can stop breaching at the tick the trade already acted on,
-// compaction then drops that tick, and the simulation (card and later
-// decisions) silently follows a path the live trade did not take
-// (2026-10-26 09:25:59.671: hedged live, gone from the card).
-type simPin struct {
-	T string  `json:"t"`
-	F float64 `json:"f"`
+// Hedge decisions a sim-driven trade acted on, kept per day in
+// <day>_simdrive_pins.json: {trade: {"through": last pass, "events":
+// {"HH:MM|KIND": {t, f, kind, frac}}}}. Every re-run of its simulation -- the
+// driver's next passes, the Paper Sim card, after a gateway restart -- takes
+// exactly these up to "through" (PaperSimConfig.Executed / ExecThrough).
+// Without this a minute finalised with the GreekSoft close can stop breaching
+// at the tick the trade already acted on, compaction drops that tick, and the
+// simulation (card and later decisions) silently follows a path the live
+// trade did not take (2026-10-26 09:25:59.671: hedged live, gone from the card;
+// 09:30 hedged 79 % of live delta while the re-run did something else).
+type simExecLog struct {
+	Through string               `json:"through"`
+	Events  map[string]ExecHedge `json:"events"`
 }
 
 var simPins = struct {
 	mu  sync.Mutex
 	day string
-	m   map[string]map[string]simPin
+	m   map[string]*simExecLog
 }{}
 
 func simPinsFile(day string) string { return filepath.Join(lutDataDir(), day+"_simdrive_pins.json") }
@@ -436,46 +445,68 @@ func simPinsLoadLocked(day string) {
 	if simPins.day == day && simPins.m != nil {
 		return
 	}
-	simPins.day, simPins.m = day, map[string]map[string]simPin{}
+	simPins.day, simPins.m = day, map[string]*simExecLog{}
 	if b, err := os.ReadFile(simPinsFile(day)); err == nil {
 		_ = json.Unmarshal(b, &simPins.m)
 	}
 }
 
-// simPinsFor: the trade's executed intra-minute ticks by minute (HHMM).
-func simPinsFor(day, uid string) map[int]simSec {
-	simPins.mu.Lock()
-	defer simPins.mu.Unlock()
-	simPinsLoadLocked(day)
-	out := map[int]simSec{}
-	for hm, p := range simPins.m[uid] {
-		out[lutHHMM(hm)] = simSec{T: p.T, F: p.F}
+// caller holds simPins.mu
+func simPinsSaveLocked(day string) {
+	b, err := json.Marshal(simPins.m)
+	if err != nil {
+		return
 	}
-	return out
+	tmp := simPinsFile(day) + ".tmp"
+	if os.WriteFile(tmp, b, 0o644) == nil {
+		_ = os.Rename(tmp, simPinsFile(day))
+	}
 }
 
-// addSimPin records an intra-minute event the driver acted on (first one per minute wins).
-func addSimPin(day, uid, t string, f float64) {
-	if len(t) < 5 || f <= 0 {
+// simExecutedFor: the trade's executed hedge decisions and how far they go.
+func simExecutedFor(day, uid string) (map[string]ExecHedge, string) {
+	simPins.mu.Lock()
+	defer simPins.mu.Unlock()
+	simPinsLoadLocked(day)
+	l := simPins.m[uid]
+	if l == nil {
+		return nil, ""
+	}
+	out := make(map[string]ExecHedge, len(l.Events))
+	for k, v := range l.Events {
+		out[k] = v
+	}
+	return out, l.Through
+}
+
+// simExecKey: the simulation event's minute and kind.
+func simExecKey(h PaperSimHedge) string { return h.Time[:5] + "|" + h.Kind }
+
+// recordSimExec stores one decision (first one per key wins) and moves
+// "through" to it: a simulation hedge before the last acted-on decision that
+// the trade never took is not what happened, so re-runs drop it.
+func recordSimExec(day, uid string, h PaperSimHedge, frac float64) {
+	if len(h.Time) < 5 {
 		return
 	}
 	simPins.mu.Lock()
 	defer simPins.mu.Unlock()
 	simPinsLoadLocked(day)
-	if simPins.m[uid] == nil {
-		simPins.m[uid] = map[string]simPin{}
+	l := simPins.m[uid]
+	if l == nil {
+		l = &simExecLog{Events: map[string]ExecHedge{}}
+		simPins.m[uid] = l
 	}
-	hm := t[:5]
-	if _, ok := simPins.m[uid][hm]; ok {
-		return
+	if l.Events == nil {
+		l.Events = map[string]ExecHedge{}
 	}
-	simPins.m[uid][hm] = simPin{T: t, F: f}
-	if b, err := json.Marshal(simPins.m); err == nil {
-		tmp := simPinsFile(day) + ".tmp"
-		if os.WriteFile(tmp, b, 0o644) == nil {
-			_ = os.Rename(tmp, simPinsFile(day))
-		}
+	if _, ok := l.Events[simExecKey(h)]; !ok {
+		l.Events[simExecKey(h)] = ExecHedge{T: h.Time, F: h.Future, Kind: h.Kind, Frac: frac}
 	}
+	if h.Time > l.Through {
+		l.Through = h.Time
+	}
+	simPinsSaveLocked(day)
 }
 
 func (d *simDriver) record(a SimDriveAction) {
