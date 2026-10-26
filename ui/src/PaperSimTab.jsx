@@ -229,7 +229,7 @@ function SimDetail(props) {
           <Seg value={tab()} onChange={setTab} options={[['minutes', 'Minutes'], ['hedges', `Hedges (${(s().hedges || []).length})`], ['position', 'Position']]} />
           <span style={S.muted}>
             {tab() === 'minutes' ? 'Row HH:MM = the prices minute HH:MM opens at, i.e. the last trade before HH:MM:00 (the close of the candle that just ended, from GreekSoft). SL / TP / exit and hedges are decided on these rows only. The top row is a live preview.' : ''}
-            {tab() === 'hedges' ? 'Delta-neutral at entry, then re-neutralised at each minute end where points out > allowed.' : ''}
+            {tab() === 'hedges' ? 'Delta-neutral at entry, then re-neutralised at each minute end where points out > allowed. LIVE = a hedge the sim-driven trade actually executed, replayed at its tick and share of delta.' : ''}
           </span>
         </div>
 
@@ -244,7 +244,7 @@ function SimDetail(props) {
               </tr></thead>
               <tbody>
                 <For each={minutes()}>{(p) => (<>
-                  <tr style={{ background: p._live ? 'rgba(57,135,229,0.10)' : p.event ? 'rgba(201,133,0,0.07)' : '' }}>
+                  <tr style={{ background: p._live ? 'rgba(57,135,229,0.10)' : /executed live|live trade:/.test(p.event || '') ? 'rgba(63,178,127,0.10)' : p.event ? 'rgba(201,133,0,0.07)' : '' }}>
                     <td>{p._live ? `${p.time} ·live` : p.time}</td>
                     <td style={{ ...S.muted, 'white-space': 'nowrap' }}>{p.quote_ts || ''}</td>
                     <td style={S.th}>{fmt(p.future)}</td><td style={S.th}>{fmt(p.atm, 0)}</td><td style={S.th}>{fmt(p.atm_ce)}</td><td style={S.th}>{fmt(p.atm_pe)}</td>
@@ -287,7 +287,7 @@ function SimDetail(props) {
         <Show when={tab() === 'hedges'}>
           <Show when={(s().hedges || []).length} fallback={<div style={S.muted}>No hedges.</div>}>
             <table class="trade-position-table" style={{ 'font-size': '12px' }}>
-              <thead><tr><th>Time</th><th>Type</th><th style={S.th}>Future</th><th style={S.th}>Old / qty</th><th style={S.th}>New / qty</th><th style={S.th}>Change</th><th style={S.th}>Delta before → after</th><th style={S.th}>Out / allowed</th></tr></thead>
+              <thead><tr><th>Time</th><th>Type</th><th style={S.th}>Future</th><th style={S.th}>Old / qty</th><th style={S.th}>New / qty</th><th style={S.th}>Change</th><th style={S.th}>Delta before → after</th><th style={S.th}>Out / allowed</th><th>Source</th></tr></thead>
               <tbody><For each={s().hedges}>{(h) => (
                 <tr>
                   <td>{h.time}</td><td>{h.kind || h.mode}</td><td style={S.th}>{fmt(h.future)}</td>
@@ -296,6 +296,7 @@ function SimDetail(props) {
                   <td style={S.th}>{h.mode === 'synthetic' ? sgn(h.new_hedge_qty - h.old_hedge_qty, 4) : `${h.lots} lot(s) ${h.ce_side} CE / ${h.pe_side} PE @${fmt(h.strike, 0)}`}</td>
                   <td style={S.th}>{fmt(h.delta_before, 4)} → {fmt(h.delta_after, 4)}</td>
                   <td style={S.th}>{h.allowed ? `${fmt(h.points_out, 1)} / ${fmt(h.allowed, 1)}` : '—'}</td>
+                  <td>{/executed live/.test(h.source || '') ? <span style={{ color: '#3fb27f', 'font-weight': 600 }} title={h.source}>LIVE</span> : <span style={S.muted}>{h.source || ''}</span>}</td>
                 </tr>
               )}</For></tbody>
             </table>
