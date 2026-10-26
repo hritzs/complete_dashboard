@@ -52,12 +52,20 @@ func exitLimitBuffer(symbol string) float64 {
 	return 2
 }
 
+// neutralBeforeExit: exits that hedge to delta-neutral first -- every normal
+// exit, and the trade's own SL (owner 2026-10-26: the 09:58 SL closed in step
+// from net delta -1185, so that much stayed open until the last step).
+// Portfolio SL, emergency and manual Square off stay the fastest path.
+func neutralBeforeExit(reason string) bool {
+	return !aggressiveExitReason(reason) || strings.EqualFold(strings.TrimSpace(reason), "SL")
+}
+
 // preExitNeutralise hedges the trade to delta-neutral before a normal exit
 // when |net delta| is more than one lot (reference: PRE_SQF_NEUTRAL). Runs
 // before SquareOff takes the trade lock (ManualHedgeLots takes it). A failure
 // is logged and the exit goes on, as in the reference.
 func (s *Service) preExitNeutralise(tradeUID, reason string) {
-	if aggressiveExitReason(reason) {
+	if !neutralBeforeExit(reason) {
 		return
 	}
 	tr, ok := s.Store.LoadTrade(tradeUID)
