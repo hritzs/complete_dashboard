@@ -92,6 +92,11 @@ type PaperSimConfig struct {
 	// although the real trade was stopped out at 09:24).
 	ActualExit   string `json:"actual_exit,omitempty"`   // HH:MM the real trade went flat
 	ActualReason string `json:"actual_reason,omitempty"` // SL / TP / TIME / MTM / STRADDLE / PORTFOLIO / SQF
+	// Entry option prices instead of the minute's close: a LUT build's 30 s
+	// average bid (lut_entry_avg.go). Internal only.
+	EntryCE   float64 `json:"-"`
+	EntryPE   float64 `json:"-"`
+	EntryNote string  `json:"-"`
 }
 
 type PaperSimLeg struct {
@@ -797,6 +802,10 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 	}
 	ce, _, _, s1 := simPrice(m0, K, "CE")
 	pe, _, _, s2 := simPrice(m0, K, "PE")
+	if c.EntryCE > 0 && c.EntryPE > 0 { // a LUT build's 30 s average bid (lut_entry_avg.go), as the backtest fills
+		res.Notes = append(res.Notes, fmt.Sprintf("entry at the 30-second average bid %s: CE %.2f PE %.2f (minute close CE %.2f PE %.2f)", c.EntryNote, c.EntryCE, c.EntryPE, ce, pe))
+		ce, pe = c.EntryCE, c.EntryPE
+	}
 	res.EntryTime, res.LUTAnswer, res.Strike, res.Qty = m0.Time, m0.Answer, K, q
 	res.LUTAnswerAlt = m0.AnswerAlt
 	res.CEEntry, res.PEEntry, res.EntryStraddle, res.EntryFuture = ce, pe, ce+pe, m0.Future
@@ -1601,17 +1610,25 @@ func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 	// to the driver's last pass, so the card shows what was actually done.
 	if view == "" {
 		for _, a := range actual {
-			if _, ok := simDrivenRun(day, a.TradeUID); !ok {
+			run, ok := simDrivenRun(day, a.TradeUID)
+			if !ok {
 				continue
 			}
 			ex, through := simExecutedFor(day, a.TradeUID)
-			if through == "" {
-				continue
-			}
+			drv := simDriveConfigOf(run, a.Strike, driving)
 			for i := range cfgs {
 				lutSim := cfgs[i].ID == "LUT-"+strings.ToUpper(driving) && sets.Tables == driving && cfgs[i].Entry == a.EntryTime
-				if lutSim || cfgs[i].Source == "simulation that drove "+a.TradeUID {
+				if !lutSim && cfgs[i].Source != "simulation that drove "+a.TradeUID {
+					continue
+				}
+				// The live trade's own card: its 30 s average entry and the
+				// hedges it executed (the "sell at HH:MM" cards stay what-ifs).
+				cfgs[i].EntryCE, cfgs[i].EntryPE, cfgs[i].EntryNote = drv.EntryCE, drv.EntryPE, drv.EntryNote
+				if through != "" {
 					cfgs[i].Executed, cfgs[i].ExecThrough = ex, through
+				}
+				if lutSim {
+					cfgs[i].Source += " · LIVE trade"
 				}
 			}
 		}

@@ -86,6 +86,13 @@ type LUTBuildRun struct {
 	SimPointsAllowed float64 `json:"sim_points_allowed,omitempty"`
 	SimMinOneLot     bool    `json:"sim_min_one_lot,omitempty"`
 	SimHedgeRule     string  `json:"sim_hedge_rule,omitempty"` // "" = the driving set's rule
+	// The 30-second average bid from the fire (lut_entry_avg.go): the
+	// simulation's entry, as the backtest. N 0 = capturing, -1 = none seen.
+	EntryAvgCE   float64 `json:"entry_avg_ce,omitempty"`
+	EntryAvgPE   float64 `json:"entry_avg_pe,omitempty"`
+	EntryAvgN    int     `json:"entry_avg_n,omitempty"`
+	EntryAvgFrom string  `json:"entry_avg_from,omitempty"`
+	EntryAvgTo   string  `json:"entry_avg_to,omitempty"`
 }
 
 func lutBuildDefaults(c LUTBuildConfig) LUTBuildConfig {
@@ -206,6 +213,9 @@ func (s *Service) lutFireBuildLocked(day string, rec LUTEvaluation, entry *LUTEn
 		run.Status, run.Error = "REFUSED", err.Error()
 	} else if entry.Expiry == "" || entry.Strike <= 0 {
 		run.Status, run.Error = "REFUSED", "the LUT YES has no expiry / strike"
+	} else if e.nearest != "" && !strings.EqualFold(entry.Expiry, e.nearest) {
+		// Current week only (owner 2026-10-26): the next-week tables are shown, never sold.
+		run.Status, run.Error = "REFUSED", fmt.Sprintf("the LUT sells the current week only (%s), not %s", e.nearest, entry.Expiry)
 	} else {
 		run.Status = "FIRING"
 	}

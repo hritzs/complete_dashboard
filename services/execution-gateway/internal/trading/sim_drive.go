@@ -532,9 +532,13 @@ func simDriveConfigOf(run LUTBuildRun, strike float64, tables string) PaperSimCo
 	if exit == "" {
 		exit = "15:37"
 	}
+	entryCE, entryPE, entryNote := 0.0, 0.0, ""
+	if run.EntryAvgN > 0 {
+		entryCE, entryPE, entryNote = run.EntryAvgCE, run.EntryAvgPE, fmt.Sprintf("%s-%s (%d s)", run.EntryAvgFrom, run.EntryAvgTo, run.EntryAvgN)
+	}
 	return PaperSimConfig{ID: "LIVE-" + run.TradeUID, Source: "drives " + run.TradeUID, Entry: strings.TrimSuffix(run.Minute, " (test)"),
 		Lots: 1, HedgeMode: "synthetic", ExitTime: exit, SLBps: run.SLBps, TPBps: run.TPBps, PointsAllowed: run.SimPointsAllowed, Strike: strike,
-		HedgeRule: simRunRule(run, tables).Key}
+		HedgeRule: simRunRule(run, tables).Key, EntryCE: entryCE, EntryPE: entryPE, EntryNote: entryNote}
 }
 
 // simRunRule: a test's own hedge rule, else the driving set's.
