@@ -2746,6 +2746,21 @@ func (s *Service) reduceExtraLegsBy(tradeUID string, tr StoredTrade, tagPrefix, 
 		lotSize = 1
 	}
 
+	// Every leg at once, not one after another: a hedge is a CE / PE pair
+	// on another strike (several, after several hedges), and closing them
+	// one confirmed order at a time took ~1 s per exit step while the
+	// straddle's own orders filled in ~50 ms -- for that second the book
+	// carried the hedges' delta without the straddle against it (2026-10-26
+	// 09:58 SL: -1185 -> -320 -> ... -> +458 with the straddle already flat).
+	// Pieces of one leg stay in order; quantities are decided up front.
+	type legJob struct {
+		idx    int
+		leg    OpenLeg
+		side   string
+		absQty int64
+		qty    int64
+	}
+	var jobs []legJob
 	for idx, leg := range extra {
 		realQty := leg.Qty - leg.WingQty
 		side := "SELL"
@@ -2757,7 +2772,6 @@ func (s *Service) reduceExtraLegsBy(tradeUID string, tr StoredTrade, tagPrefix, 
 		if absQty <= 0 {
 			continue
 		}
-
 		qty := qtyFor(leg, absQty)
 		if qty > absQty {
 			qty = absQty
@@ -2765,68 +2779,96 @@ func (s *Service) reduceExtraLegsBy(tradeUID string, tr StoredTrade, tagPrefix, 
 		if qty <= 0 {
 			continue
 		}
-
-		// Split into orders no bigger than the live per-order max (e.g.
-		// NIFTY 1755): a hedge built in several tranches can be larger than
-		// one order is allowed to be, and a single oversized exit order
-		// would be rejected by the exchange.
-		maxPer := s.resolveMaxOrderQty(tr.Symbol, lotSize)
-		for piece, remaining := 0, qty; remaining > 0; piece++ {
-			pieceQty := remaining
-			if pieceQty > maxPer {
-				pieceQty = maxPer
-			}
-
-			intentID := BuildShortOrderUID(tr.Symbol, fmt.Sprintf("%s%dP%d", tagPrefix, leg.Token, piece), time.Now(), idx)
-			intent := OrderIntent{
-				IntentID:        intentID,
-				TradeUID:        tradeUID,
-				Token:           leg.Token,
-				Symbol:          tr.Symbol,
-				ExchangeSegment: leg.Exchange,
-				Side:            side,
-				Quantity:        pieceQty,
-				LotSize:         lotSize,
-				OrderType:       "MARKET",
-				ProductType:     tr.ProductType,
-				Phase:           phase,
-				OrderUID:        intentID,
-				BrokerName:      tr.BrokerName,
-				AccountID:       tr.AccountID,
-			}
-
-			log.Printf(
-				"📝 Persisting %s extra-leg order to DB before execution: trade=%s token=%d side=%s qty=%d (piece %d, %s, open %d, max/order %d)",
-				phase, tradeUID, leg.Token, side, pieceQty, piece+1, what, absQty, maxPer,
-			)
-			brokerOrderID, _, err := s.submitOrderIntent(context.Background(), executor, tradeUID, intent)
-			if err != nil {
-				return shortChangeCE, shortChangePE, fmt.Errorf("reduce extra leg token=%d: %w", leg.Token, err)
-			}
-
-			waitCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			upd, err := s.OrderEvents.WaitTerminal(waitCtx, tradeUID, brokerOrderID, pieceQty, 15*time.Second)
-			cancel()
-			if upd.FilledQty > 0 {
-				got := upd.FilledQty
-				if got > pieceQty {
-					got = pieceQty
-				}
-				record(leg.OptionType, side, got)
-			}
-			if err != nil {
-				return shortChangeCE, shortChangePE, fmt.Errorf("reduce extra leg token=%d order=%s: no terminal confirmation: %w", leg.Token, brokerOrderID, err)
-			}
-
-			log.Printf(
-				"✅ %s extra leg reduced trade=%s token=%d side=%s qty=%d broker_order_id=%s",
-				phase, tradeUID, leg.Token, side, pieceQty, brokerOrderID,
-			)
-			remaining -= pieceQty
-		}
+		jobs = append(jobs, legJob{idx, leg, side, absQty, qty})
 	}
 
-	return shortChangeCE, shortChangePE, nil
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, j := range jobs {
+		wg.Add(1)
+		go func(j legJob) {
+			defer wg.Done()
+			if err := s.closeExtraLegPieces(tradeUID, tr, executor, tagPrefix, phase, what, lotSize, j.idx, j.leg, j.side, j.absQty, j.qty,
+				func(optionType, side string, qty int64) {
+					mu.Lock()
+					record(optionType, side, qty)
+					mu.Unlock()
+				}); err != nil {
+				mu.Lock()
+				if retErr == nil {
+					retErr = err
+				}
+				mu.Unlock()
+			}
+		}(j)
+	}
+	wg.Wait()
+	return shortChangeCE, shortChangePE, retErr
+}
+
+// closeExtraLegPieces closes qty of one extra leg in orders no bigger than
+// the per-order max, each confirmed before the next.
+func (s *Service) closeExtraLegPieces(tradeUID string, tr StoredTrade, executor Executor, tagPrefix, phase, what string, lotSize int64,
+	idx int, leg OpenLeg, side string, absQty, qty int64, record func(optionType, side string, qty int64)) error {
+	// Split into orders no bigger than the live per-order max (e.g.
+	// NIFTY 1755): a hedge built in several tranches can be larger than
+	// one order is allowed to be, and a single oversized exit order
+	// would be rejected by the exchange.
+	maxPer := s.resolveMaxOrderQty(tr.Symbol, lotSize)
+	for piece, remaining := 0, qty; remaining > 0; piece++ {
+		pieceQty := remaining
+		if pieceQty > maxPer {
+			pieceQty = maxPer
+		}
+
+		intentID := BuildShortOrderUID(tr.Symbol, fmt.Sprintf("%s%dP%d", tagPrefix, leg.Token, piece), time.Now(), idx)
+		intent := OrderIntent{
+			IntentID:        intentID,
+			TradeUID:        tradeUID,
+			Token:           leg.Token,
+			Symbol:          tr.Symbol,
+			ExchangeSegment: leg.Exchange,
+			Side:            side,
+			Quantity:        pieceQty,
+			LotSize:         lotSize,
+			OrderType:       "MARKET",
+			ProductType:     tr.ProductType,
+			Phase:           phase,
+			OrderUID:        intentID,
+			BrokerName:      tr.BrokerName,
+			AccountID:       tr.AccountID,
+		}
+
+		log.Printf(
+			"📝 Persisting %s extra-leg order to DB before execution: trade=%s token=%d side=%s qty=%d (piece %d, %s, open %d, max/order %d)",
+			phase, tradeUID, leg.Token, side, pieceQty, piece+1, what, absQty, maxPer,
+		)
+		brokerOrderID, _, err := s.submitOrderIntent(context.Background(), executor, tradeUID, intent)
+		if err != nil {
+			return fmt.Errorf("reduce extra leg token=%d: %w", leg.Token, err)
+		}
+
+		waitCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		upd, err := s.OrderEvents.WaitTerminal(waitCtx, tradeUID, brokerOrderID, pieceQty, 15*time.Second)
+		cancel()
+		if upd.FilledQty > 0 {
+			got := upd.FilledQty
+			if got > pieceQty {
+				got = pieceQty
+			}
+			record(leg.OptionType, side, got)
+		}
+		if err != nil {
+			return fmt.Errorf("reduce extra leg token=%d order=%s: no terminal confirmation: %w", leg.Token, brokerOrderID, err)
+		}
+
+		log.Printf(
+			"✅ %s extra leg reduced trade=%s token=%d side=%s qty=%d broker_order_id=%s",
+			phase, tradeUID, leg.Token, side, pieceQty, brokerOrderID,
+		)
+		remaining -= pieceQty
+	}
+	return nil
 }
 
 func verifiedQuantityForToken(fills []BrokerFill, token int64) int64 {
