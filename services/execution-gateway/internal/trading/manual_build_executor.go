@@ -31,6 +31,11 @@ type FinalBuildRequest struct {
 	// strike the LUT evaluated, not whatever is ATM a moment later.
 	CEStrikePrice int
 	PEStrikePrice int
+	// Delta-neutral sizing deltas from the LUT minute the build fires on
+	// (lutSizingDeltas) -- the same price the Paper Sim enters at. 0 = the
+	// live chain's.
+	SizingCEDelta float64
+	SizingPEDelta float64
 }
 
 func (s *Service) ExecuteFinalBuild(
@@ -70,5 +75,7 @@ func (s *Service) ExecuteFinalBuild(
 		Risk:             req.Risk,
 		CEStrikePrice:    req.CEStrikePrice,
 		PEStrikePrice:    req.PEStrikePrice,
+		SizingCEDelta:    req.SizingCEDelta,
+		SizingPEDelta:    req.SizingPEDelta,
 	})
 }
