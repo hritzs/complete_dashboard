@@ -150,6 +150,9 @@ type LUTState struct {
 type lutEngine struct {
 	mu sync.Mutex
 
+	entryAvg map[*LUTBuildRun]*lutEntryAvgCapture // 30 s entry averages being captured (lut_entry_avg.go)
+	nearest  string                               // the current-week expiry (the only one a LUT build sells)
+
 	preopen   lutPreopen   // pre-open estimate (lut_preopen.go)
 	lastClose *MinuteClose // the last minute's ATM candle closes
 	gsKick    int64        // boundary the GreekSoft close fetch was started for
@@ -486,6 +489,8 @@ func (s *Service) lutComputeLocked(now time.Time, day string, hhmm int, chain *O
 	if chain != nil {
 		e.noteLTPs(now, chain)
 		e.noteSecond(now, day, lutUnderlying(chain))
+		e.noteEntryAvgLocked(now, day, chain)
+		e.nearest = lutNearestExpiry(chain)
 		if e.expiry != chain.Expiry {
 			e.expiry = chain.Expiry
 		}
