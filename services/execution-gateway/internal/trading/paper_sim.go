@@ -402,9 +402,12 @@ const (
 	simIVDropFrom   = 1457
 )
 
-// simDeltaBand: on DTE rows 0 / 1 the hedge band is |net delta| per
-// straddle unit (backtest DELTA_MAP); other rows use the points band.
-var simDeltaBand = map[int]float64{0: 0.25, 1: 0.20}
+// simDeltaBand: DTE rows with a delta band (|net delta| per straddle unit,
+// backtest DELTA_MAP) instead of the points band. Empty since 2026-10-26
+// (owner): every DTE row, including 0 / 1, uses the normal points band
+// min(straddle / straddle_div, future x IV / hedge_div (57)), in the Paper Sim
+// and in the live LUT hedges it drives. Was {0: 0.25, 1: 0.20}.
+var simDeltaBand = map[int]float64{}
 
 // simNewExit is the new logic's exit test at a minute (after SL / TP):
 // TV, TV4, then the 14:57 IV drop; "" = none.

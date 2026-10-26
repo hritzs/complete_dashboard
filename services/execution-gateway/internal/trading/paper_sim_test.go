@@ -284,8 +284,9 @@ func TestPaperSim_NewLogicRules(t *testing.T) {
 	}
 	mins := mkMinutes(10, func(i int) float64 { return 22600 })
 	r := RunPaperSim(mins, PaperSimConfig{Entry: "09:16", Lots: 1, HedgeMode: "synthetic", HedgeRule: "new"}, 65, nil)
-	if r.Config.SLBps != lutSLBpsExpiry || r.DeltaBand != 0.25 {
-		t.Fatalf("DTE row 0: SL %v band %v", r.Config.SLBps, r.DeltaBand)
+	// since 2026-10-26 no delta band on any DTE row: the points band (straddle / IV) everywhere
+	if r.Config.SLBps != lutSLBpsExpiry || r.DeltaBand != 0 {
+		t.Fatalf("DTE row 0: SL %v band %v (want 16 bps, no delta band)", r.Config.SLBps, r.DeltaBand)
 	}
 	if r := RunPaperSim(mins, PaperSimConfig{Entry: "09:16", Lots: 1, HedgeMode: "synthetic", HedgeRule: "old"}, 65, nil); r.Config.SLBps != lutSLBps || r.DeltaBand != 0 {
 		t.Fatalf("old logic must keep 14 bps and no delta band: %v %v", r.Config.SLBps, r.DeltaBand)
