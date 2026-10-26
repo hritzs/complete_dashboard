@@ -99,11 +99,14 @@ func TestBpsOfSpotThreshold(t *testing.T) {
 // replacement for exactly this test, not a resurrection). It assumes
 // every submitted order fills immediately and completely.
 type fakeSLExecutor struct {
+	mu        sync.Mutex // the build sends two orders at once
 	submitted []OrderIntent
 }
 
 func (f *fakeSLExecutor) ExecuteOrderIntent(ctx context.Context, intent OrderIntent) (*ExecutionResult, error) {
+	f.mu.Lock()
 	f.submitted = append(f.submitted, intent)
+	f.mu.Unlock()
 	return &ExecutionResult{
 		IntentID:      intent.IntentID,
 		BrokerOrderID: "FAKE-" + intent.IntentID,
@@ -112,6 +115,8 @@ func (f *fakeSLExecutor) ExecuteOrderIntent(ctx context.Context, intent OrderInt
 }
 
 func (f *fakeSLExecutor) GetVerifiedFills(ctx context.Context) ([]BrokerFill, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	fills := make([]BrokerFill, 0, len(f.submitted))
 	for _, intent := range f.submitted {
 		fills = append(fills, BrokerFill{

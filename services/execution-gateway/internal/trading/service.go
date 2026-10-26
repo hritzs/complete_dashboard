@@ -718,6 +718,10 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 	}, nil
 }
 
+// buildOrdersInFlight: build orders sent together (a CE and a PE in the
+// plan's ratio), the next ones once both answered.
+const buildOrdersInFlight = 2
+
 func (s *Service) executeBuild(
 	ctx context.Context,
 	executor Executor,
@@ -846,138 +850,166 @@ chunkLoop:
 
 			var nextRetry []ExecOrder
 
-			for i := range ordersToProcess {
-				order := ordersToProcess[i]
-
+			// Two orders at a time -- the chunk's next two in plan order, a CE
+			// and a PE in the build's own CE:PE ratio (the chunker interleaves
+			// each leg in proportion to its size) -- sent together, then the
+			// next two once both answered. The plan, quantities and ratio are
+			// fixed before the first order; only the waiting overlaps (one
+			// sequential HTTP round trip per order made 196 orders ~45 s on
+			// 2026-10-26, each lost-packet retry holding every order behind it).
+			for i := 0; i < len(ordersToProcess); i += buildOrdersInFlight {
 				if stopFlag.Load() {
 					log.Printf("[BUILD] trade=%s STOPPED by user: no more build orders (%d submitted); the filled part becomes the position", trade.TradeUID, outcome.SubmittedCount)
 					break chunkLoop
 				}
+				pair := ordersToProcess[i:min(i+buildOrdersInFlight, len(ordersToProcess))]
 
-				if order.Quantity <= 0 {
-					err := fmt.Errorf(
-						"invalid build quantity for token %d: %d",
-						order.Token,
-						order.Quantity,
-					)
-					outcome.SubmissionErrors++
-					outcome.FirstError = err
-					return outcome, err
+				for _, order := range pair {
+					if order.Quantity <= 0 {
+						err := fmt.Errorf(
+							"invalid build quantity for token %d: %d",
+							order.Token,
+							order.Quantity,
+						)
+						outcome.SubmissionErrors++
+						outcome.FirstError = err
+						return outcome, err
+					}
 				}
 
 				// Price off the LIVE bid/ask (attempt 1 -> buffer 1) when a
-				// quote is available; the stale LTP snapshotted at deploy
-				// time (ExpectedPrice) is only a fallback for when the
-				// chain has no live quote yet.
-				limit := 0.0
+				// quote is available, one chain read for the pair; the stale
+				// LTP snapshotted at deploy time (ExpectedPrice) is only a
+				// fallback for when the chain has no live quote yet.
+				var chain *OptionChainSnapshot
 				if s.Snapshot != nil {
-					if chain, chainErr := s.Snapshot.GetOptionChain(ctx, trade.Symbol, trade.Expiry); chainErr == nil {
+					if c, chainErr := s.Snapshot.GetOptionChain(ctx, trade.Symbol, trade.Expiry); chainErr == nil {
+						chain = c
+					}
+				}
+				intents := make([]OrderIntent, len(pair))
+				for k := range pair {
+					order := &pair[k]
+					limit := 0.0
+					if chain != nil {
 						bid, ask := bidAskForToken(chain, order.Token)
 						if p, ok := bidAskLimitPrice(order.Action, bid, ask, bufferForAttempt(1)); ok {
 							limit = p
 						}
 					}
-				}
-				if limit <= 0 {
-					bufferMultiplier := float64(retryIter + 1)
-					limit = math.Max(0.05, order.ExpectedPrice-sellBuffer*bufferMultiplier)
-				}
-				order.LimitPrice = math.Round(limit/0.05) * 0.05
+					if limit <= 0 {
+						bufferMultiplier := float64(retryIter + 1)
+						limit = math.Max(0.05, order.ExpectedPrice-sellBuffer*bufferMultiplier)
+					}
+					order.LimitPrice = math.Round(limit/0.05) * 0.05
 
-				intent := OrderIntent{
-					IntentID:        order.UID,
-					TradeUID:        trade.TradeUID,
-					Token:           order.Token,
-					Symbol:          order.Symbol,
-					Side:            order.Action,
-					Quantity:        int64(order.Quantity),
-					LotSize:         int64(trade.LotSize),
-					OrderType:       "LIMIT",
-					ProductType:     trade.ProductType,
-					ExchangeSegment: trade.ExchangeSegment,
-					LegType:         order.OptionType,
-					Phase:           "BUILD",
-					OrderUID:        order.UID,
-					BrokerName:      trade.BrokerName,
-					AccountID:       trade.AccountID,
-					ExpectedPrice:   order.ExpectedPrice,
+					intents[k] = OrderIntent{
+						IntentID:        order.UID,
+						TradeUID:        trade.TradeUID,
+						Token:           order.Token,
+						Symbol:          order.Symbol,
+						Side:            order.Action,
+						Quantity:        int64(order.Quantity),
+						LotSize:         int64(trade.LotSize),
+						OrderType:       "LIMIT",
+						ProductType:     trade.ProductType,
+						ExchangeSegment: trade.ExchangeSegment,
+						LegType:         order.OptionType,
+						Phase:           "BUILD",
+						OrderUID:        order.UID,
+						BrokerName:      trade.BrokerName,
+						AccountID:       trade.AccountID,
+						ExpectedPrice:   order.ExpectedPrice,
+					}
+					lp := order.LimitPrice
+					intents[k].LimitPrice = &lp
 				}
-				lp := order.LimitPrice
-				intent.LimitPrice = &lp
 
-				brokerOrderID, status, submitErr := s.submitOrderIntent(
-					ctx,
-					executor,
-					trade.TradeUID,
-					intent,
-				)
-				if submitErr != nil {
-					outcome.SubmissionErrors++
+				type buildSubmit struct {
+					brokerOrderID, status string
+					err                   error
+				}
+				results := make([]buildSubmit, len(pair))
+				var wg sync.WaitGroup
+				for k := range pair {
+					wg.Add(1)
+					go func(k int) {
+						defer wg.Done()
+						id, st, err := s.submitOrderIntent(ctx, executor, trade.TradeUID, intents[k])
+						results[k] = buildSubmit{id, st, err}
+					}(k)
+				}
+				wg.Wait()
 
-					if outcome.FirstError == nil {
-						outcome.FirstError = submitErr
+				// Results in plan order, exactly as one at a time.
+				for k, order := range pair {
+					brokerOrderID, status, submitErr := results[k].brokerOrderID, results[k].status, results[k].err
+					if submitErr != nil {
+						outcome.SubmissionErrors++
+
+						if outcome.FirstError == nil {
+							outcome.FirstError = submitErr
+						}
+
+						log.Printf(
+							"BUILD submission unresolved trade=%s chunk=%d retry=%d leg=%s token=%d qty=%d err=%v",
+							trade.TradeUID,
+							chunkIdx+1,
+							retryIter+1,
+							order.OptionType,
+							order.Token,
+							order.Quantity,
+							submitErr,
+						)
+
+						nextRetry = append(nextRetry, order)
+						continue
+					}
+
+					if _, exists := submittedBrokerOrderIDs[brokerOrderID]; !exists {
+						outcome.SubmittedCount++
+					}
+
+					submittedBrokerOrderIDs[brokerOrderID] = struct{}{}
+					builtOrders = append(builtOrders, chaseOrder{
+						BrokerOrderID: brokerOrderID,
+						Token:         order.Token,
+						Leg:           order.OptionType,
+						Side:          order.Action,
+						Quantity:      int64(order.Quantity),
+					})
+					pushBuildProgress(outcome.SubmittedCount)
+
+					if tok := wingPlan.token[order.OptionType]; tok > 0 && strings.EqualFold(order.Action, "SELL") {
+						if pw, wErr := s.submitWingOrder(ctx, executor, trade, tok, order.OptionType, "BUY", int64(order.Quantity)); wErr != nil {
+							log.Printf("[WINGS] ⚠ trade=%s build wing BUY %s %d not sent (true-up retries after the build): %v", trade.TradeUID, order.OptionType, order.Quantity, wErr)
+						} else {
+							pendingWings = append(pendingWings, pw)
+						}
 					}
 
 					log.Printf(
-						"BUILD submission unresolved trade=%s chunk=%d retry=%d leg=%s token=%d qty=%d err=%v",
+						"BUILD submitted trade=%s chunk=%d retry=%d leg=%s broker_order_id=%s status=%s fill_assumed=false",
 						trade.TradeUID,
 						chunkIdx+1,
 						retryIter+1,
 						order.OptionType,
-						order.Token,
-						order.Quantity,
-						submitErr,
+						brokerOrderID,
+						status,
 					)
 
-					nextRetry = append(nextRetry, order)
-					continue
-				}
+					// Check the PREVIOUS order's real terminal status (a
+					// non-blocking cache lookup) before taking further --
+					// never a wait. See checkPreviousOrder's comment above.
+					checkPreviousOrder()
+					pendingConfirmOrderID = brokerOrderID
 
-				if _, exists := submittedBrokerOrderIDs[brokerOrderID]; !exists {
-					outcome.SubmittedCount++
-				}
-
-				submittedBrokerOrderIDs[brokerOrderID] = struct{}{}
-				builtOrders = append(builtOrders, chaseOrder{
-					BrokerOrderID: brokerOrderID,
-					Token:         order.Token,
-					Leg:           order.OptionType,
-					Side:          order.Action,
-					Quantity:      int64(order.Quantity),
-				})
-				pushBuildProgress(outcome.SubmittedCount)
-
-				if tok := wingPlan.token[order.OptionType]; tok > 0 && strings.EqualFold(order.Action, "SELL") {
-					if pw, wErr := s.submitWingOrder(ctx, executor, trade, tok, order.OptionType, "BUY", int64(order.Quantity)); wErr != nil {
-						log.Printf("[WINGS] ⚠ trade=%s build wing BUY %s %d not sent (true-up retries after the build): %v", trade.TradeUID, order.OptionType, order.Quantity, wErr)
-					} else {
-						pendingWings = append(pendingWings, pw)
+					if status != "FILLED" &&
+						status != "SUCCESS" &&
+						status != "ACKED" &&
+						status != "SUBMITTED" {
+						nextRetry = append(nextRetry, order)
 					}
-				}
-
-				log.Printf(
-					"BUILD submitted trade=%s chunk=%d retry=%d leg=%s broker_order_id=%s status=%s fill_assumed=false",
-					trade.TradeUID,
-					chunkIdx+1,
-					retryIter+1,
-					order.OptionType,
-					brokerOrderID,
-					status,
-				)
-
-				// Check the PREVIOUS order's real terminal status (a
-				// non-blocking cache lookup) before submitting further --
-				// never this one, and never a wait. See checkPreviousOrder's
-				// comment above for why this is free, real-time information
-				// by the time we get here.
-				checkPreviousOrder()
-				pendingConfirmOrderID = brokerOrderID
-
-				if status != "FILLED" &&
-					status != "SUCCESS" &&
-					status != "ACKED" &&
-					status != "SUBMITTED" {
-					nextRetry = append(nextRetry, order)
 				}
 
 				if circuitBreakerTripped {
