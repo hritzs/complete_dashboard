@@ -69,7 +69,14 @@ function Card(props) {
   );
 }
 
+const savedLimit = () => { try { return localStorage.getItem('broker.totalLimit') || ''; } catch (_) { return ''; } };
+
 export default function BrokerRiskPanel() {
+  const [limit, setLimitRaw] = createSignal(savedLimit());
+  const setLimit = (v) => { setLimitRaw(v); try { localStorage.setItem('broker.totalLimit', v); } catch (_) { /* private mode */ } };
+  const used = () => Number(data()?.risk?.margin?.response?.data?.spanExp);
+  const available = () => (Number(limit()) > 0 && Number.isFinite(used()) ? Number(limit()) - used() : null);
+  const usedPct = () => (Number(limit()) > 0 && Number.isFinite(used()) ? (100 * used()) / Number(limit()) : null);
   const [data, setData] = createSignal(null);
   const [err, setErr] = createSignal('');
   const [busy, setBusy] = createSignal(false);
@@ -93,6 +100,20 @@ export default function BrokerRiskPanel() {
       </div>
       <Show when={!err()} fallback={<div class="empty-state" style={{ color: '#ef4444' }}>❌ {err()}</div>}>
         <Show when={data()} fallback={<div class="empty-state">🔄 Fetching…</div>}>
+          <div style={{ display: 'flex', gap: '10px', 'flex-wrap': 'wrap', 'align-items': 'stretch', margin: '6px 0 10px' }}>
+            <div style={{ background: 'rgba(255,255,255,0.04)', 'border-radius': '6px', padding: '10px 14px', 'min-width': '200px' }}>
+              <div style={{ 'font-size': '12px', opacity: 0.65 }}>Total limit (₹) -- yours, saved in this browser</div>
+              <input type="number" min="0" step="100000" value={limit()} placeholder="e.g. 70000000"
+                onInput={(e) => setLimit(e.currentTarget.value)} style={{ width: '170px', 'margin-top': '4px' }} />
+            </div>
+            <Card label="Used (SPAN + exposure)" value={Number.isFinite(used()) ? used() : null} />
+            <Card label={usedPct() == null ? 'Available' : `Available (${(100 - usedPct()).toFixed(1)}% free)`} value={available()} signed />
+          </div>
+          <Show when={usedPct() != null}>
+            <div style={{ height: '8px', background: 'rgba(255,255,255,0.08)', 'border-radius': '4px', margin: '0 0 14px', overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${Math.min(100, Math.max(0, usedPct()))}%`, background: usedPct() > 90 ? '#e66767' : usedPct() > 75 ? '#d9a441' : '#3fb27f' }} />
+            </div>
+          </Show>
           <div style={{ display: 'flex', gap: '10px', 'flex-wrap': 'wrap', margin: '6px 0 14px' }}>
             <Card label="Broker MTM (open positions)" value={data().risk?.mtm?.data?.[0]?.MTM} signed />
             <For each={MARGIN_LABELS}>{([k, label]) => (
@@ -100,11 +121,12 @@ export default function BrokerRiskPanel() {
             )}</For>
           </div>
           <div style={{ 'font-size': '12px', opacity: 0.6, margin: '-6px 0 10px' }}>
-            GreekSoft returns no available-margin or limit figure in these calls; everything it returns is listed below.
+            GreekSoft's trading calls return used margin, not the total / available: enter your total limit above (Available = limit - used). Everything GreekSoft returns, including HoldingValueInfo, is listed below.
           </div>
           <div style={{ display: 'flex', gap: '16px', 'flex-wrap': 'wrap' }}>
             <Section title="MTM (getNetPositionMTM)" data={data().risk?.mtm} error={data().risk?.mtm_error} />
             <Section title="Margin (MarginDetailRequest, F&O)" data={data().risk?.margin} error={data().risk?.margin_error} />
+            <Section title="Holdings / funds (HoldingValueInfo)" data={data().risk?.holding} error={data().risk?.holding_error} />
           </div>
         </Show>
       </Show>

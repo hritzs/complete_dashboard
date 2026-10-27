@@ -726,5 +726,13 @@ func (e *Executor) BrokerRisk(ctx context.Context, gscid string) (map[string]int
 	} else {
 		out["margin"] = m
 	}
+	// Holdings / funds valuation (portfolio service, read-only): looked at
+	// for the account's total / available funds, which the two calls above
+	// do not return.
+	if hv, err := e.Client.GetHoldingValueInfo(ctx); err != nil {
+		out["holding_error"] = err.Error()
+	} else {
+		out["holding"] = hv
+	}
 	return out, nil
 }
