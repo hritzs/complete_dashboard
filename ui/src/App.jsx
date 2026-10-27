@@ -3062,6 +3062,10 @@ function App() {
                                           <span>&nbsp;&nbsp;Spot × IV ÷ H-Div</span>
                                           <strong>{fmt(live().points_allowed_iv ?? 0, 2)}</strong>
                                         </div>
+                                        <div class="trade-metric-row" title="Points Allowed never goes below this floor -- the same rule the hedge decisions and the Paper Sim use">
+                                          <span>&nbsp;&nbsp;Floor ({Number(item.config?.hedge_min_threshold_bps ?? 8)} bps of spot)</span>
+                                          <strong>{fmt((Number(live().underlying) || 0) * Number(item.config?.hedge_min_threshold_bps ?? 8) / 10000, 2)}</strong>
+                                        </div>
 
                                         <div class="trade-metric-row">
                                           <span>PnL / Straddle</span>
