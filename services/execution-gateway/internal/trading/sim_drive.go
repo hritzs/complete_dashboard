@@ -501,7 +501,9 @@ func recordSimExec(day, uid string, h PaperSimHedge, frac float64) {
 		l.Events = map[string]ExecHedge{}
 	}
 	if _, ok := l.Events[simExecKey(h)]; !ok {
-		l.Events[simExecKey(h)] = ExecHedge{T: h.Time, F: h.Future, Kind: h.Kind, Frac: frac}
+		// Own: the simulation keeps its own size for it (live's fill is only
+		// recorded); it drives, live follows.
+		l.Events[simExecKey(h)] = ExecHedge{T: h.Time, F: h.Future, Kind: h.Kind, Frac: frac, Own: true}
 	}
 	if h.Time > l.Through {
 		l.Through = h.Time
