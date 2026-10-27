@@ -8,6 +8,10 @@ package trading
 //            (excluded legs are still shown and still closed by Full Exit).
 //   CLOSE -- square off some or all lots of one open leg of the trade
 //            (straddle leg, hedge, or a manual leg; any expiry).
+//   wing  -- ADD / CLOSE on one of the trade's WINGS (its row's Add / Close):
+//            BUY more / SELL some of that wing token as WING orders, so the
+//            trade's wing holdings, wing P&L and its exit (which sells every
+//            wing held) stay right. Margin only, never in P&L / greeks.
 //
 // Every order is a MARKET order tagged to the trade (same path as Full
 // Exit's extra-leg close): persisted before sending, confirmed by the
@@ -36,6 +40,7 @@ type ManualLegRequest struct {
 	Token       int64   `json:"token"` // CLOSE: the leg's token
 	Lots        int     `json:"lots"`  // ADD: lots; CLOSE: lots (0 = all)
 	IncludeRisk *bool   `json:"include_risk,omitempty"`
+	Wing        bool    `json:"wing,omitempty"` // ADD / CLOSE on a wing row (Token = the wing)
 	Confirm     string  `json:"confirm"`
 }
 
@@ -91,8 +96,29 @@ func (s *Service) ManualLeg(ctx context.Context, req ManualLegRequest) (ManualLe
 	var legStrike float64 // the leg's strike and type: where its wings go
 	lotSize := int64(tr.LotSize)
 
-	switch res.Action {
-	case "ADD":
+	phase, tag := "MANUAL_LEG", "ML"
+	switch {
+	case req.Wing && (res.Action == "ADD" || res.Action == "CLOSE"):
+		legs, err := pg.LoadOpenLegs(req.TradeUID)
+		if err != nil {
+			return res, err
+		}
+		leg, wside, held, err := manualWingLeg(legs, req.Token, res.Action)
+		if err != nil {
+			return res, err
+		}
+		side, qty = wside, held
+		if res.Action == "ADD" {
+			qty = 0
+		}
+		if req.Lots > 0 && lotSize > 0 && (res.Action == "ADD" || int64(req.Lots)*lotSize < held) {
+			qty = int64(req.Lots) * lotSize
+		}
+		token, exchange = leg.Token, leg.Exchange
+		legOpt, legStrike = strings.ToUpper(leg.OptionType), leg.Strike
+		contract = fmt.Sprintf("%s %s %.0f %s wing", tr.Symbol, leg.Expiry, leg.Strike, leg.OptionType)
+		phase, tag = wingPhase, "MLW"
+	case res.Action == "ADD":
 		opt := strings.ToUpper(strings.TrimSpace(req.OptionType))
 		side = strings.ToUpper(strings.TrimSpace(req.Side))
 		if (opt != "CE" && opt != "PE") || (side != "BUY" && side != "SELL") || req.Lots <= 0 || req.Strike <= 0 {
@@ -128,7 +154,7 @@ func (s *Service) ManualLeg(ctx context.Context, req ManualLegRequest) (ManualLe
 		legOpt, legStrike = opt, row.Strike
 		res.InRisk = req.IncludeRisk == nil || *req.IncludeRisk
 
-	case "CLOSE":
+	case res.Action == "CLOSE":
 		legs, err := pg.LoadOpenLegs(req.TradeUID)
 		if err != nil {
 			return res, err
@@ -176,11 +202,11 @@ func (s *Service) ManualLeg(ctx context.Context, req ManualLegRequest) (ManualLe
 		if pq > maxPer {
 			pq = maxPer
 		}
-		intentID := BuildShortOrderUID(tr.Symbol, fmt.Sprintf("ML%s%d", side[:1], piece), time.Now(), piece)
+		intentID := BuildShortOrderUID(tr.Symbol, fmt.Sprintf("%s%s%d", tag, side[:1], piece), time.Now(), piece)
 		intent := OrderIntent{
 			IntentID: intentID, TradeUID: tr.TradeUID, Token: token, Symbol: tr.Symbol, ExchangeSegment: exchange,
 			Side: side, Quantity: pq, LotSize: lotSize, OrderType: "MARKET", ProductType: tr.ProductType,
-			Phase: "MANUAL_LEG", OrderUID: intentID, BrokerName: tr.BrokerName, AccountID: tr.AccountID,
+			Phase: phase, OrderUID: intentID, BrokerName: tr.BrokerName, AccountID: tr.AccountID,
 		}
 		brokerOrderID, _, serr := s.submitOrderIntent(ctx, executor, tr.TradeUID, intent)
 		if serr != nil {
@@ -237,7 +263,7 @@ func (s *Service) ManualLeg(ctx context.Context, req ManualLegRequest) (ManualLe
 			cur.CELtp, cur.PELtp = buildLegEntries(legs, cur.CEToken, cur.PEToken, cur.CELtp, cur.PELtp)
 		}
 	}
-	if res.Action == "ADD" && !res.InRisk && token != cur.CEToken && token != cur.PEToken {
+	if !req.Wing && res.Action == "ADD" && !res.InRisk && token != cur.CEToken && token != cur.PEToken {
 		seen := false
 		for _, t := range cur.Config.RiskExcludedTokens {
 			seen = seen || t == token
@@ -248,7 +274,9 @@ func (s *Service) ManualLeg(ctx context.Context, req ManualLegRequest) (ManualLe
 	}
 	if res.Filled > 0 {
 		note := fmt.Sprintf("%s %d @%.2f", side, res.Filled, res.AvgPrice)
-		if res.Action == "ADD" {
+		if req.Wing {
+			note += " (wing: margin only, not in P&L / greeks)"
+		} else if res.Action == "ADD" {
 			note += map[bool]string{true: " (in P&L / greeks)", false: " (NOT in P&L / greeks)"}[res.InRisk]
 		}
 		cur.Config.Modifications = append(cur.Config.Modifications, ConfigChange{
@@ -262,7 +290,7 @@ func (s *Service) ManualLeg(ctx context.Context, req ManualLegRequest) (ManualLe
 	// its strike -/+ wing %, a short bought back sells held wings), as the
 	// build, hedges and exits do. Margin only; a wing problem never undoes
 	// the leg.
-	if res.Filled > 0 && cur.Config.WingPct > 0 {
+	if res.Filled > 0 && cur.Config.WingPct > 0 && !req.Wing { // a wing's own add / close moves no short
 		dCE, dPE := manualLegWingChange(side, legOpt, res.Filled)
 		wctx, wcancel := context.WithTimeout(context.Background(), 60*time.Second)
 		if werr := s.adjustWings(wctx, executor, cur, dCE, dPE, legStrike, legStrike, "MANUAL leg "+strings.ToLower(res.Action)); werr != nil {
@@ -283,6 +311,24 @@ func (s *Service) ManualLeg(ctx context.Context, req ManualLegRequest) (ManualLe
 		res.Message = fmt.Sprintf("%s %s %d %s filled @%.2f", res.Action, side, res.Filled, contract, res.AvgPrice)
 	}
 	return res, nil
+}
+
+// manualWingLeg finds the wing a wing-row ADD / CLOSE acts on: ADD buys
+// more of it, CLOSE sells from what is held (never more -- a wing is
+// never sold short). held = the wing quantity this trade holds there.
+func manualWingLeg(legs []OpenLeg, token int64, action string) (leg *OpenLeg, side string, held int64, err error) {
+	for i := range legs {
+		if legs[i].Token == token {
+			leg = &legs[i]
+		}
+	}
+	if leg == nil || leg.WingQty <= 0 {
+		return nil, "", 0, fmt.Errorf("token %d is not a wing this trade holds", token)
+	}
+	if action == "ADD" {
+		return leg, "BUY", leg.WingQty, nil
+	}
+	return leg, "SELL", leg.WingQty, nil
 }
 
 // manualLegWingChange: how a manual leg's fill moves the net short of its

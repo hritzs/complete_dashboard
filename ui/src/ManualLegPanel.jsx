@@ -17,7 +17,7 @@ const post = async (body) => {
 const resultText = (d) => {
   const r = d.result || {};
   return d.success
-    ? `${r.action} ${r.side} ${r.filled} ${r.contract} @${r.avg_price} -- open after: ${r.open_after}${r.action === 'ADD' ? (r.in_risk ? ' (in P&L / greeks)' : ' (NOT in P&L / greeks)') : ''}`
+    ? `${r.action} ${r.side} ${r.filled} ${r.contract} @${r.avg_price} -- open after: ${r.open_after}${/ wing$/.test(r.contract || '') ? ' (wing: margin only)' : r.action === 'ADD' ? (r.in_risk ? ' (in P&L / greeks)' : ' (NOT in P&L / greeks)') : ''}`
     : `Failed: ${d.error || r.message || 'unknown error'}`;
 };
 
@@ -26,16 +26,16 @@ export async function closeManualLeg(tradeUid, position, lotSize, onDone) {
   const qty = Number(position.quantity) || 0;
   const lot = Number(lotSize) || 1;
   const maxLots = Math.max(1, Math.round(qty / lot));
-  const contract = `${position.option_type} ${position.strike}${position.expiry ? ` ${position.expiry}` : ''}`;
+  const contract = `${position.option_type} ${position.strike}${position.expiry ? ` ${position.expiry}` : ''}${position.wing ? ' WING' : ''}`;
   const lotsTxt = window.prompt(
-    `Close ${contract}: held ${position.action} ${qty} qty = ${maxLots} lot(s).\n` +
+    `${position.wing ? 'WING (margin only, not in P&L / greeks): the trade stops holding what you close -- its exit will not sell it again.\n' : ''}Close ${contract}: held ${position.action} ${qty} qty = ${maxLots} lot(s).\n` +
     `Enter LOTS, not qty (1 lot = ${lot} qty).\nLots to close (1-${maxLots}, blank = all ${maxLots}):`, String(maxLots));
   if (lotsTxt == null) return;
   const lots = lotsTxt.trim() === '' ? 0 : Math.floor(Number(lotsTxt));
   if (lotsTxt.trim() !== '' && (!Number.isFinite(lots) || lots <= 0 || lots > maxLots)) { window.alert(`Invalid: enter whole lots from 1 to ${maxLots} (1 lot = ${lot} qty)`); return; }
   const closeQty = lots ? lots * lot : qty;
   if (!window.confirm(`REAL ORDER: ${position.action === 'SELL' ? 'BUY' : 'SELL'} ${lots || maxLots} lot(s) = ${closeQty} qty of ${contract} at MARKET?`)) return;
-  const d = await post({ trade_uid: tradeUid, action: 'CLOSE', token: Number(position.token), lots, confirm: 'CONFIRM' });
+  const d = await post({ trade_uid: tradeUid, action: 'CLOSE', token: Number(position.token), lots, wing: !!position.wing, confirm: 'CONFIRM' });
   window.alert(resultText(d));
   onDone && onDone(d);
 }
@@ -47,17 +47,19 @@ export async function addManualLeg(tradeUid, position, lotSize, tradeExpiry, onD
   const lot = Number(lotSize) || 1;
   const side = String(position.action || '').toUpperCase() === 'BUY' ? 'BUY' : 'SELL';
   const expiry = position.expiry || tradeExpiry || '';
-  const contract = `${position.option_type} ${position.strike}${expiry ? ` ${expiry}` : ''}`;
+  const contract = `${position.option_type} ${position.strike}${expiry ? ` ${expiry}` : ''}${position.wing ? ' WING' : ''}`;
   const held = Number(position.quantity) || 0;
   const lotsTxt = window.prompt(
-    `Add to ${contract}: held ${side} ${held} qty = ${Math.round(held / lot)} lot(s); adds with a MARKET ${side}.\n` +
+    `${position.wing ? 'WING (margin only, not in P&L / greeks): buys more of this wing as part of the trade; its exit sells it.\n' : ''}Add to ${contract}: held ${side} ${held} qty = ${Math.round(held / lot)} lot(s); adds with a MARKET ${side}.\n` +
     `Enter LOTS, not qty (1 lot = ${lot} qty).\nLots to add:`, '1');
   if (lotsTxt == null) return;
   const lots = Math.floor(Number(lotsTxt));
   if (!Number.isFinite(lots) || lots <= 0) { window.alert(`Invalid: enter whole lots, 1 or more (1 lot = ${lot} qty)`); return; }
   if (!window.confirm(`REAL ORDER: ${side} ${lots} lot(s) = ${lots * lot} qty of ${contract} at MARKET?`)) return;
-  const d = await post({ trade_uid: tradeUid, action: 'ADD', expiry, strike: Number(position.strike), option_type: position.option_type,
-    side, lots, include_risk: !position.excluded, confirm: 'CONFIRM' });
+  const d = await post(position.wing
+    ? { trade_uid: tradeUid, action: 'ADD', token: Number(position.token), lots, wing: true, confirm: 'CONFIRM' }
+    : { trade_uid: tradeUid, action: 'ADD', expiry, strike: Number(position.strike), option_type: position.option_type,
+      side, lots, include_risk: !position.excluded, confirm: 'CONFIRM' });
   window.alert(resultText(d));
   onDone && onDone(d);
 }
