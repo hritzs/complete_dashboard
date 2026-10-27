@@ -362,6 +362,7 @@ func (s *Service) mtmExitRun(tradeUID string, floor float64, rule int) {
 // mtmExitRunOpts closes the trade lot by lot, each lot priced so the
 // trade's executable MTM stays >= the floor.
 func (s *Service) mtmExitRunOpts(tradeUID string, o mtmRunOpts) {
+	s.cancelOpenOrdersBeforeExit(tradeUID, o.tag) // exit only what completed orders hold
 	defer s.lockTrade(tradeUID)()
 	tr, ok := s.Store.LoadTrade(tradeUID)
 	if !ok || tr.Status != "ACTIVE" {
