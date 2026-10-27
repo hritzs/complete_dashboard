@@ -217,6 +217,19 @@ function SimDetail(props) {
             <Row k="MTM square-off" v={`≥ ₹${fmt(s().mtm_sqf_floor)} (${fmt(s().config.mtm_sqf_level)} ${s().config.mtm_sqf_unit === 'rs' ? '₹' : s().config.mtm_sqf_unit}) · ${fmt(s().config.mtm_sqf_pct, 0)}%${s().mtm_sqf_time ? ` · fired ${s().mtm_sqf_time}, ${s().mtm_sqf_lots} lot(s)` : ' · waiting'}`} />
             <Row k="MTM at bid/ask now" v={sgn(cur().exec_pnl)} cls={pnlCls(cur().exec_pnl)} />
           </Show>
+          <Show when={s().exit_filters}>{(f) => {
+            const near = (v, lim) => v > 0 && v < lim * 2; // within 2x of the exit line
+            const cls = (v, lim) => (v > 0 && v < lim ? 'negative' : near(v, lim) ? 'warning' : '');
+            return (<>
+              <Row k={`TV exit · 2 × ${f().tv_leg}`} cls={cls(f().tv, f().tv_limit)}
+                v={`${fmt(f().tv)} vs exit < ${fmt(f().tv_limit)}${f().tv > 0 && f().tv < f().tv_limit ? ' · EXIT' : ` · ${fmt(f().tv - f().tv_limit)} above`}`} />
+              <Row k={`TV4 exit · 2 × ${f().tv4_leg} (ATM)`} cls={cls(f().tv4, f().tv4_limit)}
+                v={`${fmt(f().tv4)} vs exit < ${fmt(f().tv4_limit)}${f().tv4 > 0 && f().tv4 < f().tv4_limit ? ' · EXIT' : ` · ${fmt(f().tv4 - f().tv4_limit)} above`}`} />
+              <Row k={`IV-drop exit · ${f().tv4_leg} IV`} cls={f().iv_active && f().iv > 0 && f().iv < f().iv_limit ? 'negative' : ''}
+                v={`${f().iv > 0 ? fmt(f().iv * 100, 1) + '%' : '—'} vs exit < ${fmt(f().iv_limit * 100, 0)}% · ${f().iv_active ? 'ACTIVE' : f().dte <= 1 ? `from ${f().iv_from}` : 'not on this DTE'}`} />
+              <Row k="Exit filters at" v={`${f().at} · fut ${fmt(f().future)} · DTE ${fmt(f().dte, 3)}`} />
+            </>);
+          }}</Show>
           <Row k="Hedge check" v={cur().hedge_check || '—'} cls={/BREACH/.test(cur().hedge_check || '') ? 'negative' : ''} />
           <Row k="Hedge target / qty" v={fmt(cur().hedge_target, 4)} />
           <Row k="Gamma" v={fmt(cur().net_gamma, 5)} />

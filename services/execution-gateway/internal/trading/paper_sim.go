@@ -196,6 +196,7 @@ type PaperSimResult struct {
 	EntryStraddle  float64         `json:"entry_straddle"`
 	EntryFuture    float64         `json:"entry_future"`
 	EntrySource    string          `json:"entry_source"`
+	ExitFilters    *SimExitFilters `json:"exit_filters,omitempty"` // the TV / TV4 / IV-drop exits now (live, else the last minute)
 	SLPoints       float64         `json:"sl_points"`
 	TPPoints       float64         `json:"tp_points"`
 	TPBps          float64         `json:"tp_bps"`
@@ -440,34 +441,68 @@ var simDeltaBand = map[int]float64{}
 
 // simNewExit is the new logic's exit test at a minute (after SL / TP):
 // TV, TV4, then the 14:57 IV drop; "" = none.
-func simNewExit(on bool, m simMinute, K float64) string {
+// SimExitFilters: the new logic's premium / IV exits on one minute, with
+// their limits -- what simNewExit decides on, shown on the card.
+type SimExitFilters struct {
+	At       string  `json:"at"`
+	Future   float64 `json:"future"`
+	TVLeg    string  `json:"tv_leg"`    // the out-of-the-money leg at the traded strike
+	TV       float64 `json:"tv"`        // 2 x its premium
+	TVLimit  float64 `json:"tv_limit"`  // exit below: simTVThresh x future
+	TV4Leg   string  `json:"tv4_leg"`   // the out-of-the-money leg at the current ATM
+	TV4      float64 `json:"tv4"`       // 2 x its premium
+	TV4Limit float64 `json:"tv4_limit"` // exit below: simTV4Thresh x future
+	IV       float64 `json:"iv"`        // that ATM leg's implied vol (0 = not solvable)
+	IVLimit  float64 `json:"iv_limit"`
+	IVFrom   string  `json:"iv_from"`   // the IV exit applies from this time on DTE <= 1
+	IVActive bool    `json:"iv_active"` // it applies on this minute
+	DTE      float64 `json:"dte"`
+}
+
+func simExitFilters(on bool, m simMinute, K float64) *SimExitFilters {
 	if !on || m.Future <= 0 {
-		return ""
+		return nil
 	}
-	otmAt := func(k float64) (float64, bool) {
+	otmAt := func(k float64) (float64, bool, string) {
 		opt := "CE"
 		if m.Future > k {
 			opt = "PE"
 		}
 		px, _, _, _ := simPrice(m, k, opt)
-		return px, opt == "CE"
+		return px, opt == "CE", fmt.Sprintf("%s %.0f", opt, k)
 	}
-	if px, _ := otmAt(K); px > 0 && 2*px < simTVThresh*m.Future {
-		return "TV"
-	}
+	f := &SimExitFilters{At: m.Time, Future: m.Future, TVLimit: simTVThresh * m.Future, TV4Limit: simTV4Thresh * m.Future,
+		IVLimit: simIVDropThresh, IVFrom: fmt.Sprintf("%02d:%02d", simIVDropFrom/100, simIVDropFrom%100), DTE: m.DTE}
+	px, _, leg := otmAt(K)
+	f.TV, f.TVLeg = 2*px, leg
 	atm := m.ATM
 	if atm <= 0 {
 		atm = math.Round(m.Future/lutStrikeStep) * lutStrikeStep
 	}
-	px, isCall := otmAt(atm)
-	if px > 0 && 2*px < simTV4Thresh*m.Future {
-		return "TV4"
-	}
-	if m.HHMM >= simIVDropFrom && m.DTE <= 1 && px > 0 {
+	px4, isCall, leg4 := otmAt(atm)
+	f.TV4, f.TV4Leg = 2*px4, leg4
+	if px4 > 0 {
 		T := math.Max(m.DTE/365, 1e-5)
-		if iv, ok := lutImpliedVol(isCall, px, m.Future, atm, T); ok && iv < simIVDropThresh {
-			return "IV_DROP"
+		if iv, ok := lutImpliedVol(isCall, px4, m.Future, atm, T); ok {
+			f.IV = iv
 		}
+	}
+	f.IVActive = m.HHMM >= simIVDropFrom && m.DTE <= 1
+	return f
+}
+
+// simNewExit: the new logic's TV / TV4 / IV-drop exit on a minute, "" = none.
+func simNewExit(on bool, m simMinute, K float64) string {
+	f := simExitFilters(on, m, K)
+	switch {
+	case f == nil:
+		return ""
+	case f.TV > 0 && f.TV < f.TVLimit:
+		return "TV"
+	case f.TV4 > 0 && f.TV4 < f.TV4Limit:
+		return "TV4"
+	case f.IVActive && f.IV > 0 && f.IV < f.IVLimit:
+		return "IV_DROP"
 	}
 	return ""
 }
@@ -1038,11 +1073,13 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 	}
 
 	res.Status = "OPEN"
+	var lastMin simMinute // the last minute run (exit filters shown on the card)
 	for i := i0; i < len(mins); i++ {
 		m := mins[i]
 		if m.Future <= 0 {
 			continue
 		}
+		lastMin = m
 		pt := book.value(m, q)
 		posMarks(m, &pt)
 		res.MinStraddle = math.Min(res.MinStraddle, pt.Straddle)
@@ -1214,7 +1251,11 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 	}
 	// Live: the open position valued on the market right now (between
 	// minute ends); the hedge check shows what the next minute end would do.
+	if lastMin.Future > 0 {
+		res.ExitFilters = simExitFilters(newLogic, lastMin, K)
+	}
 	if res.Status == "OPEN" && live != nil && live.Future > 0 {
+		res.ExitFilters = simExitFilters(newLogic, *live, K)
 		lp := book.value(*live, q)
 		posMarks(*live, &lp)
 		hedgeCheck(*live, &lp) // display only: hedges are decided on minute data points, never on a live tick
