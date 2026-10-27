@@ -233,8 +233,26 @@ func (s *Service) completeExitRounds(tradeUID string, tr StoredTrade, executor E
 		for _, l := range inv {
 			left += l.qty - closed[l.Token]
 		}
-		log.Printf("[EXIT] trade=%s round %d/%d done: %d contract(s) still open across %d leg(s)%s",
-			tradeUID, ri+1, len(rounds), left, len(inv), map[bool]string{true: fmt.Sprintf(" -- %d order(s) UNCONFIRMED, stopping", len(unconfirmed)), false: ""}[len(unconfirmed) > 0])
+		// The round is complete only when every leg's tranche filled (each
+		// order retried x2 / x3 / MARKET); the next round starts after it.
+		perLeg := map[int64][2]int64{} // token -> planned, filled
+		for i, o := range round {
+			v := perLeg[o.Token]
+			v[0] += int64(o.Quantity)
+			v[1] += roundFilled[i]
+			perLeg[o.Token] = v
+		}
+		var parts []string
+		complete := true
+		for _, l := range inv {
+			if v, ok := perLeg[l.Token]; ok {
+				parts = append(parts, fmt.Sprintf("%.0f%s %s %d/%d", l.Strike, l.Leg, l.side, v[1], v[0]))
+				complete = complete && v[1] == v[0]
+			}
+		}
+		log.Printf("[EXIT] trade=%s round %d/%d %s: %s | %d contract(s) still open across %d leg(s)%s",
+			tradeUID, ri+1, len(rounds), map[bool]string{true: "COMPLETE", false: "INCOMPLETE"}[complete], strings.Join(parts, ", "),
+			left, len(inv), map[bool]string{true: fmt.Sprintf(" -- %d order(s) UNCONFIRMED, stopping", len(unconfirmed)), false: ""}[len(unconfirmed) > 0])
 		if len(unconfirmed) > 0 {
 			break
 		}
