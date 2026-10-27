@@ -144,8 +144,8 @@ func (s *Service) closeQtyGuard(ctx context.Context, tradeUID string, intent *Or
 // opposite hedge on the same strike (2026-10-27 14:36:17: 48 lots BUY CE / SELL PE at 22700
 // against an earlier CE -1625 / PE +1625 there were capped to 25 lots, and
 // ~1,500-2,900 delta stayed unhedged until the 14:38 minute end).
-// The cut-shorts fallback (buys back short legs) and the manual hedge action
-// stay guarded.
+// The trade card's Hedge Now pair carries a hedge group too; the cut-shorts
+// fallback (buys back short legs) has none and stays guarded.
 func closeGuardApplies(phase, hedgeGroup string) bool {
 	return !(strings.EqualFold(strings.TrimSpace(phase), "HEDGE") && strings.TrimSpace(hedgeGroup) != "")
 }
