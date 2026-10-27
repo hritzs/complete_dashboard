@@ -228,6 +228,11 @@ func (s *Service) ManualHedgeTest(ctx context.Context, req ManualHedgeTestReques
 	exchangeSegment := manualHedgeTestExchangeSegment(req.ExchangeSegment, req.Symbol)
 	productType := manualHedgeTestProduct(req.ProductType)
 
+	// One hedge group for the pair: a synthetic delta hedge, which the close
+	// guard never caps (it may net through an older opposite hedge on its
+	// strike -- close_guard.go closeGuardApplies), as the monitor's hedges.
+	hedgeGroup := fmt.Sprintf("MH-%s-%d", req.TradeUID, now.UnixNano())
+
 	ceIntent := OrderIntent{
 		IntentID:        BuildShortOrderUID(req.Symbol, "HTCE", now, 0),
 		TradeUID:        req.TradeUID,
@@ -242,6 +247,7 @@ func (s *Service) ManualHedgeTest(ctx context.Context, req ManualHedgeTestReques
 		ProductType:     productType,
 		LegType:         "CE",
 		Phase:           "HEDGE",
+		HedgeGroupID:    hedgeGroup,
 		OrderUID:        BuildShortOrderUID(req.Symbol, "HTCE", now, 1),
 		BrokerName:      req.BrokerName,
 		AccountID:       req.AccountID,
@@ -262,6 +268,7 @@ func (s *Service) ManualHedgeTest(ctx context.Context, req ManualHedgeTestReques
 		ProductType:     productType,
 		LegType:         "PE",
 		Phase:           "HEDGE",
+		HedgeGroupID:    hedgeGroup,
 		OrderUID:        BuildShortOrderUID(req.Symbol, "HTPE", now, 3),
 		BrokerName:      req.BrokerName,
 		AccountID:       req.AccountID,
