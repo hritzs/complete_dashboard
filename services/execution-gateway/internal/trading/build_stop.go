@@ -1,6 +1,7 @@
 package trading
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // Stop building (OMS) for a regular build -- manual, automation, LUT; every
@@ -97,4 +99,46 @@ func (h *Handlers) BrokerPositions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	lutJSON(w, http.StatusOK, map[string]interface{}{"success": true, "account": account, "positions": open, "all": positions})
+}
+
+// BrokerRiskProvider: the broker's own MTM and margin views (read-only).
+type BrokerRiskProvider interface {
+	BrokerRisk(ctx context.Context, gscid string) (map[string]interface{}, error)
+}
+
+// BrokerRisk: GET /api/broker/risk -- GreekSoft's MTM and margin for the
+// live account, through the gateway's own session (never a new login, never
+// an order or a limit change).
+func (h *Handlers) BrokerRisk(w http.ResponseWriter, r *http.Request) {
+	broker := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("broker_name")))
+	if broker == "" {
+		broker = sbLiveBroker
+	}
+	account := strings.TrimSpace(r.URL.Query().Get("account_id"))
+	if account == "" {
+		account = sbLiveAccount()
+	}
+	user := strings.TrimSpace(r.URL.Query().Get("user_id"))
+	if user == "" {
+		user = sbLiveUser
+	}
+	executor, err := h.Service.BrokerFactory.GetExecutor(user, broker, account)
+	if err != nil {
+		lutJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": err.Error()})
+		return
+	}
+	p, ok := executor.(BrokerRiskProvider)
+	if !ok {
+		lutJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "broker MTM / margin not available for " + broker})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	risk, err := p.BrokerRisk(ctx, account)
+	if err != nil {
+		lutJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": err.Error()})
+		return
+	}
+	lutJSON(w, http.StatusOK, map[string]interface{}{"success": true, "broker": broker, "account": account,
+		"time": time.Now().In(lutIST()).Format("15:04:05"), "risk": risk})
 }

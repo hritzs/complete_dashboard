@@ -6,6 +6,7 @@
   import MuhuratTab from './MuhuratTab.jsx';
   import SBPortfolioRows, { sbStore } from './SBPortfolioRows.jsx';
   import ManualLegPanel, { closeManualLeg, addManualLeg } from './ManualLegPanel.jsx';
+  import BrokerRiskPanel from './BrokerRiskPanel.jsx';
   import PortfolioMTMPanel from './PortfolioMTMPanel.jsx';
   import { postJSON, safeFetchJson, postJSONStrict } from "./api.js";
   import { formInput, formLabel } from "./styles.js";
@@ -3606,6 +3607,8 @@ function App() {
                 </table>
               </div>
             </Show>
+
+            <BrokerRiskPanel />
 
             <div class="positions-header">
               <div class="positions-title">Broker Positions</div>
