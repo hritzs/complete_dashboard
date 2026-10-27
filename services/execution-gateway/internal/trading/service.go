@@ -1585,6 +1585,13 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 	if term2 < term1 {
 		pointsAllowed = term2
 	}
+	// The effective band every hedge decision uses (decideHedge): never below
+	// the bps floor. Shown and logged as this, the same as the simulation's
+	// Out / allowed (2026-10-27 14:19: the card showed the raw 17.92 / 17.56
+	// while hedges ran on the 8 bps floor, 18.13).
+	if floor := spot * resolveHedgeMinThresholdBps(trade.Config.HedgeMinThresholdBps) / 10000; floor > pointsAllowed {
+		pointsAllowed = floor
+	}
 
 	// PnL per original straddle unit: submitted lots × lot size.
 	// Prefer the original configured lot count rather than live CE/PE
