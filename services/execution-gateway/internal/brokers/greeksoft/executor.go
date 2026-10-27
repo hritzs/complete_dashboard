@@ -706,3 +706,25 @@ func (e *Executor) GetBrokerPositions(ctx context.Context) ([]trading.BrokerPosi
 	}
 	return out, nil
 }
+
+// BrokerRisk is GreekSoft's own view of the account, read-only: the live
+// MTM of open positions (getNetPositionMTM) and the margin detail
+// (MarginDetailRequest, F&O segment 2, all exchanges). Each part carries
+// its own error so one failing call doesn't hide the other.
+func (e *Executor) BrokerRisk(ctx context.Context, gscid string) (map[string]interface{}, error) {
+	if e == nil || e.Client == nil {
+		return nil, fmt.Errorf("greeksoft client not ready")
+	}
+	out := map[string]interface{}{}
+	if mtm, err := e.Client.GetNetPositionMTM(ctx, gscid); err != nil {
+		out["mtm_error"] = err.Error()
+	} else {
+		out["mtm"] = mtm
+	}
+	if m, err := e.Client.MarginDetailRequest(ctx, 2, "-1"); err != nil {
+		out["margin_error"] = err.Error()
+	} else {
+		out["margin"] = m
+	}
+	return out, nil
+}
