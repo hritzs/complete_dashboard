@@ -44,6 +44,31 @@ function Section(props) {
   );
 }
 
+// The fields GreekSoft returns (seen live 2026-10-27), labelled.
+const MARGIN_LABELS = [
+  ['spanExp', 'Margin used (SPAN + exposure)'],
+  ['span', 'SPAN margin'],
+  ['utilizedFund', 'Utilized fund'],
+  ['realizedM2M', 'Realized M2M (day)'],
+  ['unrealizedM2M', 'Unrealized M2M'],
+  ['optSellCr', 'Option sell credit'],
+  ['optBuyPrem', 'Option buy premium'],
+  ['payIn', 'Pay-in'],
+  ['payOut', 'Pay-out'],
+];
+
+function Card(props) {
+  const v = () => Number(props.value);
+  return (
+    <div style={{ background: 'rgba(255,255,255,0.04)', 'border-radius': '6px', padding: '10px 14px', 'min-width': '170px' }}>
+      <div style={{ 'font-size': '12px', opacity: 0.65 }}>{props.label}</div>
+      <div class={props.signed ? (v() < 0 ? 'negative' : 'positive') : ''} style={{ 'font-size': '18px', 'font-weight': 600 }}>
+        {props.value == null || props.value === '' ? '—' : `₹${v().toLocaleString('en-IN', { maximumFractionDigits: 2 })}`}
+      </div>
+    </div>
+  );
+}
+
 export default function BrokerRiskPanel() {
   const [data, setData] = createSignal(null);
   const [err, setErr] = createSignal('');
@@ -68,6 +93,15 @@ export default function BrokerRiskPanel() {
       </div>
       <Show when={!err()} fallback={<div class="empty-state" style={{ color: '#ef4444' }}>❌ {err()}</div>}>
         <Show when={data()} fallback={<div class="empty-state">🔄 Fetching…</div>}>
+          <div style={{ display: 'flex', gap: '10px', 'flex-wrap': 'wrap', margin: '6px 0 14px' }}>
+            <Card label="Broker MTM (open positions)" value={data().risk?.mtm?.data?.[0]?.MTM} signed />
+            <For each={MARGIN_LABELS}>{([k, label]) => (
+              <Card label={label} value={data().risk?.margin?.response?.data?.[k]} signed={/M2M/.test(k)} />
+            )}</For>
+          </div>
+          <div style={{ 'font-size': '12px', opacity: 0.6, margin: '-6px 0 10px' }}>
+            GreekSoft returns no available-margin or limit figure in these calls; everything it returns is listed below.
+          </div>
           <div style={{ display: 'flex', gap: '16px', 'flex-wrap': 'wrap' }}>
             <Section title="MTM (getNetPositionMTM)" data={data().risk?.mtm} error={data().risk?.mtm_error} />
             <Section title="Margin (MarginDetailRequest, F&O)" data={data().risk?.margin} error={data().risk?.margin_error} />

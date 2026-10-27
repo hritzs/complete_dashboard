@@ -2065,6 +2065,12 @@ function App() {
             Muhurat
           </button>
           <button
+            class={`tab-btn ${activeTab() === 'broker' ? 'active' : ''}`}
+            onClick={() => setActiveTab('broker')}
+          >
+            Broker
+          </button>
+          <button
             class={`tab-btn ${activeTab() === 'logs' ? 'active' : ''}`}
             onClick={() => setActiveTab('logs')}
           >
@@ -3608,8 +3614,6 @@ function App() {
               </div>
             </Show>
 
-            <BrokerRiskPanel />
-
             <div class="positions-header">
               <div class="positions-title">Broker Positions</div>
               <button
@@ -4326,6 +4330,12 @@ function App() {
 
         <Show when={activeTab() === 'muhurat'}>
           <MuhuratTab />
+        </Show>
+
+        <Show when={activeTab() === 'broker'}>
+          <section class="tab-panel">
+            <BrokerRiskPanel />
+          </section>
         </Show>
 
         <Show when={activeTab() === 'logs'}>
