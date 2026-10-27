@@ -432,3 +432,37 @@ func TestSimExecutedPersist(t *testing.T) {
 		t.Fatal("decisions are per trade")
 	}
 }
+
+// A decision recorded with Own keeps only its tick / minute: the simulation
+// sizes it itself (live's executed share never feeds back), so it matches
+// the same simulation without any record.
+func TestPaperSim_ExecutedOwnSize(t *testing.T) {
+	trend := func() []simMinute { return mkMinutes(12, func(i int) float64 { return 22600 + 60*float64(i) }) }
+	cfg := PaperSimConfig{Entry: "09:16", Lots: 10, HedgeMode: "synthetic", SLBps: 5000, TPBps: 5000, HedgeRule: "new"}
+	free := RunPaperSim(trend(), cfg, 65, nil)
+	var first PaperSimHedge
+	for _, h := range free.Hedges {
+		if h.Kind == "RISK_BREACH" {
+			first = h
+			break
+		}
+	}
+	if first.Time == "" {
+		t.Fatal("test needs a minute-end hedge")
+	}
+	cfg.Executed = map[string]ExecHedge{first.Time + "|RISK_BREACH": {T: first.Time, F: first.Future, Kind: "RISK_BREACH", Frac: 0.3, Own: true}}
+	cfg.ExecThrough = first.Time
+	own := RunPaperSim(trend(), cfg, 65, nil)
+	for _, h := range own.Hedges {
+		if h.Time == first.Time && h.Kind == "RISK_BREACH" {
+			if math.Abs(h.FutQty-first.FutQty) > 1e-9 {
+				t.Fatalf("own size %.4f, the simulation alone %.4f (live's 0.3 must not feed back)", h.FutQty, first.FutQty)
+			}
+			if math.Abs(own.PnLPerStraddle-free.PnLPerStraddle) > 1e-9 {
+				t.Fatalf("P&L %.4f vs %.4f", own.PnLPerStraddle, free.PnLPerStraddle)
+			}
+			return
+		}
+	}
+	t.Fatalf("recorded decision missing: %+v", own.Hedges)
+}

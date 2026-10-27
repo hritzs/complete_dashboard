@@ -34,6 +34,10 @@ type ExecHedge struct {
 	F    float64 `json:"f"`    // the future the simulation acted on
 	Kind string  `json:"kind"` // INTRA_MINUTE / RISK_BREACH / ATM_LOTS
 	Frac float64 `json:"frac"` // share of the delta actually hedged (0 = no order)
+	// Own: replayed at the simulation's OWN size (it is the master; live
+	// follows it), only its tick / minute kept. Every decision recorded since
+	// 2026-10-27 09:4x (owner); older records keep live's executed share.
+	Own bool `json:"own,omitempty"`
 }
 
 type PaperSimConfig struct {
@@ -977,7 +981,10 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 				pre := tickPoint(m, s)
 				frac, src := 1.0, "seconds"
 				if force {
-					frac, src = ex.Frac, "seconds (executed live)"
+					src = "seconds (executed live)"
+					if !ex.Own {
+						frac = ex.Frac
+					}
 				}
 				if frac <= 0 {
 					return // decided, no order on the live trade
@@ -985,8 +992,10 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 				dq := -frac * nd
 				book.fillFut(dq, s.F)
 				what := fmt.Sprintf("synthetic %+.2f contracts", dq)
-				if force {
+				if force && !ex.Own {
 					what += fmt.Sprintf(" (executed live at %s: %.1f%% of delta)", ex.T, 100*frac)
+				} else if force {
+					what += fmt.Sprintf(" (executed live at %s, the simulation's own size)", ex.T)
 				}
 				res.Hedges = append(res.Hedges, PaperSimHedge{Time: s.T, Mode: "synthetic", Kind: "INTRA_MINUTE", Qty: int64(math.Round(dq)), FutQty: dq,
 					OldHedge: old / float64(q), NewHedge: book.futQty / float64(q), CEPrice: s.F, DeltaBefore: nd, DeltaAfter: nd + dq,
@@ -994,8 +1003,11 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 				intraRow(m, s, d.EffectiveAllowed, out, nd, nd+dq, old, what, pre)
 				return
 			}
-			if force { // executed live: its share of the delta, in lots
+			if force && !ex.Own { // executed live (older record): its share of the delta, in lots
 				d.Lots = int64(math.Round(ex.Frac * math.Abs(nd) / float64(lotSize)))
+				d.Hedge = d.Lots > 0
+			} else if force && !d.Hedge { // kept at its tick, the simulation's own size
+				d.Lots = int64(math.Round(hedgeIntraFrac * math.Abs(nd) / float64(lotSize)))
 				d.Hedge = d.Lots > 0
 			}
 			if !d.Hedge || d.Lots <= 0 {
@@ -1108,8 +1120,8 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 		decided := c.ExecThrough != "" && m.Time <= c.ExecThrough
 		exMin, exHas := c.Executed[m.Time+"|RISK_BREACH"]
 		mfrac := rule.minuteFrac(pt.PointsOut, pt.PointsAllowed) // old: all of it; new: points out -> 25 % of allowed
-		if exHas {
-			mfrac = exMin.Frac
+		if exHas && !exMin.Own {
+			mfrac = exMin.Frac // older record: live's executed share
 		}
 		if exit == "" && c.HedgeMode == "synthetic" && (exHas || (!decided && pt.HedgeCheck == "RISK_BREACH")) && mfrac > 0 && math.Abs(pt.NetDelta) > 1e-9 {
 			old := book.futQty
@@ -1123,7 +1135,11 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 				dq, m.Future, old/float64(q), book.futQty/float64(q), pt.NetDelta, after.NetDelta, pt.PointsOut, simOut(after), pt.PointsAllowed)
 			if exHas {
 				res.Hedges[len(res.Hedges)-1].Source = pt.Source + " (executed live)"
-				ev += fmt.Sprintf(" (executed live: %.1f%% of delta)", 100*mfrac)
+				if exMin.Own {
+					ev += " (executed live, the simulation's own size)"
+				} else {
+					ev += fmt.Sprintf(" (executed live: %.1f%% of delta)", 100*mfrac)
+				}
 			}
 			keep := pt
 			pt = after
@@ -1133,7 +1149,7 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 			pt.Event = ev
 			pt.PointsOut, pt.Before = simOut(pt), simBeforeOf(keep)
 		}
-		if exHas && exMin.Frac <= 0 && pt.Event == "" {
+		if exHas && !exMin.Own && exMin.Frac <= 0 && pt.Event == "" {
 			pt.Event = "live trade: no hedge order this minute (under one lot of live delta)"
 		}
 		if exit == "" && c.HedgeMode == "lots" && !decided && d.Hedge && d.Lots > 0 {
