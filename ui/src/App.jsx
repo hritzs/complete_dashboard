@@ -3473,7 +3473,7 @@ function App() {
                                                     </td>
                                                     <td>{fmt(position.iv ?? 0, 2)}</td>
                                                     <td>
-                                                      <Show when={!isClosed() && !position.wing && Number(position.quantity) > 0 && position.token}>
+                                                      <Show when={!isClosed() && Number(position.quantity) > 0 && position.token}>
                                                         <span style={{ display: "inline-flex", gap: "4px" }}>
                                                           <button class="dashboard-btn blue" style={{ padding: "2px 8px", "font-size": "11px" }} title={`Add LOTS to this leg (1 lot = ${item.lotSize || 65} qty), same contract and direction; asks how many`}
                                                             onClick={(event) => { event.stopPropagation(); addManualLeg(uid, position, item.lotSize || 65, item.expiry, () => refreshPortfolio()); }}>
