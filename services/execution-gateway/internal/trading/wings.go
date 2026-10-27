@@ -21,9 +21,11 @@ package trading
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math"
+	"net/http"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -197,6 +199,58 @@ func (s *Service) loadWingHoldings(tradeUID string) ([]wingHolding, error) {
 	return ws.LoadWingHoldings(tradeUID)
 }
 
+// wingsStopped: the user's Stop wings, from the trade as stored now (the
+// caller's copy can be older than the click).
+func (s *Service) wingsStopped(tr StoredTrade) bool {
+	if cur, ok := s.Store.LoadTrade(tr.TradeUID); ok {
+		return cur.Config.WingsStopped
+	}
+	return tr.Config.WingsStopped
+}
+
+// SetWingsStopped stops / resumes a trade's automatic wings (no order is sent).
+func (s *Service) SetWingsStopped(tradeUID string, stop bool) (StoredTrade, error) {
+	defer s.lockTrade(tradeUID)()
+	tr, ok := s.Store.LoadTrade(tradeUID)
+	if !ok {
+		return tr, fmt.Errorf("trade %s not found", tradeUID)
+	}
+	if tr.Config.WingsStopped == stop {
+		return tr, nil
+	}
+	from, to := map[bool]string{true: "stopped", false: "on"}[tr.Config.WingsStopped], map[bool]string{true: "stopped", false: "on"}[stop]
+	tr.Config.WingsStopped = stop
+	tr.Config.Modifications = append(tr.Config.Modifications, ConfigChange{
+		Time: time.Now().In(lutIST()).Format("15:04:05"), Field: "Automatic wings", From: from, To: to,
+	})
+	tr.LastUpdateTime = time.Now()
+	s.Store.UpdateTrade(tr)
+	log.Printf("[WINGS] trade=%s automatic wings %s by the user (wings held stay; the final exit still sells them)", tradeUID, to)
+	return tr, nil
+}
+
+// WingsStopHandler: POST /api/trade/wings/stop {"trade_uid", "stop": true|false}.
+func (h *Handlers) WingsStopHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		lutJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{"success": false, "error": "method not allowed"})
+		return
+	}
+	var req struct {
+		TradeUID string `json:"trade_uid"`
+		Stop     bool   `json:"stop"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.TradeUID) == "" {
+		lutJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error": "need trade_uid"})
+		return
+	}
+	tr, err := h.Service.SetWingsStopped(strings.TrimSpace(req.TradeUID), req.Stop)
+	if err != nil {
+		lutJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": err.Error()})
+		return
+	}
+	lutJSON(w, http.StatusOK, map[string]interface{}{"success": true, "trade_uid": tr.TradeUID, "wings_stopped": tr.Config.WingsStopped})
+}
+
 // wingAvoidTokens: every token of this trade that isn't a wing -- the
 // straddle's own tokens plus any open non-wing leg (hedges).
 func (s *Service) wingAvoidTokens(tradeUID string, tr StoredTrade) map[int64]bool {
@@ -218,6 +272,10 @@ func (s *Service) wingAvoidTokens(tradeUID string, tr StoredTrade) map[int64]boo
 // caller logs it; the short-side action itself is never undone for it.
 func (s *Service) adjustWings(ctx context.Context, executor Executor, tr StoredTrade, shortChangeCE, shortChangePE int64, baseCE, basePE float64, reason string) error {
 	if tr.Config.WingPct <= 0 || (shortChangeCE == 0 && shortChangePE == 0) {
+		return nil
+	}
+	if s.wingsStopped(tr) {
+		log.Printf("[WINGS] trade=%s wings STOPPED by the user -- no wing order for %s (short change CE %+d PE %+d)", tr.TradeUID, reason, shortChangeCE, shortChangePE)
 		return nil
 	}
 	var errs []string

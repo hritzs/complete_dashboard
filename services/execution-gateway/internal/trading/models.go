@@ -310,6 +310,11 @@ type MonitorConfig struct {
 	// RiskExcludedTokens: manually added legs kept out of PnL / greeks /
 	// PointsOut / SL / TP (still shown, still closed by Full Exit).
 	RiskExcludedTokens []int64 `json:"risk_excluded_tokens,omitempty"`
+	// WingsStopped: the user stopped this trade's automatic wings (Stop
+	// wings): no wing orders after hedges, manual legs or exit steps. Wings
+	// held stay (the wing rows' Add / Close still work) and the final exit
+	// still sells every wing held.
+	WingsStopped bool `json:"wings_stopped,omitempty"`
 
 	// === ENTRY MODES (mutually exclusive: scheduled vs price-trigger vs manual) ===
 	// Scheduled entry: fire at this exact time (e.g., 09:20:00)

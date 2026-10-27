@@ -31,6 +31,10 @@ func (w *wingFollower) follow(s *Service, executor Executor, tr StoredTrade, sho
 			w.none = true
 		}
 	}
+	if !w.none && s.wingsStopped(tr) { // Stop wings: held wings wait for the exit's final close
+		log.Printf("[WINGS] trade=%s wings STOPPED by the user -- no in-step wing sells (%s); the final close sells what is held", tr.TradeUID, reason)
+		w.none = true
+	}
 	if w.none {
 		return
 	}

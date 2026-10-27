@@ -3406,7 +3406,7 @@ function App() {
                                           })()}</strong></div>
                                           <div class="monitor-row"><span>Straddle div / Hedge div</span><strong>{item.config?.straddle_div || 4} / {item.config?.hedge_div || 57}</strong></div>
                                           <div class="monitor-row"><span>Hedge min (bps of spot)</span><strong>{item.config?.hedge_min_threshold_bps ?? "8 (default)"}</strong></div>
-                                          <div class="monitor-row"><span>Wings</span><strong>{Number(item.config?.wing_pct) > 0 ? `${item.config.wing_pct}%` : "off"}</strong></div>
+                                          <div class="monitor-row"><span>Wings</span><strong>{Number(item.config?.wing_pct) > 0 ? `${item.config.wing_pct}%${item.config?.wings_stopped ? " (automatic STOPPED)" : ""}` : "off"}</strong></div>
                                           <div class="monitor-row"><span>Buy / sell buffer</span><strong>{item.config?.buy_buffer ?? "—"} / {item.config?.sell_buffer ?? "—"}</strong></div>
                                           <div class="monitor-row"><span>Order lots per call</span><strong>{item.config?.order_lots_per_call || "auto"}</strong></div>
                                           <div class="monitor-row"><span>Partial build</span><strong>{item.config?.partial_fill ? `yes (requested CE ${item.config.requested_ce_qty} / PE ${item.config.requested_pe_qty})` : "no"}</strong></div>
@@ -3420,6 +3420,28 @@ function App() {
                                         </Show>
                                         <Show when={Number(live().wing_pct) > 0}>
                                           <div class="metric-sub">
+                                            <Show when={!isClosed()}>
+                                              <button class={`dashboard-btn ${item.config?.wings_stopped ? "green" : "red"}`} style={{ padding: "2px 8px", "font-size": "11px", "margin-right": "8px" }}
+                                                title={item.config?.wings_stopped
+                                                  ? "Resume automatic wings: hedges, manual legs and exit steps buy / sell wings again"
+                                                  : "Stop automatic wings: no more wing orders after hedges, manual legs or exit steps. Wings held stay (Add / Close on their rows still work); the final exit still sells every wing held. Sends no order."}
+                                                onClick={async (event) => {
+                                                  event.stopPropagation();
+                                                  const stop = !item.config?.wings_stopped;
+                                                  if (!window.confirm(stop
+                                                    ? "Stop automatic wings on this trade?\n\nNo more wing orders after hedges, manual legs or exit steps. Wings already held stay; the final exit still sells them. No order is sent now."
+                                                    : "Resume automatic wings on this trade?\n\nFrom the next hedge / manual leg / exit step the wings follow the net short again. No order is sent now.")) return;
+                                                  try {
+                                                    const r = await fetch("/api/trade/wings/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trade_uid: uid, stop }) });
+                                                    const d = await r.json();
+                                                    if (!d.success) window.alert(`Failed: ${d.error || "unknown error"}`);
+                                                  } catch (err) { window.alert(`Failed: ${err}`); }
+                                                  refreshPortfolio();
+                                                }}>
+                                                {item.config?.wings_stopped ? "Resume wings" : "Stop wings"}
+                                              </button>
+                                            </Show>
+                                            <Show when={item.config?.wings_stopped}><strong class="negative">AUTOMATIC WINGS STOPPED &middot; </strong></Show>
                                             Wings {live().wing_pct}% &middot; RM only, not in delta / PnL / SL / TP
                                             {" "}&middot; wing PnL ₹{fmt(live().wing_pnl ?? 0, 2)}
                                             {" "}&middot;{" "}

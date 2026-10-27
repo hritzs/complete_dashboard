@@ -1535,7 +1535,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 		}
 	}
 
-	if trade.Config.WingPct > 0 && (wingNetCE != 0 || wingNetPE != 0) && trade.Status == "ACTIVE" && time.Now().Second() == 0 {
+	if trade.Config.WingPct > 0 && !trade.Config.WingsStopped && (wingNetCE != 0 || wingNetPE != 0) && trade.Status == "ACTIVE" && time.Now().Second() == 0 {
 		// Only reported: never auto-corrected with an order (a lagging
 		// fill or an in-flight action looks the same for a moment).
 		log.Printf("[WINGS] ⚠ trade=%s net across all strikes CE=%+d PE=%+d (want 0/0) -- check wings", tradeUID, wingNetCE, wingNetPE)
