@@ -2051,6 +2051,9 @@ func (s *Service) persistSQFProgress(tradeUID string, tr StoredTrade, verifiedFi
 }
 
 func (s *Service) SquareOff(tradeUID string, reason string) error {
+	// Orders still open at the broker are cancelled first, so the exit
+	// closes exactly what the completed orders hold (exit_open_orders.go).
+	s.cancelOpenOrdersBeforeExit(tradeUID, reason)
 	// Normal exits first hedge to delta-neutral (exit_complete.go); before
 	// the lock, which the hedge takes itself.
 	s.preExitNeutralise(tradeUID, reason)
