@@ -106,6 +106,9 @@ func (s *Service) closeQtyGuard(ctx context.Context, tradeUID string, intent *Or
 	if tradeUID == "" || intent == nil || intent.Token == 0 || intent.Quantity <= 0 {
 		return nil
 	}
+	if !closeGuardApplies(intent.Phase, intent.HedgeGroupID) {
+		return nil
+	}
 	pg, ok := s.Store.(*PostgresBackedStore)
 	if !ok {
 		return nil
@@ -133,4 +136,16 @@ func (s *Service) closeQtyGuard(ctx context.Context, tradeUID string, intent *Or
 		intent.Quantity = allowed
 	}
 	return nil
+}
+
+// closeGuardApplies: every order but a synthetic delta-hedge pair (phase
+// HEDGE with its hedge group -- the monitor / sim-driven hedge tranches). It
+// is sized from the live delta and may deliberately net THROUGH an older,
+// opposite hedge on the same strike (2026-10-27 14:36:17: 48 lots BUY CE / SELL PE at 22700
+// against an earlier CE -1625 / PE +1625 there were capped to 25 lots, and
+// ~1,500-2,900 delta stayed unhedged until the 14:38 minute end).
+// The cut-shorts fallback (buys back short legs) and the manual hedge action
+// stay guarded.
+func closeGuardApplies(phase, hedgeGroup string) bool {
+	return !(strings.EqualFold(strings.TrimSpace(phase), "HEDGE") && strings.TrimSpace(hedgeGroup) != "")
 }
