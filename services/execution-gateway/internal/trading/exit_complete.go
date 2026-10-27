@@ -171,52 +171,49 @@ func (s *Service) completeExitRounds(tradeUID string, tr StoredTrade, executor E
 		}
 		roundFilled := make([]int64, len(round))
 
-		for attempt := 1; attempt <= exitIOCAttempts+1; attempt++ {
-			idx := []int{}
-			for i := range round {
-				if pending[i] > 0 {
-					idx = append(idx, i)
+		// Every order retries ON ITS OWN: an IOC that comes back unfilled is
+		// re-sent at once at the next price (x2, x3, then MARKET) -- it does
+		// not wait for the round's other orders. Waiting for the whole
+		// attempt held thin hedge legs ~2 s behind the straddle on the
+		// 2026-10-27 15:12 TV exit (round 4: straddle filled, half the
+		// 22750 / 22800 hedge closes cancelled and only re-sent at
+		// 15:12:20 -- the book ran ~+1,600 delta meanwhile).
+		quotes := newExitQuotes(s, tr)
+		results := make([]exitOrderResult, len(round))
+		var wg sync.WaitGroup
+		for i := range round {
+			l := byToken[round[i].Token]
+			if l == nil || pending[i] <= 0 {
+				continue
+			}
+			wg.Add(1)
+			go func(i int, l *exitLeg, qty int64) {
+				defer wg.Done()
+				rem := qty
+				for attempt := 1; attempt <= exitIOCAttempts+1 && rem > 0; attempt++ {
+					market := attempt > exitIOCAttempts
+					var chain *OptionChainSnapshot
+					if !market {
+						chain = quotes.get()
+					}
+					r := s.exitSendOne(executor, tr, l, rem, chain, exitLimitBuffer(tr.Symbol)*float64(attempt), market)
+					results[i].filled += r.filled
+					rem -= r.filled
+					if r.unknown != "" {
+						results[i].unknown = r.unknown // never re-sent while its outcome is unknown
+						return
+					}
 				}
-			}
-			if len(idx) == 0 {
-				break
-			}
-			market := attempt > exitIOCAttempts
-			var chain *OptionChainSnapshot
-			if !market && s.Snapshot != nil {
-				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-				chain, _ = s.Snapshot.GetOptionChain(ctx, tr.Symbol, tr.Expiry)
-				cancel()
-			}
-			buf := exitLimitBuffer(tr.Symbol) * float64(attempt)
-
-			results := make([]exitOrderResult, len(round))
-			var wg sync.WaitGroup
-			for _, i := range idx {
-				l := byToken[round[i].Token]
-				if l == nil {
-					pending[i] = 0
-					continue
-				}
-				wg.Add(1)
-				go func(i int, l *exitLeg, qty int64) {
-					defer wg.Done()
-					results[i] = s.exitSendOne(executor, tr, l, qty, chain, buf, market)
-				}(i, l, pending[i])
-			}
-			wg.Wait()
-
-			for _, i := range idx {
-				r := results[i]
-				pending[i] -= r.filled
-				roundFilled[i] += r.filled
-				if r.unknown != "" {
-					unconfirmed = append(unconfirmed, r.unknown)
-					pending[i] = 0 // never re-sent while its outcome is unknown
-				}
-			}
-			if len(unconfirmed) > 0 {
-				break
+			}(i, l, pending[i])
+		}
+		wg.Wait()
+		for i := range round {
+			r := results[i]
+			pending[i] -= r.filled
+			roundFilled[i] += r.filled
+			if r.unknown != "" {
+				unconfirmed = append(unconfirmed, r.unknown)
+				pending[i] = 0
 			}
 		}
 
@@ -448,4 +445,34 @@ func (s *Service) sbLiveExitRun(r *sbRunner, orders []sbMarketOrder, lot int64, 
 		}
 	}
 	return true
+}
+
+// exitQuotes: one live chain read shared by an exit round's orders,
+// refreshed when older than 250 ms (each retry prices off a fresh quote
+// without every order hitting the snapshot service).
+type exitQuotes struct {
+	s     *Service
+	tr    StoredTrade
+	mu    sync.Mutex
+	at    time.Time
+	chain *OptionChainSnapshot
+}
+
+func newExitQuotes(s *Service, tr StoredTrade) *exitQuotes { return &exitQuotes{s: s, tr: tr} }
+
+func (q *exitQuotes) get() *OptionChainSnapshot {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.chain != nil && time.Since(q.at) < 250*time.Millisecond {
+		return q.chain
+	}
+	if q.s.Snapshot == nil {
+		return q.chain
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	if c, err := q.s.Snapshot.GetOptionChain(ctx, q.tr.Symbol, q.tr.Expiry); err == nil && c != nil {
+		q.chain, q.at = c, time.Now()
+	}
+	cancel()
+	return q.chain
 }
