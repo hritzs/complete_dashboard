@@ -15,12 +15,25 @@ import (
 // the decision's reason); absent = manual.
 type hedgeTriggerKey struct{}
 
+// hedgeOutcomeKey: a caller that needs what a hedge actually filled puts a
+// *hedgeOutcome in the context; ManualHedgeLots fills it before returning.
+type hedgeOutcomeKey struct{}
+
+type hedgeOutcome struct{ CEFilled, PEFilled int64 }
+
 const maxHedgeEvents = 500
 
 // recordHedge saves one attempt. Caller holds the trade lock.
 func (s *Service) recordHedge(tradeUID string, ev HedgeEvent, err error) {
+	tr, ok := s.Store.LoadTrade(tradeUID)
+	if !ok {
+		return
+	}
+	// FILLED only when both legs filled the whole request: 27 Oct 14:36
+	// logged "FILLED 48 lot(s)" for a 25-lot fill.
+	want := int64(ev.Lots) * int64(tr.LotSize)
 	switch {
-	case err == nil && ev.CEFilled+ev.PEFilled > 0:
+	case err == nil && ev.CEFilled > 0 && ev.PEFilled > 0 && (want <= 0 || (ev.CEFilled >= want && ev.PEFilled >= want)):
 		ev.Result = "FILLED"
 	case ev.CEFilled+ev.PEFilled > 0:
 		ev.Result = "PARTIAL"
@@ -31,10 +44,6 @@ func (s *Service) recordHedge(tradeUID string, ev HedgeEvent, err error) {
 	}
 	if err != nil {
 		ev.Error = err.Error()
-	}
-	tr, ok := s.Store.LoadTrade(tradeUID)
-	if !ok {
-		return
 	}
 	if ev.CEFilled+ev.PEFilled > 0 {
 		tr.Config.HedgeCount++
@@ -48,7 +57,7 @@ func (s *Service) recordHedge(tradeUID string, ev HedgeEvent, err error) {
 	if b, jerr := json.Marshal(map[string]interface{}{"trade_uid": tradeUID, "hedge_count": tr.Config.HedgeCount, "event": ev}); jerr == nil {
 		stateEvent("hedge", tradeUID, time.Now().In(lutIST()).Format("2006-01-02"), b)
 	}
-	log.Printf("[HEDGE-RECORD] trade=%s #%d %s %s: %d lot(s) CE %s %d / PE %s %d at %.0f, delta before %+.2f, %d tranche(s)%s",
+	log.Printf("[HEDGE-RECORD] trade=%s #%d %s %s: %d lot(s) asked, CE %s %d / PE %s %d filled at %.0f, delta before %+.2f, %d tranche(s)%s",
 		tradeUID, tr.Config.HedgeCount, ev.Trigger, ev.Result, ev.Lots, ev.CESide, ev.CEFilled, ev.PESide, ev.PEFilled, ev.Strike, ev.DeltaBefore, ev.Tranches,
 		map[bool]string{true: " -- " + ev.Error, false: ""}[ev.Error != ""])
 }
