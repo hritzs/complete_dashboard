@@ -3701,6 +3701,9 @@ func (s *Service) ManualHedgeLots(ctx context.Context, tradeUID string, lots int
 	}
 	attempted := false
 	defer func() {
+		if out, ok := ctx.Value(hedgeOutcomeKey{}).(*hedgeOutcome); ok && out != nil {
+			out.CEFilled, out.PEFilled = ev.CEFilled, ev.PEFilled
+		}
 		if attempted {
 			s.recordHedge(tradeUID, ev, err)
 		}

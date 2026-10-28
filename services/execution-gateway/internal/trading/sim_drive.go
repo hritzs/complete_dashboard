@@ -348,6 +348,10 @@ func simDriveSizing(snap TradeSnapshot, h PaperSimHedge, rule hedgeRule, deltaBa
 	return delta, frac, how
 }
 
+// simHedgeTries: a sim-driven hedge order plus up to two immediate re-sends
+// of what it did not fill.
+const simHedgeTries = 3
+
 func (s *Service) simDriveHedge(d *simDriver, tr StoredTrade, run LUTBuildRun, h PaperSimHedge, lot int64) {
 	a := SimDriveAction{At: time.Now().In(lutIST()).Format("15:04:05.000"), SimTime: h.Time, Kind: h.Kind, SimDelta: h.DeltaBefore,
 		DecideMs: simEventAge(h.Time)}
@@ -381,18 +385,44 @@ func (s *Service) simDriveHedge(d *simDriver, tr StoredTrade, run LUTBuildRun, h
 			h.Kind, h.Time, h.DeltaBefore, how, frac*100, a.Delta, a.Lots)
 		log.Printf("[SIM-DRIVE][%s] %s (decided %d ms after the data)", tr.TradeUID, reason, a.DecideMs)
 		o0 := time.Now()
-		err := s.ManualHedgeLots(context.WithValue(context.Background(), hedgeTriggerKey{}, reason), tr.TradeUID, int(a.Lots))
-		a.OrderMs = time.Since(o0).Milliseconds()
-		if err != nil {
-			a.Result = "hedge failed: " + err.Error()
-		} else {
-			a.Result = "hedged"
+		// A partial fill is re-sent at once for the shortfall (27 Oct 14:36:
+		// 25 of 48 lots filled and the other 23 stayed open for 104 s until
+		// the next minute-end breach). ManualHedgeLots re-reads the live
+		// delta each time, so a re-send never hedges past neutral.
+		var filled int64
+		var err error
+		for try := 1; try <= simHedgeTries && filled < a.Lots; try++ {
+			need := a.Lots - filled
+			out := &hedgeOutcome{}
+			ctx := context.WithValue(context.WithValue(context.Background(), hedgeTriggerKey{}, reason), hedgeOutcomeKey{}, out)
+			err = s.ManualHedgeLots(ctx, tr.TradeUID, int(need))
+			got := min(out.CEFilled, out.PEFilled) / lot
+			filled += got
+			if got < need && try < simHedgeTries && (err == nil || got > 0) {
+				log.Printf("[SIM-DRIVE][%s] %s %s: %d of %d lot(s) filled -- re-sending %d now", tr.TradeUID, h.Kind, h.Time, filled, a.Lots, a.Lots-filled)
+				continue
+			}
+			if got == 0 {
+				break
+			}
 		}
+		a.OrderMs = time.Since(o0).Milliseconds()
+		switch {
+		case filled >= a.Lots:
+			a.Result = "hedged"
+		case filled > 0:
+			a.Result = fmt.Sprintf("hedged %d of %d lot(s)", filled, a.Lots)
+		case err != nil:
+			a.Result = "hedge failed: " + err.Error()
+		default:
+			a.Result = "hedge failed: nothing filled"
+		}
+		a.Lots = filled
 	}
 	// What the trade actually did (share of its live delta; 0 = nothing): the
 	// simulation follows exactly this from now on.
 	done := 0.0
-	if a.Result == "hedged" && a.Delta != 0 {
+	if a.Lots > 0 && a.Delta != 0 {
 		done = math.Min(1, float64(a.Lots*lot)/math.Abs(a.Delta))
 	}
 	recordSimExec(d.day, tr.TradeUID, h, done)
