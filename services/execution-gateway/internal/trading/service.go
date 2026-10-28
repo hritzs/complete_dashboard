@@ -3532,7 +3532,14 @@ func (s *Service) executeHedgeTranche(
 	// 1.5s is resting and needs a better price, not more waiting. Was 8s
 	// per leg, sequential: worst case ~24s, and the 2nd leg waited out
 	// the 1st leg's full timeout before it was even sent.
-	const perAttemptTimeout = 1500 * time.Millisecond
+	perAttemptTimeout := 1500 * time.Millisecond
+	bufScale := 1.0
+	// The pre-exit neutral hedge must not hold the exit back: shorter waits
+	// and twice the price buffer (27 Oct 15:12: both legs waited out 1.5 s,
+	// the exit started 6 s after the decision). Worst case ~1.2 s.
+	if urgent, _ := ctx.Value(hedgeUrgentKey{}).(bool); urgent {
+		perAttemptTimeout, bufScale = 400*time.Millisecond, 2
+	}
 
 	// ceToken/peToken are the LIVE ATM strike's tokens (resolved by the
 	// caller, ManualHedgeLots), NOT tr.CEToken/tr.PEToken -- a hedge is a
@@ -3579,7 +3586,7 @@ func (s *Service) executeHedgeTranche(
 			if chain != nil {
 				bid, ask = bidAskForToken(chain, l.token)
 			}
-			price, ok := bidAskLimitPrice(l.side, bid, ask, bufferForAttempt(attempt))
+			price, ok := bidAskLimitPrice(l.side, bid, ask, bufferForAttempt(attempt)*bufScale)
 			if !ok {
 				log.Printf("[HEDGE] trade=%s tranche=%d attempt=%d leg=%s: no live quote, skipping this round", tradeUID, trancheIdx, attempt, l.leg)
 				continue
