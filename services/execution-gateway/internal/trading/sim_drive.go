@@ -284,6 +284,12 @@ func (s *Service) simDriveTick() {
 	var todo []PaperSimHedge
 	for _, h := range res.Hedges {
 		if h.Kind == "ENTRY_NEUTRAL" { // the live build is delta-neutral by its CE:PE ratio
+			// Right after the build: live delta / points out must match the
+			// simulation's (owner 2026-10-28), checked once.
+			if first && !d.seen["post-check|build"] && simEventAge(h.Time) < 3*60*1000 {
+				d.seen["post-check|build"] = true
+				go s.simPostCheck(tr, "build", h)
+			}
 			continue
 		}
 		key := h.Time[:5] + "|" + h.Kind // at most one of each kind per minute
@@ -428,6 +434,9 @@ func (s *Service) simDriveHedge(d *simDriver, tr StoredTrade, run LUTBuildRun, h
 	recordSimExec(d.day, tr.TradeUID, h, done)
 	log.Printf("[SIM-DRIVE][%s] %s %s -> %s", tr.TradeUID, h.Kind, h.Time, a.Result)
 	d.record(a)
+	if a.Lots > 0 {
+		go s.simPostCheck(tr, h.Kind+" "+h.Time, h)
+	}
 }
 
 func (s *Service) simDriveExit(d *simDriver, uid string, res PaperSimResult) {
@@ -610,4 +619,55 @@ func (h *Handlers) SimDriveHandler(w http.ResponseWriter, r *http.Request) {
 	active := d != nil && simDriveActive(d.TradeUID)
 	lutJSON(w, http.StatusOK, map[string]interface{}{"success": true, "driver": d, "active": active,
 		"note": "a simulated minute-end hedge brings live points out to 25% of live points allowed, an intra-minute one hedges the complete live delta; SL / TP / MTM exits follow the simulation; hard exit 15:37"})
+}
+
+// simPostCheckDelay: how long after an action the live book is compared
+// with the simulation (fills and the next snapshot are in by then).
+const simPostCheckDelay = 2 * time.Second
+
+// simPostCheck compares the live book with the simulation right after an
+// action: every sim-driven hedge and the build (owner 2026-10-28: after each
+// one, live delta and points out must match the Paper Sim's). The
+// simulation's delta after the action is moved to the live future with the
+// live gamma, so both are read at the same price. Logged and recorded as a
+// "sim_postcheck" event; nothing is sent.
+func (s *Service) simPostCheck(tr StoredTrade, label string, h PaperSimHedge) {
+	time.Sleep(simPostCheckDelay)
+	snap, ok := s.Store.LoadSnapshot(tr.TradeUID)
+	if !ok {
+		return
+	}
+	units := float64(int64(tr.Lots) * int64(tr.LotSize))
+	want, diff, match := simPostCheckCompare(snap.NetDelta, snap.NetGamma, snap.Underlying, h.DeltaAfter, h.Future, units, float64(tr.LotSize))
+	if units <= 0 {
+		return
+	}
+	pts := func(d float64) float64 {
+		if snap.NetGamma == 0 {
+			return 0
+		}
+		return math.Abs(d / snap.NetGamma)
+	}
+	verdict := "MATCH"
+	if !match {
+		verdict = "MISMATCH"
+	}
+	log.Printf("[POST-CHECK][%s] %s: live delta %+.0f (%.1f pts out) vs sim %+.0f (%.1f pts out) at fut %.2f -- diff %+.0f (%.1f lot) %s",
+		tr.TradeUID, label, snap.NetDelta, pts(snap.NetDelta), want, pts(want), snap.Underlying, diff, diff/math.Max(1, float64(tr.LotSize)), verdict)
+	if b, err := json.Marshal(map[string]interface{}{"trade_uid": tr.TradeUID, "action": label, "live_delta": snap.NetDelta, "sim_delta": want,
+		"diff": diff, "live_points_out": pts(snap.NetDelta), "sim_points_out": pts(want), "future": snap.Underlying, "match": match}); err == nil {
+		stateEvent("sim_postcheck", tr.TradeUID, time.Now().In(lutIST()).Format("2006-01-02"), b)
+	}
+}
+
+// simPostCheckCompare: the simulation's delta after an action (per straddle
+// unit, at simFut) scaled to the live size and moved to liveFut with the
+// live gamma; diff = live - that; match when |diff| <= one lot.
+func simPostCheckCompare(liveDelta, liveGamma, liveFut, simAfterPerUnit, simFut, units, lot float64) (want, diff float64, match bool) {
+	want = simAfterPerUnit * units
+	if liveFut > 0 && simFut > 0 {
+		want += liveGamma * (liveFut - simFut)
+	}
+	diff = liveDelta - want
+	return want, diff, math.Abs(diff) <= lot
 }
