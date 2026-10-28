@@ -88,6 +88,7 @@ func (s *Service) preExitNeutralise(tradeUID, reason string) {
 	}
 	lots := int(math.Round(math.Abs(snap.NetDelta) / lot))
 	ctx := context.WithValue(context.Background(), hedgeTriggerKey{}, fmt.Sprintf("PRE_EXIT neutral before %s exit (delta %.1f)", reason, snap.NetDelta))
+	ctx = context.WithValue(ctx, hedgeUrgentKey{}, true)
 	log.Printf("[EXIT] trade=%s pre-exit neutral: delta %.1f -> %d lot(s) synthetic hedge at live ATM before the %s exit", tradeUID, snap.NetDelta, lots, reason)
 	if err := s.ManualHedgeLots(ctx, tradeUID, lots); err != nil {
 		log.Printf("[EXIT] ⚠ trade=%s pre-exit neutral failed: %v -- exiting anyway", tradeUID, err)

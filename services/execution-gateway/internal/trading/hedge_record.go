@@ -21,6 +21,10 @@ type hedgeOutcomeKey struct{}
 
 type hedgeOutcome struct{ CEFilled, PEFilled int64 }
 
+// hedgeUrgentKey (true): a hedge that holds something else back -- the
+// pre-exit neutral -- re-prices sooner and more aggressively.
+type hedgeUrgentKey struct{}
+
 const maxHedgeEvents = 500
 
 // recordHedge saves one attempt. Caller holds the trade lock.
