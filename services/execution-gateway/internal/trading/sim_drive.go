@@ -659,8 +659,15 @@ func (s *Service) simPostCheck(tr StoredTrade, label string, h PaperSimHedge) {
 	verdict := "MATCH"
 	if !match {
 		verdict = "MISMATCH"
-		s.actionAlert(tr.TradeUID, "SIM_MISMATCH", fmt.Sprintf("after %s: live delta %+.0f (%.1f pts out) vs sim %+.0f (%.1f pts out) at fut %.2f, off by %.1f lot(s)",
-			label, snap.NetDelta, pts(snap.NetDelta), want, pts(want), snap.Underlying, diff/math.Max(1, float64(tr.LotSize))), "hedge the difference to match the sim?")
+		// Live hedges in whole lots (one synthetic lot = one lot of delta),
+		// so a match is within half a lot; the question is in whole lots.
+		lots := int64(math.Round(math.Abs(diff) / math.Max(1, float64(tr.LotSize))))
+		side := "buy"
+		if diff > 0 {
+			side = "sell"
+		}
+		s.actionAlert(tr.TradeUID, "SIM_MISMATCH", fmt.Sprintf("after %s: live delta %+.0f (%.1f pts out) vs sim %+.0f (%.1f pts out) at fut %.2f, off by %.1f lot(s) (whole-lot rounding allows up to 0.5)",
+			label, snap.NetDelta, pts(snap.NetDelta), want, pts(want), snap.Underlying, diff/math.Max(1, float64(tr.LotSize))), fmt.Sprintf("%s %d synthetic lot(s) to match the sim?", side, lots))
 	}
 	log.Printf("[POST-CHECK][%s] %s: live delta %+.0f (%.1f pts out) vs sim %+.0f (%.1f pts out) at fut %.2f -- diff %+.0f (%.1f lot) %s",
 		tr.TradeUID, label, snap.NetDelta, pts(snap.NetDelta), want, pts(want), snap.Underlying, diff, diff/math.Max(1, float64(tr.LotSize)), verdict)
