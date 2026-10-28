@@ -164,6 +164,7 @@ type PaperSimPoint struct {
 
 type PaperSimHedge struct {
 	Time        string  `json:"time"`
+	FillPrice   float64 `json:"fill_price,omitempty"` // synthetic hedges: 3-s average future from the trigger (backtest fill)
 	Strike      float64 `json:"strike"`
 	CESide      string  `json:"ce_side"`
 	PESide      string  `json:"pe_side"`
@@ -1025,7 +1026,8 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 					return // decided, no order on the live trade
 				}
 				dq := -frac * nd
-				book.fillFut(dq, s.F)
+				fill := simFill3s(m, s.T, s.F)
+				book.fillFut(dq, fill)
 				what := fmt.Sprintf("synthetic %+.2f contracts", dq)
 				if force && !ex.Own {
 					what += fmt.Sprintf(" (executed live at %s: %.1f%% of delta)", ex.T, 100*frac)
@@ -1034,7 +1036,7 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 				}
 				res.Hedges = append(res.Hedges, PaperSimHedge{Time: s.T, Mode: "synthetic", Kind: "INTRA_MINUTE", Qty: int64(math.Round(dq)), FutQty: dq,
 					OldHedge: old / float64(q), NewHedge: book.futQty / float64(q), CEPrice: s.F, DeltaBefore: nd, DeltaAfter: nd + dq,
-					PointsOut: out, Allowed: d.EffectiveAllowed, Future: s.F, Source: src})
+					PointsOut: out, Allowed: d.EffectiveAllowed, Future: s.F, FillPrice: fill, Source: src})
 				intraRow(m, s, d.EffectiveAllowed, out, nd, nd+dq, old, what, pre)
 				return
 			}
@@ -1163,11 +1165,12 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 		if exit == "" && c.HedgeMode == "synthetic" && (exHas || (!decided && pt.HedgeCheck == "RISK_BREACH")) && mfrac > 0 && math.Abs(pt.NetDelta) > 1e-9 {
 			old := book.futQty
 			dq := -mfrac * pt.NetDelta
-			book.fillFut(dq, m.Future)
+			fill := simFill3s(m, m.Time+":00", m.Future)
+			book.fillFut(dq, fill)
 			after := book.value(m, q)
 			res.Hedges = append(res.Hedges, PaperSimHedge{Time: m.Time, Mode: "synthetic", Kind: "RISK_BREACH", Strike: 0, Qty: int64(math.Round(dq)), FutQty: dq,
 				OldHedge: old / float64(q), NewHedge: book.futQty / float64(q), CEPrice: m.Future, PEPrice: 0,
-				DeltaBefore: pt.NetDelta, DeltaAfter: after.NetDelta, PointsOut: pt.PointsOut, Allowed: pt.PointsAllowed, Future: m.Future, Source: pt.Source})
+				DeltaBefore: pt.NetDelta, DeltaAfter: after.NetDelta, PointsOut: pt.PointsOut, Allowed: pt.PointsAllowed, Future: m.Future, FillPrice: fill, Source: pt.Source})
 			ev := fmt.Sprintf("HEDGE synthetic %+.2f contracts @%.2f (%+.4f -> %+.4f per qty): delta %+.2f -> %+.2f, out %.1f -> %.1f (allowed %.1f)",
 				dq, m.Future, old/float64(q), book.futQty/float64(q), pt.NetDelta, after.NetDelta, pt.PointsOut, simOut(after), pt.PointsAllowed)
 			if exHas {
@@ -1958,4 +1961,22 @@ func (h *Handlers) PaperRemoveHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lutJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+// simFill3s: a synthetic hedge fills at the 3-second average future from
+// its trigger -- the minute-end close or the breach second -- and the next
+// two recorded seconds, as the backtest fills futures (FutExecBid/Ask, the
+// 3-s average from the trigger second). Fewer seconds recorded: what there is.
+func simFill3s(m simMinute, from string, first float64) float64 {
+	sum, n := first, 1
+	for _, s := range m.secs {
+		if n >= 3 {
+			break
+		}
+		if s.T > from && s.F > 0 {
+			sum += s.F
+			n++
+		}
+	}
+	return sum / float64(n)
 }
