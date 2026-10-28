@@ -31,6 +31,10 @@ import (
 // exitIOCAttempts: IOC limit attempts per order before the MARKET fallback.
 const exitIOCAttempts = 3
 
+// exitQuoteMaxAgeMs: an exit order priced from an older book uses the last
+// IOC step's buffer straight away.
+const exitQuoteMaxAgeMs = 500
+
 // aggressiveExitReason: exits that keep the fastest max-lots MARKET path --
 // SL, the portfolio stop, Square off ALL, and a manual Square off (owner,
 // 19 Oct: "manual exit the same as the SL exit, square off completely").
@@ -181,30 +185,62 @@ func (s *Service) completeExitRounds(tradeUID string, tr StoredTrade, executor E
 		quotes := newExitQuotes(s, tr)
 		results := make([]exitOrderResult, len(round))
 		var wg sync.WaitGroup
+		// Hedge legs lead, the straddle follows in step (2026-10-27 15:12
+		// round 4: the straddle tranche filled while 22 hedge IOCs missed on
+		// stale quotes, and the book ran +1,358 delta). A straddle order goes
+		// out only while the straddle's share sent stays within one order of
+		// the hedge legs' share filled, so a missed hedge leaves at most one
+		// order of delta open instead of a whole tranche.
+		gate := newExitStepGate()
+		send := func(i int, l *exitLeg, qty int64, hedge bool) {
+			defer wg.Done()
+			if hedge {
+				defer gate.hedgeDone()
+			}
+			rem := qty
+			for attempt := 1; attempt <= exitIOCAttempts+1 && rem > 0; attempt++ {
+				market := attempt > exitIOCAttempts
+				var chain *OptionChainSnapshot
+				if !market {
+					chain = quotes.get()
+				}
+				r := s.exitSendOne(executor, tr, l, rem, chain, exitLimitBuffer(tr.Symbol)*float64(attempt), market)
+				results[i].filled += r.filled
+				rem -= r.filled
+				if hedge {
+					gate.hedgeFilled(r.filled)
+				}
+				if r.unknown != "" {
+					results[i].unknown = r.unknown // never re-sent while its outcome is unknown
+					return
+				}
+			}
+		}
+		var straddle []int
 		for i := range round {
 			l := byToken[round[i].Token]
 			if l == nil || pending[i] <= 0 {
 				continue
 			}
+			if l.Token == tr.CEToken || l.Token == tr.PEToken {
+				straddle = append(straddle, i)
+				gate.planStraddle(pending[i])
+				continue
+			}
+			gate.planHedge(pending[i])
+		}
+		for i := range round {
+			l := byToken[round[i].Token]
+			if l == nil || pending[i] <= 0 || l.Token == tr.CEToken || l.Token == tr.PEToken {
+				continue
+			}
 			wg.Add(1)
-			go func(i int, l *exitLeg, qty int64) {
-				defer wg.Done()
-				rem := qty
-				for attempt := 1; attempt <= exitIOCAttempts+1 && rem > 0; attempt++ {
-					market := attempt > exitIOCAttempts
-					var chain *OptionChainSnapshot
-					if !market {
-						chain = quotes.get()
-					}
-					r := s.exitSendOne(executor, tr, l, rem, chain, exitLimitBuffer(tr.Symbol)*float64(attempt), market)
-					results[i].filled += r.filled
-					rem -= r.filled
-					if r.unknown != "" {
-						results[i].unknown = r.unknown // never re-sent while its outcome is unknown
-						return
-					}
-				}
-			}(i, l, pending[i])
+			go send(i, l, pending[i], true)
+		}
+		for _, i := range straddle {
+			gate.waitStraddleTurn(pending[i])
+			wg.Add(1)
+			go send(i, byToken[round[i].Token], pending[i], false)
 		}
 		wg.Wait()
 		for i := range round {
@@ -277,6 +313,16 @@ func (s *Service) completeExitRounds(tradeUID string, tr StoredTrade, executor E
 // -+ buf without a quote), or MARKET when market is set or no price exists.
 func (s *Service) exitSendOne(executor Executor, tr StoredTrade, l *exitLeg, qty int64, chain *OptionChainSnapshot, buf float64, market bool) exitOrderResult {
 	if !market {
+		// A book the feed has not refreshed for a while is priced with the
+		// last IOC step's buffer at once (27 Oct 15:12: quotes 10-17 s old,
+		// 2.5 points off, every x1 hedge IOC missed). The limit only caps
+		// the price; the fill is at the best price on the book.
+		if age, ok := quoteAgeForToken(chain, l.Token); ok && age > exitQuoteMaxAgeMs {
+			if top := exitLimitBuffer(tr.Symbol) * exitIOCAttempts; buf < top {
+				log.Printf("[EXIT] trade=%s %s %d quote %d ms old -- buffer %.0f instead of %.0f", tr.TradeUID, l.Leg, l.Token, age, top, buf)
+				buf = top
+			}
+		}
 		bid, ask := bidAskForToken(chain, l.Token)
 		limit, ok := bidAskLimitPrice(l.side, bid, ask, buf)
 		if !ok {
@@ -493,4 +539,75 @@ func (q *exitQuotes) get() *OptionChainSnapshot {
 	}
 	cancel()
 	return q.chain
+}
+
+// exitStepGate keeps a round's straddle orders in step with its hedge legs:
+// the straddle's share sent may run at most one order ahead of the hedge
+// legs' share filled. Once every hedge order has finished (filled, MARKET,
+// or unknown) the straddle is released whatever was filled.
+type exitStepGate struct {
+	mu                         sync.Mutex
+	cond                       *sync.Cond
+	hedgePlanned, hedgeFill    int64
+	hedgeLive                  int
+	straddlePlanned, straddleQ int64 // planned, already released
+	maxStraddleOrder           int64
+}
+
+func newExitStepGate() *exitStepGate {
+	g := &exitStepGate{}
+	g.cond = sync.NewCond(&g.mu)
+	return g
+}
+
+func (g *exitStepGate) planHedge(qty int64) {
+	g.mu.Lock()
+	g.hedgePlanned += qty
+	g.hedgeLive++
+	g.mu.Unlock()
+}
+
+func (g *exitStepGate) planStraddle(qty int64) {
+	g.mu.Lock()
+	g.straddlePlanned += qty
+	g.maxStraddleOrder = max(g.maxStraddleOrder, qty)
+	g.mu.Unlock()
+}
+
+func (g *exitStepGate) hedgeFilled(qty int64) {
+	if qty <= 0 {
+		return
+	}
+	g.mu.Lock()
+	g.hedgeFill += qty
+	g.mu.Unlock()
+	g.cond.Broadcast()
+}
+
+func (g *exitStepGate) hedgeDone() {
+	g.mu.Lock()
+	g.hedgeLive--
+	g.mu.Unlock()
+	g.cond.Broadcast()
+}
+
+// straddleAllowedLocked: may a straddle order of qty go out now?
+// sent/planned (after it) <= hedge filled/planned + one order's share.
+func (g *exitStepGate) straddleAllowedLocked(qty int64) bool {
+	if g.hedgePlanned <= 0 || g.straddlePlanned <= 0 || g.hedgeLive <= 0 {
+		return true
+	}
+	return float64(g.straddleQ+qty)/float64(g.straddlePlanned) <=
+		float64(g.hedgeFill)/float64(g.hedgePlanned)+float64(g.maxStraddleOrder)/float64(g.straddlePlanned)+1e-9
+}
+
+// waitStraddleTurn blocks until a straddle order of qty may go out, then
+// counts it as released.
+func (g *exitStepGate) waitStraddleTurn(qty int64) {
+	g.mu.Lock()
+	for !g.straddleAllowedLocked(qty) {
+		g.cond.Wait()
+	}
+	g.straddleQ += qty
+	g.mu.Unlock()
 }

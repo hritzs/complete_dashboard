@@ -88,6 +88,14 @@ func (s *Service) StartStateDB() {
 		log.Printf("[STATE-DB] ⚠ cannot create tables: %v -- state stays in files only", err)
 		return
 	}
+	// The close guard sums every order's fills before each order is sent;
+	// without this index that subquery scanned all of fills per order
+	// (0.52-0.57 s per check on the 27 Oct trade, ~900 orders), which
+	// queued exit and build orders ~24 ms apart. Best effort: a schema
+	// without fills must not stop the state tables.
+	if _, err := pg.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_fills_order_id ON fills (order_id)`); err != nil {
+		log.Printf("[STATE-DB] ⚠ fills(order_id) index not created: %v", err)
+	}
 	stateW.mu.Lock()
 	stateW.db = pg.db
 	stateW.pending = map[string][]byte{}

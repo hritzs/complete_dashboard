@@ -54,6 +54,24 @@ func bidAskLimitPrice(side string, bid, ask, buffer float64) (price float64, ok 
 	return math.Round(p/0.05) * 0.05, true
 }
 
+// quoteAgeForToken: how old a token's book is in the chain (ms, from the
+// depth ladder's age_ms, stamped when the feed last delivered a record for
+// that token). ok=false when the chain carries no depth for it.
+func quoteAgeForToken(chain *OptionChainSnapshot, token int64) (ageMs int64, ok bool) {
+	if chain == nil {
+		return 0, false
+	}
+	for _, row := range chain.Chain {
+		if row.CEToken == token && row.CEDepth != nil {
+			return row.CEDepth.AgeMs, true
+		}
+		if row.PEToken == token && row.PEDepth != nil {
+			return row.PEDepth.AgeMs, true
+		}
+	}
+	return 0, false
+}
+
 // bidAskForToken finds the live bid/ask for a token's leg (CE or PE) in a
 // chain snapshot. Returns (0, 0) if the token isn't in the chain.
 func bidAskForToken(chain *OptionChainSnapshot, token int64) (bid, ask float64) {
