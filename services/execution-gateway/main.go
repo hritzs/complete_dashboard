@@ -509,6 +509,7 @@ func startHTTPServer(cfg *Config, handlers *trading.Handlers) {
 	mux.HandleFunc("/api/debug/trade/reconciliation", handlers.GetTradeReconciliation)
 	mux.HandleFunc("/api/positions", handlers.BrokerPositions)
 	mux.HandleFunc("/api/broker/risk", handlers.BrokerRisk)
+	mux.HandleFunc("/api/alerts", handlers.ActionAlertsHandler) // unfilled actions / sim mismatches (action_alert.go)
 	mux.HandleFunc("/api/positions/check", handlers.PositionCheck)
 	mux.HandleFunc("/api/trades", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

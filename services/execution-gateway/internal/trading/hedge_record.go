@@ -7,7 +7,9 @@ package trading
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -48,6 +50,16 @@ func (s *Service) recordHedge(tradeUID string, ev HedgeEvent, err error) {
 	}
 	if err != nil {
 		ev.Error = err.Error()
+	}
+	// A sim-driven hedge re-sends its shortfall and alerts once at the end
+	// (simDriveHedge); every other hedge alerts here when it fell short.
+	if ev.Result != "FILLED" && !strings.HasPrefix(ev.Reason, "SIM-DRIVEN") {
+		why := ev.Error
+		if why == "" {
+			why = "the rest did not fill after re-pricing (price moved or thin book); the unfilled remainder was cancelled"
+		}
+		s.actionAlert(tradeUID, "HEDGE_"+ev.Result, fmt.Sprintf("%s hedge asked %d lot(s) at %.0f: filled CE %s %d / PE %s %d -- %s",
+			ev.Trigger, ev.Lots, ev.Strike, ev.CESide, ev.CEFilled, ev.PESide, ev.PEFilled, why), "hedge the remaining delta?")
 	}
 	if ev.CEFilled+ev.PEFilled > 0 {
 		tr.Config.HedgeCount++

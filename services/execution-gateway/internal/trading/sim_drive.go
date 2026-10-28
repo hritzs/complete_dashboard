@@ -423,6 +423,14 @@ func (s *Service) simDriveHedge(d *simDriver, tr StoredTrade, run LUTBuildRun, h
 		default:
 			a.Result = "hedge failed: nothing filled"
 		}
+		if filled < a.Lots {
+			why := "not filled after re-pricing (price moved or thin book)"
+			if err != nil {
+				why = err.Error()
+			}
+			s.actionAlert(tr.TradeUID, "SIM_HEDGE_SHORT", fmt.Sprintf("sim %s at %s asked %d lot(s) (live delta %+.0f): filled %d after %d tries, %d lot(s) still unhedged -- %s",
+				h.Kind, h.Time, a.Lots, a.Delta, filled, simHedgeTries, a.Lots-filled, why), "hedge the remaining lots?")
+		}
 		a.Lots = filled
 	}
 	// What the trade actually did (share of its live delta; 0 = nothing): the
@@ -651,6 +659,8 @@ func (s *Service) simPostCheck(tr StoredTrade, label string, h PaperSimHedge) {
 	verdict := "MATCH"
 	if !match {
 		verdict = "MISMATCH"
+		s.actionAlert(tr.TradeUID, "SIM_MISMATCH", fmt.Sprintf("after %s: live delta %+.0f (%.1f pts out) vs sim %+.0f (%.1f pts out) at fut %.2f, off by %.1f lot(s)",
+			label, snap.NetDelta, pts(snap.NetDelta), want, pts(want), snap.Underlying, diff/math.Max(1, float64(tr.LotSize))), "hedge the difference to match the sim?")
 	}
 	log.Printf("[POST-CHECK][%s] %s: live delta %+.0f (%.1f pts out) vs sim %+.0f (%.1f pts out) at fut %.2f -- diff %+.0f (%.1f lot) %s",
 		tr.TradeUID, label, snap.NetDelta, pts(snap.NetDelta), want, pts(want), snap.Underlying, diff, diff/math.Max(1, float64(tr.LotSize)), verdict)

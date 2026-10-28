@@ -7,6 +7,7 @@
   import SBPortfolioRows, { sbStore } from './SBPortfolioRows.jsx';
   import ManualLegPanel, { closeManualLeg, addManualLeg } from './ManualLegPanel.jsx';
   import BrokerRiskPanel from './BrokerRiskPanel.jsx';
+  import ActionAlerts from './ActionAlerts.jsx';
   import PortfolioMTMPanel from './PortfolioMTMPanel.jsx';
   import { postJSON, safeFetchJson, postJSONStrict } from "./api.js";
   import { formInput, formLabel } from "./styles.js";
@@ -529,6 +530,10 @@ function App() {
         // LUT entry check (paper): handed to the LUT tab as-is.
         if (raw.type === 'lut_update') {
           window.dispatchEvent(new CustomEvent('lut_update', { detail: raw.data }));
+          return;
+        }
+        if (raw.type === 'action_alert') {
+          window.dispatchEvent(new CustomEvent('action_alert', { detail: raw.data }));
           return;
         }
         if (raw.type === 'sbuild_update') {
@@ -2001,6 +2006,8 @@ function App() {
             <div class="status-chip muted">{dataSource()}</div>
           </div>
         </header>
+
+        <ActionAlerts />
 
         <div class="main-tabs">
           <button

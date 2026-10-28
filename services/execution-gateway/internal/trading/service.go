@@ -2211,6 +2211,13 @@ func (s *Service) SquareOff(tradeUID string, reason string) error {
 				return revert(xerr)
 			}
 			remainingCE, remainingPE, exitUnconfirmed = min(rce, targetCE), min(rpe, targetPE), unconf
+			if rce > 0 || rpe > 0 || len(unconf) > 0 {
+				why := "IOC / MARKET orders did not close the full quantity"
+				if len(unconf) > 0 {
+					why = fmt.Sprintf("%d order(s) with no broker confirmation, so nothing more was sent: %s", len(unconf), strings.Join(unconf, "; "))
+				}
+				s.actionAlert(tradeUID, "EXIT_UNFILLED", fmt.Sprintf("%s exit left CE %d / PE %d open -- %s", reason, rce, rpe, why), "check the broker position and close the rest?")
+			}
 		}
 	}
 
