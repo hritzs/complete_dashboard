@@ -292,12 +292,19 @@ func (s *Service) lutSendBuild(run *LUTBuildRun, req FinalBuildRequest) {
 				run.TradeUID = resp.TradeUID
 			}
 			log.Printf("[LUT-BUILD] ❌ %s build failed: %v (trade %s) -- check Portfolio / broker", run.Kind(), err, run.TradeUID)
+			s.actionAlert(run.TradeUID, "BUILD_FAILED", fmt.Sprintf("%s build failed: %v", run.Kind(), err), "check Portfolio / broker; rebuild or square off what filled?")
 		default:
 			run.Status, run.TradeUID, run.Message = "BUILT", resp.TradeUID, resp.Message
 			if resp.Status != "" {
 				run.Message = strings.TrimSpace(resp.Status + " " + resp.Message)
 			}
 			log.Printf("[LUT-BUILD] ✅ %s build done: trade %s CE %d / PE %d status %s", run.Kind(), resp.TradeUID, resp.CEQty, resp.PEQty, resp.Status)
+			if tr, ok := s.Store.LoadTrade(resp.TradeUID); ok && tr.Lots > 0 && tr.LotSize > 0 {
+				if want, got := 2*int64(tr.Lots)*int64(tr.LotSize), int64(resp.CEQty+resp.PEQty); got < want {
+					s.actionAlert(resp.TradeUID, "BUILD_UNFILLED", fmt.Sprintf("%s build filled CE %d + PE %d = %d of %d (%d lot(s) of %d short): %s",
+						run.Kind(), resp.CEQty, resp.PEQty, got, want, (want-got)/int64(tr.LotSize), tr.Lots, strings.TrimSpace(resp.Status+" "+resp.Message)), "build the rest, or keep the smaller size?")
+				}
+			}
 		}
 		if e.day != "" {
 			e.saveDayLocked(e.day)
