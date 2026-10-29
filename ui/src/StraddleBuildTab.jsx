@@ -2,6 +2,7 @@ import { createSignal, createMemo, onCleanup, onMount, Show, For } from 'solid-j
 import { fmt, sgn, pnlCls } from './format.js';
 import { mutedDim, capsLabel } from './styles.js';
 import { postJSON } from './api.js';
+import { niftyEqText } from './niftyEquiv.jsx';
 
 // Straddle Build -- sell the ATM straddle at or above a target, sized off
 // L1-L5 depth. Several rules can run at once; each has its own build, PMS,
@@ -341,7 +342,7 @@ export default function StraddleBuildTab() {
                     <div style={{ height: '4px', background: 'rgba(255,255,255,0.08)', 'border-radius': '2px', 'margin-top': '6px' }}>
                       <div style={{ height: '4px', width: `${pct()}%`, background: '#3987e5', 'border-radius': '2px' }} />
                     </div>
-                    <div style={{ ...S.muted, 'font-size': '11px', 'margin-top': '3px' }}>{filledOf(s)} / {s.target_qty} sold{s.position?.build_straddle ? ` @ ${fmt(s.position.build_straddle)}` : ''}{s.busy ? ' · orders in flight' : ''}</div>
+                    <div style={{ ...S.muted, 'font-size': '11px', 'margin-top': '3px' }}>{filledOf(s)} / {s.target_qty} sold{s.position?.build_straddle ? ` @ ${fmt(s.position.build_straddle)}${niftyEqText(s.config?.symbol, s.position.build_straddle)}` : ''}{s.busy ? ' · orders in flight' : ''}</div>
                   </Show>
                 </div>
               );
@@ -358,8 +359,8 @@ export default function StraddleBuildTab() {
               <span style={S.muted}>{qErr() ? <span class="negative">{qErr()}</span> : `spot ${fmt(mkt()?.spot)} · ${mkt()?.updated || mkt()?.time || ''}`}</span>
             </div>
             <div style={{ display: 'flex', 'flex-wrap': 'wrap', 'row-gap': '10px' }}>
-              <Kpi first big k={`ATM ${fmt(mkt()?.atm, 0)} · LTP straddle`} v={fmt(mkt()?.ltp_straddle)} />
-              <Kpi big k="Bid straddle (sell gets)" v={fmt(mkt()?.bid_straddle)} cls={target() ? (above() ? 'positive' : 'negative') : ''} />
+              <Kpi first big k={`ATM ${fmt(mkt()?.atm, 0)} · LTP straddle`} v={fmt(mkt()?.ltp_straddle)} sub={niftyEqText(rule().symbol, mkt()?.ltp_straddle).replace(/^ · /, '')} />
+              <Kpi big k="Bid straddle (sell gets)" v={fmt(mkt()?.bid_straddle)} sub={niftyEqText(rule().symbol, mkt()?.bid_straddle).replace(/^ · /, '')} cls={target() ? (above() ? 'positive' : 'negative') : ''} />
               <Kpi k="vs target" v={target() ? sgn(gap()) : 'set a target'} cls={target() ? (above() ? 'positive' : 'negative') : ''} sub={target() ? (above() ? 'above — would sell' : 'below — waits') : ''} />
               <Kpi k="CE bid / ask" v={`${fmt(mkt()?.ce_bid)} / ${fmt(mkt()?.ce_ask)}`} sub={`LTP ${fmt(mkt()?.ce_ltp)}`} />
               <Kpi k="PE bid / ask" v={`${fmt(mkt()?.pe_bid)} / ${fmt(mkt()?.pe_ask)}`} sub={`LTP ${fmt(mkt()?.pe_ltp)}`} />
@@ -488,9 +489,9 @@ export default function StraddleBuildTab() {
                 </div>
               </div>
               <div style={{ display: 'flex', 'flex-wrap': 'wrap', 'row-gap': '10px' }}>
-                <Kpi first big k="P&L" v={`₹${fmt(pos().pnl, 0)}`} cls={pnlCls(pos().pnl)} sub={`${sgn(pos().pnl_per_straddle)} per straddle`} />
+                <Kpi first big k="P&L" v={`₹${fmt(pos().pnl, 0)}`} cls={pnlCls(pos().pnl)} sub={`${sgn(pos().pnl_per_straddle)} per straddle${niftyEqText(st().config?.symbol, pos().pnl_per_straddle)}`} />
                 <Kpi k="Sold straddle" v={pos().build_straddle ? fmt(pos().build_straddle) : '—'} cls={pos().build_straddle ? (pos().build_straddle > (st().config?.target_straddle || 0) ? 'positive' : 'negative') : ''}
-                  sub={pos().build_straddle ? `${fmt(pos().build_avg_ce)} + ${fmt(pos().build_avg_pe)} · ${sgn(pos().build_straddle - st().config.target_straddle)} vs target` : ''} />
+                  sub={pos().build_straddle ? `${fmt(pos().build_avg_ce)} + ${fmt(pos().build_avg_pe)} · ${sgn(pos().build_straddle - st().config.target_straddle)} vs target${niftyEqText(st().config?.symbol, pos().build_straddle)}` : ''} />
                 <Kpi k="CE / PE sold" v={`${pos().build_ce || 0} / ${pos().build_pe || 0}`} sub={`${st().tranches} tranche(s)`} />
                 <Kpi k="Net delta" v={fmt(pos().net_delta, 1)} cls={Math.abs(pos().net_delta || 0) < (st().lot_size || 65) * 0.5 ? '' : 'negative'} sub={`gamma ${fmt(pos().net_gamma, 4)}`} />
                 <Kpi k="Hedge check" v={(st().risk?.HEDGE || '—').split(':')[0]} sub={st().risk?.TIME ? `exit ${st().risk.TIME}` : ''} />
