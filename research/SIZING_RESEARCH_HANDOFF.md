@@ -1175,3 +1175,19 @@ Next: construct a causal execution baseline (quotes, positions, cash), generate
 SL-before-recovery labels with censor flags, then compare calibrated risk
 reduction chronologically and paper trade forward. Keep original LUT penalties and mandatory delta/hard-stop controls.
 Account currency loss/day and drawdown budgets remain unspecified.
+
+### 4.22 Bucket / instrument basket (2026-10-29, owner: "fine tune the IV and other buckets ... and a basket of delta-based ones")
+
+`GammaShort_Backtest_Final.py` has a research-only `GS_BASKET=1` path: for every day and the fixed
+entries 09:16 / 09:17 / 09:18 it records the raw LUT inputs and the forced PnL of the ATM straddle and of
+short strangles at 0.15-0.35 delta per leg (same fills, costs, SL / TP, event sizing; strangles hedged by
+`simulate_legs`). Production PnL is identical to `run_027bf0249b` on all 1,428 shared dates. Run:
+`output/backtest_basket/run_027bf0249b` (1,439 days to 2026-10-28; `output/basket_env.sh` has the
+settings). `basket_eval.py` fits YES cells on TRAIN for 864 variants (IV-ratio x Build-IV x straddle-ratio
+edges x instrument x cell rule) and compares them with the LIVE tables (Profilers/12102026) on 09:16-09:18.
+
+**Decision: live tables.** 0 of 864 variants beat them on VALIDATION net and net/MDD. TEST for the live
+tables: net 919.1, 77 trades, 75.3 % win, MDD 138.1. The 28 / 29 Oct cells had no earlier day; the
+"rich straddle" lead from 28 Oct loses on the days it would add (train avg -12.56). Details:
+`output/basket_eval/REPORT.md`, `basket_eval.xlsx`.
+

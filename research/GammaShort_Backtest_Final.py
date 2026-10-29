@@ -489,6 +489,12 @@ def neighbour_support(lut, coord):
 # have traded. A relaxed variant accepts an OFF cell from its start time on when enough
 # neighbours are ON. The production decision is unchanged.
 RELAX = _env("GS_RELAX", "0") == "1"
+# Research only (GS_BASKET=1): for every day and fixed entry, the raw LUT inputs
+# (so any bucket edges can be applied afterwards) and the forced PnL of short
+# delta strangles priced on the same fills, costs, SL / TP and event sizing as
+# the straddle. Production rows are unchanged.
+BASKET = _env("GS_BASKET", "0") == "1"
+BASKET_DELTAS = [float(x) for x in _env("GS_BASKET_DELTAS", "0.15,0.20,0.25,0.30,0.35").split(",") if x.strip()]
 RELAX_VARIANTS = {"R1": [(1030, 1)], "R2": [(1100, 1)], "R3": [(1200, 1)],
                   "R4": [(1030, 2), (1200, 1)]}   # (from hhmm, min ON neighbours)
 
@@ -1138,7 +1144,8 @@ def process_day(file_path):
             grid.loc[m, 'OTMIVRef'] = arr[2][m]
             grid.loc[m, 'CERef'] = arr[0][m]          # reference straddle = real LTP
             grid.loc[m, 'PERef'] = arr[1][m]
-        del df
+        if not BASKET:
+            del df
         grid['Minute'] = grid['Time'].dt.floor('1min')
 
         # ---- minute check values (:59 fallback) ----
@@ -1330,10 +1337,73 @@ def process_day(file_path):
                                 f"Relax_{tag}_Exit": f"{sim['exit_reason']} {sim['exit_time'][:5]}"})
                     break
 
+        def record_basket():
+            # tick times carry a placeholder date: compare seconds of the day
+            tsec = df['Time'].dt.hour * 3600 + df['Time'].dt.minute * 60 + df['Time'].dt.second
+            strikes = np.sort(df['_K'].dropna().unique())
+            for th in FIXED_ENTRIES:
+                tag = f"{th:04d}"
+                row = fixed_rows.get(th)
+                if row is None:
+                    continue
+                res.update({f"B{tag}_DI": row["di"], f"B{tag}_BIV": row["abiv"], f"B{tag}_SR": row["sr"],
+                            f"B{tag}_IVR": row["iv_ratio"], f"B{tag}_Veto": row["veto"], f"B{tag}_Floor": row["floor"]})
+                ei = row["ei"]
+                t_e = grid['Time'].iloc[ei]
+                e_sec = t_e.hour * 3600 + t_e.minute * 60 + t_e.second
+                S0 = float(grid['Underlying'].iloc[ei])
+                T0 = max(float(grid['DTE'].iloc[ei]) / 365.0, 1e-5)
+                atm = float(grid['ATMRef'].iloc[ei])
+                win = df[(tsec <= e_sec) & (tsec > e_sec - 120)]
+                last = win.groupby(['_K', 'Type'])['LTP'].last()
+                cand = {"CE": [], "PE": []}
+                for (K, typ), px in last.items():
+                    if typ not in cand or not np.isfinite(px):
+                        continue
+                    if (typ == "CE" and K < atm) or (typ == "PE" and K > atm):
+                        continue
+                    iv = _iv_py(typ == "CE", float(px), S0, float(K), T0)
+                    if not np.isfinite(iv):
+                        continue
+                    d, _ = _bs_delta_gamma(np.array([S0]), float(K), T0, iv, typ == "CE")
+                    cand[typ].append((float(K), abs(float(d[0]))))
+                fraction = (round(row["abiv"], 2) - 0.08) / 0.12
+                tp_bps = float(max(1.0, round((TP_LOW[row["di"]] + fraction * (TP_HIGH[row["di"]] - TP_LOW[row["di"]])) * TP_SCALE)))
+                sl_bps = float(SL_BPS_BY_DTE.get(row["di"], SL_BPS_DEFAULT))
+                thr = DELTA_MAP.get(row["di"], DERIVED_DELTA_THR)
+
+                def get_arr(K):
+                    if K not in cache:
+                        if K not in strikes:
+                            return None
+                        cache[K] = strike_arrays(K, grid, df)
+                    return cache[K]
+                for D in BASKET_DELTAS:
+                    pick = {}
+                    for typ in ("CE", "PE"):
+                        c = sorted(cand[typ], key=lambda x: (round(abs(x[1] - D), 4), x[0]))
+                        if c:
+                            pick[typ] = c[0]
+                    dtag = f"D{int(round(D * 100)):02d}_{tag}"
+                    if len(pick) < 2:
+                        res[f"{dtag}_Note"] = "no_strike"; continue
+                    sim = simulate_legs(grid, ei, get_arr, [(pick["CE"][0], "CE", -1), (pick["PE"][0], "PE", -1)],
+                                        row["di"], sl_bps, tp_bps, thr)
+                    if sim is None:
+                        res[f"{dtag}_Note"] = "no_sim"; continue
+                    gross = sim["gross"] / 3.0 if is_event else sim["gross"]
+                    hc = sim["hedge_cost"] / 3.0 if is_event else sim["hedge_cost"]
+                    ecost = ENTRY_SLIP.get(row["di"], ENTRY_SLIP_DEF)
+                    res.update({f"{dtag}_PnL": gross - hc - ecost, f"{dtag}_CE": pick["CE"][0], f"{dtag}_PE": pick["PE"][0],
+                                f"{dtag}_dCE": pick["CE"][1], f"{dtag}_dPE": pick["PE"][1], f"{dtag}_Credit": sim["credit"],
+                                f"{dtag}_Exit": f"{sim['exit_reason']} {sim['exit_time']}"})
+
         decide()
         record_fixed()
         if RELAX:
             record_relax()
+        if BASKET:
+            record_basket()
         return res
     except Exception:
         res["Note"] = "exception: " + traceback.format_exc().strip().split("\n")[-1][:150]
