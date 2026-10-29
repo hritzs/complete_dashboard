@@ -8,6 +8,7 @@
   import ManualLegPanel, { closeManualLeg, addManualLeg } from './ManualLegPanel.jsx';
   import BrokerRiskPanel from './BrokerRiskPanel.jsx';
   import ActionAlerts from './ActionAlerts.jsx';
+  import NiftyEq from './niftyEquiv.jsx';
   import PortfolioMTMPanel from './PortfolioMTMPanel.jsx';
   import { postJSON, safeFetchJson, postJSONStrict } from "./api.js";
   import { formInput, formLabel } from "./styles.js";
@@ -2941,7 +2942,7 @@ function App() {
                               <td style={{ padding: "10px" }} title={splitOf("CE")}>{qtyText(ceQty())}</td>
                               <td style={{ padding: "10px" }}>₹{fmt(ceLtp(), 2)}</td>
                               <td style={{ padding: "10px" }} title={splitOf("PE")}>{qtyText(peQty())}</td>
-                              <td style={{ padding: "10px" }}>₹{fmt(peLtp(), 2)}</td>
+                              <td style={{ padding: "10px" }}>₹{fmt(peLtp(), 2)}<NiftyEq symbol={item.symbol} value={Number(ceLtp()) + Number(peLtp())} label="straddle" /></td>
                               <td style={{ padding: "10px" }}>{fmt(netDelta(), 4)}</td>
                               <td style={{ padding: "10px", ...outStyle() }} title={outTitle()}>{fmt(pointsOut(), 2)}</td>
                               <td style={{ padding: "10px", ...outStyle() }} title={outTitle()}>{fmt(pointsAllowed(), 2)}</td>
@@ -2953,7 +2954,7 @@ function App() {
                               <td style={{ padding: "10px" }} class={uPnl() >= 0 ? "positive" : "negative"}>₹{fmt(uPnl(), 2)}</td>
                               <td style={{ padding: "10px" }} class={rPnl() >= 0 ? "positive" : "negative"}>₹{fmt(rPnl(), 2)}</td>
                               <td style={{ padding: "10px" }} class={totalPnl() >= 0 ? "positive" : "negative"}>₹{fmt(totalPnl(), 2)}</td>
-                              <td style={{ padding: "10px" }} class={pnlPerStraddleValue() >= 0 ? "positive" : "negative"}>₹{fmt(pnlPerStraddleValue(), 2)}</td>
+                              <td style={{ padding: "10px" }} class={pnlPerStraddleValue() >= 0 ? "positive" : "negative"}>₹{fmt(pnlPerStraddleValue(), 2)}<NiftyEq symbol={item.symbol} value={pnlPerStraddleValue()} /></td>
                               <td style={{ padding: "10px", opacity: 0.8 }} class={wingPnlValue() >= 0 ? "positive" : "negative"}>
                                 <Show when={wingPnlValue() !== 0 || Number(live().wing_pct) > 0} fallback={"—"}>₹{fmt(wingPnlValue(), 2)}</Show>
                               </td>

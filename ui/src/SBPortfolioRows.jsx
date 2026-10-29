@@ -2,6 +2,7 @@ import { createSignal, createRoot, Show, For, Index } from 'solid-js';
 import { fmt, sgn, pnlCls } from './format.js';
 import { mutedDim as muted, capsLabel as label } from './styles.js';
 import { postJSON } from './api.js';
+import NiftyEq, { niftyEqText } from './niftyEquiv.jsx';
 
 // Straddle-build positions as NORMAL rows of the Portfolio table (same
 // columns as every other trade); click a row for its details, legs and
@@ -139,7 +140,7 @@ function SBRow(props) {
         <td style={td} class={pnlCls(unreal())}>₹{fmt(unreal())}</td>
         <td style={td} class={pnlCls(realized())}>₹{fmt(realized())}</td>
         <td style={td} class={pnlCls(total())}>₹{fmt(total())}</td>
-        <td style={td} class={pnlCls(p().pnl_per_straddle)}>₹{fmt(p().pnl_per_straddle)}</td>
+        <td style={td} class={pnlCls(p().pnl_per_straddle)}>₹{fmt(p().pnl_per_straddle)}<NiftyEq symbol={cfg().symbol} value={p().pnl_per_straddle} /></td>
         <td style={{ ...td, opacity: 0.8 }}>—</td>
         <td style={{ ...td, padding: '6px 10px' }} onClick={(e) => e.stopPropagation()}>
           <div style={{ display: 'flex', gap: '4px', 'flex-wrap': 'nowrap' }}>
@@ -171,7 +172,7 @@ function SBRow(props) {
                   <Metric k="Realized PnL" v={`₹${fmt(realized())}`} cls={pnlCls(realized())} />
                   <Metric k="Points Out" v={fmt(pointsOut())} />
                   <Metric k="Points Allowed" v={hedgeNum('allowed') == null ? '—' : fmt(hedgeNum('allowed'))} />
-                  <Metric k="PnL / Straddle" v={`₹${fmt(p().pnl_per_straddle)}`} cls={pnlCls(p().pnl_per_straddle)} />
+                  <Metric k="PnL / Straddle" v={`₹${fmt(p().pnl_per_straddle)}${niftyEqText(cfg().symbol, p().pnl_per_straddle)}`} cls={pnlCls(p().pnl_per_straddle)} />
                   <Metric k="Underlying" v={fmt(s().spot)} />
                 </section>
 
@@ -198,7 +199,7 @@ function SBRow(props) {
                   <div class="trade-card-title">Build</div>
                   <Metric k="Built" v={`${sold()} / ${target()}`} />
                   <Metric k="CE / PE sold" v={`${p().build_ce || 0} / ${p().build_pe || 0}`} />
-                  <Metric k="Sold straddle" v={`${fmt(p().build_straddle)} (${fmt(p().build_avg_ce)} + ${fmt(p().build_avg_pe)})`} />
+                  <Metric k="Sold straddle" v={`${fmt(p().build_straddle)} (${fmt(p().build_avg_ce)} + ${fmt(p().build_avg_pe)})${niftyEqText(cfg().symbol, p().build_straddle)}`} />
                   <Metric k="Target" v={`₹${fmt(cfg().target_straddle)}`} />
                   <Metric k="Strikes" v={(s().strikes || []).map((k) => fmt(k, 0)).join(', ') || '—'} />
                   <Metric k="Started" v={`${s().started_at || '—'}${s().resumed_at ? ` · resumed ${s().resumed_at}` : ''}`} />
