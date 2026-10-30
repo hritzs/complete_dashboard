@@ -494,6 +494,17 @@ RELAX = _env("GS_RELAX", "0") == "1"
 # delta strangles priced on the same fills, costs, SL / TP and event sizing as
 # the straddle. Production rows are unchanged.
 BASKET = _env("GS_BASKET", "0") == "1"
+# Research only (GS_DELTA=1): straddle plus a held directional futures tilt of
+# +/- each size in DELTA_SIZES (per straddle unit), for the production trade and
+# the fixed entries, with the day's direction signals (gap, first minute, previous day).
+DELTA = _env("GS_DELTA", "0") == "1"
+# Research only (GS_PROFILE=1): the table builder's training data -- for every
+# stage (09:16 / 09:17 / 09:18 / 09:19 / 09:20+), the FIRST minute each cell
+# occurs on the day, with the production simulator's net PnL of entering there
+# (event days at a third), the veto / floor flags and the minute. Lets the
+# Profiler tables be rebuilt from any span of days (walk-forward).
+PROFILE = _env("GS_PROFILE", "0") == "1"
+DELTA_SIZES = [float(x) for x in _env("GS_DELTA_SIZES", "0.10,0.20,0.30").split(",") if x.strip()]
 BASKET_DELTAS = [float(x) for x in _env("GS_BASKET_DELTAS", "0.15,0.20,0.25,0.30,0.35").split(",") if x.strip()]
 RELAX_VARIANTS = {"R1": [(1030, 1)], "R2": [(1100, 1)], "R3": [(1200, 1)],
                   "R4": [(1030, 2), (1200, 1)]}   # (from hhmm, min ON neighbours)
@@ -733,8 +744,10 @@ def strike_arrays(strike, grid, df):
             _exec(ce_ask).values, _exec(pe_ask).values)
 
 
-def simulate_cw(grid, entry_idx, strike_cache, dte_idx, abiv):
-    """One CW trade from grid row entry_idx. Returns dict or None."""
+def simulate_cw(grid, entry_idx, strike_cache, dte_idx, abiv, bias=0.0):
+    """One CW trade from grid row entry_idx. Returns dict or None.
+    bias (research, GS_DELTA): a futures position of bias x one straddle unit held
+    from entry to exit on top of the hedge (+ long, - short); SL / TP / exits see it."""
     sim_base = grid.iloc[entry_idx:].copy().reset_index(drop=True)
     if sim_base.empty:
         return None
@@ -798,6 +811,14 @@ def simulate_cw(grid, entry_idx, strike_cache, dte_idx, abiv):
     hn = hedge_notional_cum(tr, ub, ua)[row_pos]
     fut = futures_pnl(ft, tr, np.ascontiguousarray(grid['FutExecBid'].values[abs_idx], float),
                       np.ascontiguousarray(grid['FutExecAsk'].values[abs_idx], float), ub, ua)[row_pos]
+    if bias != 0.0:
+        # bought at the 3-s average ask / sold at the 3-s average bid, marked at bid / ask
+        if bias > 0:
+            e_px = float(grid['FutExecAsk'].values[entry_idx]); mark = ub[row_pos]
+        else:
+            e_px = float(grid['FutExecBid'].values[entry_idx]); mark = ua[row_pos]
+        fut = fut + bias * (mark - e_px)
+        hn = hn + abs(bias) * 2.0 * float(grid['Underlying'].iloc[entry_idx])
     tot = opt_pnl + fut
 
     U = sim['Underlying'].values.astype(float)
@@ -1398,12 +1419,57 @@ def process_day(file_path):
                                 f"{dtag}_dCE": pick["CE"][1], f"{dtag}_dPE": pick["PE"][1], f"{dtag}_Credit": sim["credit"],
                                 f"{dtag}_Exit": f"{sim['exit_reason']} {sim['exit_time']}"})
 
+        def record_profile():
+            seen, pts = set(), []
+            for row in rows:
+                k = (row["stage"], row["coord"])
+                if k in seen:
+                    continue
+                seen.add(k)
+                sim = sim_at(row)
+                if sim is None:
+                    continue
+                gross, hn, ecost, hcost = net_of(row, sim)
+                pts.append((row["stage"], row["th"], tuple(int(v) for v in row["coord"]), float(gross - ecost - hcost),
+                            EVENT_SIZE if is_event else 1.0, bool(row["veto"]), bool(comfort and row["floor"])))
+            res["Profile"] = pts
+
+        def record_delta():
+            # direction signals known at the entry
+            keys = sorted(k for k in inputs_all if k < key)
+            prev_move = inp["prev_future"] - inputs_all[keys[-1]]["prev_future"] if keys else float("nan")
+            u915 = float(grid['Underlying'].iloc[0])
+            res.update(Sig_Gap=og_pct, Sig_PrevDay=prev_move, Sig_U0915=u915)
+            todo = []
+            if res.get("Leg") == "CW" and res.get("Entry_Time"):
+                th = int(res["Entry_Time"].replace(":", ""))
+                prow = next((r for r in rows if r["th"] == th), None)
+                if prow is not None:
+                    todo.append(("PROD", prow))
+            for th in FIXED_ENTRIES:
+                if fixed_rows.get(th) is not None:
+                    todo.append((f"{th:04d}", fixed_rows[th]))
+            for tag, row in todo:
+                res[f"DU_{tag}"] = float(grid['Underlying'].iloc[row["ei"]])
+                for b in DELTA_SIZES:
+                    for sgn, nm in ((1.0, "L"), (-1.0, "S")):
+                        sim = simulate_cw(grid, row["ei"], cache, row["di"], row["abiv"], bias=sgn * b)
+                        if sim is None:
+                            continue
+                        gross, hn, ecost, hcost = net_of(row, sim)
+                        res[f"DT_{tag}_{nm}{int(round(b * 100)):02d}"] = gross - ecost - hcost
+                        res[f"DT_{tag}_{nm}{int(round(b * 100)):02d}_Exit"] = f"{sim['exit_reason']} {sim['exit_time'][:5]}"
+
         decide()
         record_fixed()
         if RELAX:
             record_relax()
         if BASKET:
             record_basket()
+        if DELTA:
+            record_delta()
+        if PROFILE:
+            record_profile()
         return res
     except Exception:
         res["Note"] = "exception: " + traceback.format_exc().strip().split("\n")[-1][:150]
