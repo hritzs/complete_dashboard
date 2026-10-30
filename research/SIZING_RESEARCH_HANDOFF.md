@@ -1191,3 +1191,17 @@ tables: net 919.1, 77 trades, 75.3 % win, MDD 138.1. The 28 / 29 Oct cells had n
 "rich straddle" lead from 28 Oct loses on the days it would add (train avg -12.56). Details:
 `output/basket_eval/REPORT.md`, `basket_eval.xlsx`.
 
+
+### 4.23 Opportunity-based delta study and drawdown control (2026-10-30)
+
+`minute_bars.py` (minute bars of the CW underlying and CW / NW options, all days) -> `delta_build.py` (15,716
+decision points, 11 times a day: inputs known at the minute, long / short outcomes in futures and bought options,
+intraday and to the next morning / close, at bid / ask with costs) -> `delta_rules.py` (input bin x direction x
+regime x outcome; regimes with fixed cut-offs: IV percentile, IV vs realised, 20-day trend, range compression,
+expiry week, IDV rising / falling; IDV level / change and Adj_IV_Chg as inputs). **No edge**: 160,608
+candidates, 1,452 passed TRAIN, 70 survived VALIDATION where luck alone gives ~97; on TEST 31 / 70 positive,
+mean t -0.24, none t >= 2. The straddle book is positive in every regime state in every period (no regime where
+its losses cluster). `dd_control.py`: 15 drawdown policies (pause after losses, equity-curve filter, halve after a
+loss, DD size schedules incl. the live 100/135/170 one) -- none beats flat size on VALIDATION; the live schedule
+gives less net and a deeper drawdown there (1,988.8 / 134.8 vs 2,106.4 / 126.4). Reports: output/delta_study,
+output/dd_control.
