@@ -155,3 +155,23 @@ func TestLUTBuild_SentBuildBlocksLaterYES(t *testing.T) {
 		t.Fatal("a later YES must not fire once the day's build was sent")
 	}
 }
+
+// A listed special session (Muhurat): an armed LUT YES records and sends nothing.
+func TestLUTBuild_SpecialSessionNeverSells(t *testing.T) {
+	s, rec, entry := lutBuildTestEngine(t)
+	today := time.Now().In(lutIST()).Format("2006-01-02")
+	withSpecialSessions(t, []SpecialSession{{Date: today, Name: "test session", PreOpen: "17:45", Open: "18:00", Close: "19:00"}})
+	if err := saveLUTBuildConfig(lutBuildDefaults(LUTBuildConfig{Armed: true, Lots: 1, ExitTime: "18:50"})); err != nil {
+		t.Fatal(err)
+	}
+	lutEng.mu.Lock()
+	s.lutFireBuildLocked(today, rec, entry)
+	b := lutEng.build
+	lutEng.mu.Unlock()
+	if b != nil {
+		t.Fatalf("special session: must not record or fire a build, got %+v", b)
+	}
+	if !loadLUTBuildConfig().Armed {
+		t.Fatal("special session must leave the build armed for the next normal day")
+	}
+}

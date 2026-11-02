@@ -164,6 +164,9 @@ func (s *Service) lutBuildChecks(c LUTBuildConfig, now time.Time) []string {
 	if !c.Armed {
 		out = append(out, "not armed")
 	}
+	if _, _, _, special := specialSessionOn(now); special {
+		out = append(out, "special session: the LUT does not sell today")
+	}
 	if strings.TrimSpace(c.BrokerName) == "" || strings.TrimSpace(c.AccountID) == "" {
 		out = append(out, "broker / account not set")
 	}
@@ -197,8 +200,9 @@ func (s *Service) lutFireBuildLocked(day string, rec LUTEvaluation, entry *LUTEn
 		return
 	}
 	now := time.Now().In(lutIST())
-	if at, err := ParseClockTodayIST(c.ExitTime, now); err == nil && !sessionExitCap(at).Equal(at) {
-		c.ExitTime = sessionExitCap(at).Format("15:04:05") // a special session (Muhurat): before its close
+	if _, _, _, special := specialSessionOn(now); special { // owner, 2026-11-02: the LUT never sells in a Muhurat session
+		log.Printf("[LUT-BUILD] %s YES at %s NOT sold: special session, no LUT selling (stays armed for the next normal day)", day, rec.Time)
+		return
 	}
 	if e.isEvent && e.sc != nil && e.sc.UseEvents { // event day: one third of the size (backtest EVENT_SIZE), at least one lot
 		c.Lots = max(1, int(float64(c.Lots)*lutEventSize))

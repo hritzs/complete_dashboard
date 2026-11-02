@@ -1,8 +1,9 @@
 package trading
 
-// Special session (Diwali Muhurat): the LUT sells exactly as on a normal day
-// -- only the session's open and close differ (special_session.go). Nothing
-// here runs on a date that is not listed.
+// Special session (Diwali Muhurat): the LUT checks each minute and keeps its paper
+// entry, but never sells (owner, 2026-11-02; lutFireBuildLocked). Manual orders still
+// work. The session's open and close come from special_session.go. Nothing here runs
+// on a date that is not listed.
 //
 //   - Each session minute the LUT engine's minute record (GreekSoft closes,
 //     lut_sim.go) is evaluated on the session clock: the first minute after
@@ -11,11 +12,9 @@ package trading
 //     minute's future against the previous trading day's. DTE is the normal
 //     calendar DTE plus only the session's remaining trading minutes
 //     (lutRawDTE); the listed date counts as a trading day.
-//   - A YES there IS the day's LUT YES: the paper entry and, when armed on
-//     the LUT tab, the normal LUT build (lutFireBuildLocked: sim-driven,
-//     once per day, self-disarming), on the real minute. Every timed exit
-//     that day is capped muhuratExitBefore ahead of the close
-//     (sessionExitCap).
+//   - A YES there IS the day's LUT YES for the paper entry only; no real build
+//     fires, armed or not. Every timed exit that day (manual trades) is capped
+//     muhuratExitBefore ahead of the close (sessionExitCap).
 //   - The Muhurat tab lists the session and shows the clock, DTE, greeks and
 //     each session minute's check (<day>_muhurat.json).
 

@@ -3,8 +3,8 @@ import { postJSON } from './api.js';
 import { box, muted } from './styles.js';
 
 // MUHURAT -- a special trading session (NSE Diwali Muhurat, 2026: Sun 8 Nov,
-// timings per the NSE circular). It sells exactly as a normal day -- the LUT
-// tab's arming, build and monitoring -- only the open and close differ: the
+// timings per the NSE circular). The LUT does NOT sell here (paper entry and
+// minute checks only; manual orders still work). The open and close differ: the
 // LUT runs on the session clock (first minute after the open = the 09:16
 // table), time to expiry counts only the session's trading minutes and every
 // timed exit is 3 min before the close. Only a listed date changes anything.
@@ -128,10 +128,10 @@ export default function MuhuratTab() {
       <div style={box}>
         <div style={{ display: 'flex', 'align-items': 'center', gap: '12px', 'flex-wrap': 'wrap' }}>
           <strong>Selling</strong>
-          <span style={{ padding: '1px 8px', 'border-radius': '8px', background: st()?.lut_armed ? '#b23b3b' : '#455a64', 'font-size': '12px' }}>
-            LUT tab build {st()?.lut_armed ? 'ARMED' : 'not armed'}
+          <span style={{ padding: '1px 8px', 'border-radius': '8px', background: '#455a64', 'font-size': '12px' }}>
+            LUT selling OFF in Muhurat
           </span>
-          <span style={muted}>as on a normal day: arm, size, SL / TP and wings are set on the LUT tab; the session's first YES is the day's LUT YES (paper entry + the real build when armed), driven by its simulation and the standard monitor</span>
+          <span style={muted}>the LUT never sells in this session, even if armed on the LUT tab: minute checks and the paper entry only. It stays armed for the next normal day. Manual orders still work.</span>
         </div>
         <Show when={st()?.build}>
           <div style={{ 'margin-top': '8px', 'font-size': '13px' }}>
