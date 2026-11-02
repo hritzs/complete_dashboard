@@ -155,10 +155,7 @@ func (h *Handlers) ManualOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	side := strings.ToUpper(strings.TrimSpace(req.Side))
 	orderType := strings.ToUpper(strings.TrimSpace(req.OrderType))
-	exchangeSegment := strings.ToUpper(strings.TrimSpace(req.ExchangeSegment))
-	if exchangeSegment == "" {
-		exchangeSegment = ResolveExchangeSegment(req.Symbol, "")
-	}
+	exchangeSegment := ResolveExchangeSegment(req.Symbol, req.ExchangeSegment)
 	productType := strings.ToUpper(strings.TrimSpace(req.ProductType))
 	if productType == "" {
 		productType = "NRML"

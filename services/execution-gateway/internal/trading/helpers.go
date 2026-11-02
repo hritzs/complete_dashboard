@@ -39,17 +39,17 @@ func SymbolCode(symbol string) string {
 }
 
 func ResolveExchangeSegment(symbol, requested string) string {
-	req := strings.ToUpper(strings.TrimSpace(requested))
-	if req != "" {
-		return req
-	}
-
+	// The symbol decides for BSE index options: the UI's execution prefs default
+	// exchange_segment to NSEFO for every symbol, and GreekSoft rejects a BSE token
+	// sent with exchange NSE ("Contract not found Invalid Data").
 	switch NormalizeSymbol(symbol) {
 	case "SENSEX", "BANKEX":
 		return "BSEFO"
-	default:
-		return "NSEFO"
 	}
+	if req := strings.ToUpper(strings.TrimSpace(requested)); req != "" {
+		return req
+	}
+	return "NSEFO"
 }
 
 func BuildTradeUID(userID, brokerName, accountID, symbol, expiry string, strike float64, ts time.Time) string {

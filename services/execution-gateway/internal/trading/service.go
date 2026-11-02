@@ -526,8 +526,8 @@ func (s *Service) DeployStraddle(ctx context.Context, req DeployStraddleRequest)
 
 	// Initialize trade legs in trade_legs for proper PnL tracking
 	if pgStore, ok := s.Store.(*PostgresBackedStore); ok {
-		ceContractID, errCE := pgStore.ResolveContractIDByToken(ceToken, "NSEFO")
-		peContractID, errPE := pgStore.ResolveContractIDByToken(peToken, "NSEFO")
+		ceContractID, errCE := pgStore.ResolveContractIDByToken(ceToken, exchangeSegment)
+		peContractID, errPE := pgStore.ResolveContractIDByToken(peToken, exchangeSegment)
 
 		if errCE == nil && errPE == nil {
 			if err := pgStore.InitStraddleLegs(

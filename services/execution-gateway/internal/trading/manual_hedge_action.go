@@ -81,18 +81,7 @@ func manualHedgeTestProduct(product string) string {
 }
 
 func manualHedgeTestExchangeSegment(segment string, symbol string) string {
-	segment = strings.ToUpper(strings.TrimSpace(segment))
-	if segment != "" {
-		return segment
-	}
-
-	symbol = strings.ToUpper(strings.TrimSpace(symbol))
-	switch symbol {
-	case "SENSEX", "BANKEX":
-		return "BSEFO"
-	default:
-		return "NSEFO"
-	}
+	return ResolveExchangeSegment(symbol, segment)
 }
 
 func (s *Service) ManualHedgeTest(ctx context.Context, req ManualHedgeTestRequest) (*ManualHedgeTestResponse, error) {
