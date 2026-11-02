@@ -48,6 +48,9 @@ func MapOrderIntent(intent trading.OrderIntent) *broker.OrderIntent {
 	}
 }
 
+// bseFOGTokenBase: GreekSoft token of a BSE F&O contract = this + its exchange token.
+const bseFOGTokenBase = 202000000
+
 func resolveGreeksoftGToken(exchangeSegment string, token int64) int64 {
 	if token <= 0 {
 		return token
@@ -151,6 +154,14 @@ func loadGreeksoftTokenCSV(path string) {
 
 		fullToken, err1 := parseInt64Cell(row[0])
 		shortToken, err2 := parseInt64Cell(row[7])
+
+		// BSE rows carry the exchange token in the first column and "IO" in the
+		// eighth, with no GreekSoft token: it is bseFOGTokenBase + the exchange
+		// token (BSEGetsToken.xlsx: 203151294 <-> 1151294), as NSE F&O is 102000000 +.
+		if err1 == nil && err2 != nil && strings.EqualFold(strings.Trim(strings.TrimSpace(row[1]), "\""), "BSE") && fullToken > 0 && fullToken < bseFOGTokenBase {
+			shortToken, fullToken = fullToken, bseFOGTokenBase+fullToken
+			err2 = nil
+		}
 
 		if err1 != nil || err2 != nil {
 			continue

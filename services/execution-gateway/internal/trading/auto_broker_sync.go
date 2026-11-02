@@ -226,6 +226,9 @@ func (s *Service) checkBrokerPositions() {
 		tok := p.ExchToken
 		if tok == 0 {
 			tok = p.Token % 1000000 // 102040710 -> 40710 (fallback)
+			if p.Token >= 202000000 && p.Token < 302000000 {
+				tok = p.Token - 202000000 // BSE: 203134374 -> 1134374, seven digits
+			}
 		}
 		broker[tok] += p.NetQty // a contract can appear once per product type
 		names[tok] = p.Symbol
