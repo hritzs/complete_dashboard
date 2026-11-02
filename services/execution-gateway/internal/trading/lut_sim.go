@@ -537,7 +537,8 @@ func (s *Service) lutComputeLocked(now time.Time, day string, hhmm int, chain *O
 					own[t] = true
 				}
 			}
-			if gsClosesOn() && e.gsKick != b.Unix() {
+			useFeed := useFeedClose(cc, b, toks) // feed main, GreekSoft backup (minute_close_source.go)
+			if gsClosesOn() && !useFeed && e.gsKick != b.Unix() {
 				e.gsKick = b.Unix()
 				for t := range toks {
 					go s.gsCloseAt(t, b)
@@ -548,6 +549,12 @@ func (s *Service) lutComputeLocked(now time.Time, day string, hhmm int, chain *O
 			}
 			ownReady := len(own) == 0 || gsHaveAll(own, b) || now.Sub(b) >= gsOwnGrace
 			switch {
+			case useFeed:
+				for t := range own {
+					toks[t] = true
+				}
+				feedRegreek(cc, b, toks)
+				closed = cc
 			case !gsClosesOn():
 				closed = cc // GreekSoft closes switched off: feed closes, no wait
 			case gsHaveAll(toks, b) && ownReady:

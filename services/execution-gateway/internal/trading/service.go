@@ -1324,7 +1324,12 @@ func (s *Service) minuteCloseChain(ctx context.Context, tradeUID string, trade S
 	// strike: those are waited for; the other held legs only gsLegGrace more.
 	core := atmTokens(closed)
 	core[trade.CEToken], core[trade.PEToken] = trade.CEToken > 0, trade.PEToken > 0
-	nGS, feedPx := s.gsApplyClosesCore(closed, boundary, toks, core)
+	nGS, feedPx := 0, map[int64]float64{}
+	if useFeedClose(closed, boundary, core) { // feed main, GreekSoft backup (minute_close_source.go)
+		feedRegreek(closed, boundary, toks)
+	} else {
+		nGS, feedPx = s.gsApplyClosesCore(closed, boundary, toks, core)
+	}
 	mc := minuteCloseOf(closed, chain, boundary)
 	mc.Source = "feed"
 	if nGS > 0 {

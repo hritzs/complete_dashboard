@@ -142,7 +142,7 @@ const gsOverlayHold = 45 * time.Second
 // minute only once its data is final (the UI comes after the backend work),
 // so they skip it until then.
 func gsOverlayPending(day, t string, ov gsOverlay) bool {
-	if !gsClosesOn() {
+	if !gsClosesOn() || !gsPrimary() {
 		return false
 	}
 	b, err := time.ParseInLocation("2006-01-02 15:04", day+" "+t, lutIST())
@@ -162,6 +162,9 @@ func gsOverlayPending(day, t string, ov gsOverlay) bool {
 func (s *Service) gsOverlayNow() {
 	p := s.gsCloseProvider()
 	now := time.Now().In(lutIST())
+	if !gsPrimary() { // feed first: stored minutes stay on the closes they were decided on
+		return
+	}
 	if p == nil || !sbLiveWindow(now) || !gsOverlayBusy.CompareAndSwap(false, true) {
 		return
 	}

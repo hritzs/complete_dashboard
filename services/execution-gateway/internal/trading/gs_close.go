@@ -228,8 +228,8 @@ func (s *Service) gsCaptureLoop() {
 	for {
 		b := time.Now().Truncate(time.Minute).Add(time.Minute)
 		time.Sleep(time.Until(b.Add(gsCaptureStart)))
-		if s.gsCloseProvider() == nil || !sbLiveWindow(b.Add(-time.Minute).In(lutIST())) {
-			continue
+		if !gsPrimary() || s.gsCloseProvider() == nil || !sbLiveWindow(b.Add(-time.Minute).In(lutIST())) {
+			continue // feed first: GreekSoft is asked only when a minute needs the backup
 		}
 		toks, atmCE, atmPE := s.gsTokens(gsCaptureBand())
 		lead, first := gsFirstGet()
