@@ -646,7 +646,11 @@ func (s *Service) simPostCheck(tr StoredTrade, label string, h PaperSimHedge) {
 		return
 	}
 	units := float64(int64(tr.Lots) * int64(tr.LotSize))
-	want, diff, match := simPostCheckCompare(snap.NetDelta, snap.NetGamma, snap.Underlying, h.DeltaAfter, h.Future, units, float64(tr.LotSize))
+	// The simulation runs one lot (simDriveConfigOf): its delta is per lot, the
+	// comparison per straddle unit (2026-11-04 09:27: -1.73 per lot read as per
+	// unit asked to sell 109 lots on a 0.5-lot gap).
+	perUnit := h.DeltaAfter / math.Max(1, float64(tr.LotSize))
+	want, diff, match := simPostCheckCompare(snap.NetDelta, snap.NetGamma, snap.Underlying, perUnit, h.Future, units, float64(tr.LotSize))
 	if units <= 0 {
 		return
 	}

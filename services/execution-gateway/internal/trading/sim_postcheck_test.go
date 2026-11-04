@@ -2,6 +2,7 @@ package trading
 
 import (
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -18,5 +19,26 @@ func TestSimPostCheckCompare(t *testing.T) {
 	// A 23-lot shortfall (1,495) must be flagged.
 	if _, _, ok := simPostCheckCompare(-2000, -96, 22718.55, -0.039, 22718.55, 12480, 65); ok {
 		t.Fatal("a 23-lot hedge shortfall must be a mismatch")
+	}
+}
+
+// 4 Nov 09:27: the simulation's one-lot book after its hedge, 64 lots live.
+func TestSimPostCheck_SimDeltaIsPerLot(t *testing.T) {
+	check := func(liveDelta float64) string {
+		store := NewMemoryStore()
+		tr := newTestSquareOffTrade("TRD_POSTCHECK")
+		tr.Lots, tr.LotSize = 64, 65
+		store.SaveTrade(tr)
+		store.SaveSnapshot(TradeSnapshot{TradeUID: tr.TradeUID, NetDelta: liveDelta, NetGamma: -6.58, Underlying: 23895.75})
+		s := &Service{Store: store}
+		return captureLog(t, func() {
+			s.simPostCheck(tr, "RISK_BREACH 09:27", PaperSimHedge{DeltaAfter: -1.7311, Future: 23893.8})
+		})
+	}
+	if out := check(-156); !strings.Contains(out, " MATCH") || strings.Contains(out, "SIM_MISMATCH") {
+		t.Fatalf("a 0.5-lot gap must match:\n%s", out)
+	}
+	if out := check(-900); !strings.Contains(out, "SIM_MISMATCH") || !strings.Contains(out, "buy 12 synthetic lot(s)") {
+		t.Fatalf("a real 12-lot gap must still alert:\n%s", out)
 	}
 }
