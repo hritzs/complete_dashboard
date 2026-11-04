@@ -191,7 +191,9 @@ function SBRow(props) {
                   <Metric k="TP (bps of spot)" v={cfg().tp_bps ? `${cfg().tp_bps} bps (₹${fmt((Number(s().spot) || 0) * cfg().tp_bps / 10000)}/straddle)` : 'off'} />
                   <Metric k="Exit Time" v={cfg().exit_time || 'not set'} />
                   <Metric k="Hedge" v={(s().risk?.HEDGE || '—').split(':')[0]} />
-                  <Metric k="H-Div / S-Div" v={`${cfg().hedge_div || '—'} / ${cfg().straddle_div || '—'}`} />
+                  <Metric k="IV ÷ / Straddle ÷" v={`${cfg().hedge_div || '—'} / ${cfg().straddle_div || '—'}`} />
+                  <Metric k="Leave % of allowed" v={cfg().hedge_leave_pct > 0 ? `${cfg().hedge_leave_pct}%` : 'standard'} />
+                  <Metric k="Hedging rule" v={`Build: min(straddle / ${cfg().straddle_div || '—'}, IV / ${cfg().hedge_div || '—'}), minute end leave ${cfg().hedge_leave_pct || '—'}% of allowed`} />
                   <Metric k="Minimum Hedge" v={cfg().hedge_min_bps ? `${cfg().hedge_min_bps} bps` : 'default'} />
                 </section>
 

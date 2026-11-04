@@ -313,7 +313,7 @@ function App() {
     square_off_hard_time: "",
     straddle_div: "4",
     hedge_div: "57",
-    hedge_pct: "",
+    hedge_leave_pct: "",
     hedge_threshold_delta: "",
     hedge_min_threshold_bps: "8"
   });
@@ -1519,7 +1519,7 @@ function App() {
 
         hedge_div: cfg.hedge_div ?? cfg.hedgeDiv ?? "57",
 
-        hedge_pct: cfg.hedge_pct ?? "",
+        hedge_leave_pct: cfg.hedge_leave_pct ?? "",
 
         hedge_threshold_delta: cfg.hedge_threshold_delta ?? cfg.hedgeThresholdDelta ?? String(item.lotSize || ""),
 
@@ -1578,7 +1578,7 @@ function App() {
 
         "hedge_div",
 
-        "hedge_pct",
+        "hedge_leave_pct",
 
         "hedge_threshold_delta",
 
@@ -2584,7 +2584,7 @@ function App() {
                 </label>
 
                 <label style={formLabel}>
-                  Hedge Divisor
+                  IV Divisor
                   <input
                     type="text" inputmode="decimal"
                     min="0.01"
@@ -2596,12 +2596,12 @@ function App() {
                 </label>
 
                 <label style={formLabel}>
-                  Minute-end Hedge %
+                  Leave % of allowed
                   <input
                     type="text" inputmode="decimal"
                     placeholder="standard"
-                    value={modifyTradeForm().hedge_pct}
-                    onInput={(event) => setModifyTradeForm((form) => ({ ...form, hedge_pct: event.currentTarget.value }))}
+                    value={modifyTradeForm().hedge_leave_pct}
+                    onInput={(event) => setModifyTradeForm((form) => ({ ...form, hedge_leave_pct: event.currentTarget.value }))}
                     style={formInput}
                   />
                 </label>
@@ -3239,14 +3239,15 @@ function App() {
                                         </div>
 
                                         <div class="monitor-row">
-                                          <span>H-Div / S-Div</span>
+                                          <span>IV ÷ / Straddle ÷</span>
                                           <strong>
                                             {item.config?.hedge_div ?? item.config?.hedgeDiv ?? 57}
                                             {" / "}
                                             {item.config?.straddle_div ?? item.config?.straddleDiv ?? 4}
                                           </strong>
                                         </div>
-                                        {item.config?.hedge_pct > 0 ? <div class="monitor-row"><span>Minute-end hedge</span><strong>{item.config.hedge_pct}%</strong></div> : null}
+                                        <div class="monitor-row"><span>Leave % of allowed</span><strong>{item.config?.hedge_leave_pct > 0 ? `${item.config.hedge_leave_pct}%` : "standard"}</strong></div>
+                                        <div class="monitor-row"><span>Hedging rule</span><strong>{live().hedge_rule || "—"}</strong></div>
 
                                         <div class="monitor-row">
                                           <span>Delta Threshold</span>
@@ -3440,7 +3441,7 @@ function App() {
                                             const d = new Date(item.config?.square_off_hard_time || "");
                                             return Number.isNaN(d.getTime()) || d.getUTCFullYear() < 2000 ? "not set" : d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
                                           })()}</strong></div>
-                                          <div class="monitor-row"><span>Straddle div / Hedge div</span><strong>{item.config?.straddle_div || 4} / {item.config?.hedge_div || 57}</strong></div>
+                                          <div class="monitor-row"><span>Straddle ÷ / IV ÷ / Leave %</span><strong>{item.config?.straddle_div || 4} / {item.config?.hedge_div || 57} / {item.config?.hedge_leave_pct > 0 ? `${item.config.hedge_leave_pct}%` : "standard"}</strong></div>
                                           <div class="monitor-row"><span>Hedge min (bps of spot)</span><strong>{item.config?.hedge_min_threshold_bps ?? "8 (default)"}</strong></div>
                                           <div class="monitor-row"><span>Wings</span><strong>{Number(item.config?.wing_pct) > 0 ? `${item.config.wing_pct}%${item.config?.wings_stopped ? " (automatic STOPPED)" : ""}` : "off"}</strong></div>
                                           <div class="monitor-row"><span>Buy / sell buffer</span><strong>{item.config?.buy_buffer ?? "—"} / {item.config?.sell_buffer ?? "—"}</strong></div>

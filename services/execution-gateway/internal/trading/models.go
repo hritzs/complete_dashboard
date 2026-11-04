@@ -266,7 +266,7 @@ type MonitorConfig struct {
 	PollIntervalSec          int       `json:"poll_interval_sec"`
 	StraddleDiv              float64   `json:"straddle_div"`
 	HedgeDiv                 float64   `json:"hedge_div"`
-	HedgePct                 float64   `json:"hedge_pct,omitempty"` // Straddle Build: share of the net delta hedged at minute end; 0 = the driving rule
+	HedgeLeavePct            float64   `json:"hedge_leave_pct,omitempty"` // Straddle Build, minute end: hedge until points out = this % of allowed; 0 = the driving rule
 	RollTimeThreshold        float64   `json:"roll_time_threshold"`
 	SquareOffTime            time.Time `json:"square_off_time,omitempty"`
 	ForceOneLotHedgeTest     bool      `json:"force_one_lot_hedge_test,omitempty"`
@@ -460,7 +460,9 @@ type TradeSnapshot struct {
 	// against the live chain.
 	PointsAllowedStraddle float64 `json:"points_allowed_straddle"` // straddle / straddle_div
 	PointsAllowedIV       float64 `json:"points_allowed_iv"`       // spot * IV / hedge_div
-	AllowedStrike         float64 `json:"allowed_strike"`
+	// HedgeRule: the hedging rule this trade is on, for its details.
+	HedgeRule     string  `json:"hedge_rule,omitempty"`
+	AllowedStrike float64 `json:"allowed_strike"`
 
 	// BuildOrdersSubmitted/BuildOrdersTotal drive a live "Building X/Y
 	// orders placed" progress indicator on the UI trade card while

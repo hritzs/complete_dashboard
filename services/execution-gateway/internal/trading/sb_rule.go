@@ -102,7 +102,7 @@ func sbRuleChanges(a, b SBConfig) []string {
 	add("exit time", a.ExitTime, b.ExitTime)
 	add("straddle div", g(a.StraddleDiv), g(b.StraddleDiv))
 	add("hedge div", g(a.HedgeDiv), g(b.HedgeDiv))
-	add("hedge %", g(a.HedgePct), g(b.HedgePct))
+	add("leave % of allowed", g(a.HedgeLeavePct), g(b.HedgeLeavePct))
 	add("hedge min bps", g(a.HedgeMinBps), g(b.HedgeMinBps))
 	add("wings %", g(a.WingPct), g(b.WingPct))
 	return out
