@@ -79,7 +79,9 @@ type simDriver struct {
 	LastRun   time.Time        `json:"last_run"`
 	SimState  string           `json:"sim_status"`
 	SimPnL    float64          `json:"sim_pnl_per_qty"`
-	RunMs     int64            `json:"run_ms"` // last simulation pass
+	RunMs     int64            `json:"run_ms"`     // last simulation pass
+	SimDelta  float64          `json:"sim_delta"`  // the simulation\'s latest net delta, per its one lot
+	SimFuture float64          `json:"sim_future"` // the future it stands at
 	Error     string           `json:"error,omitempty"`
 	Actions   []SimDriveAction `json:"actions"`
 	seen      map[string]bool
@@ -277,6 +279,9 @@ func (s *Service) simDriveTick() {
 	d.LastRun, d.SimState, d.SimPnL, d.Error = time.Now(), res.Status, res.PnLPerStraddle, res.Error
 	d.deltaBand = res.DeltaBand
 	d.RunMs = time.Since(t0).Milliseconds()
+	if n := len(res.Series); n > 0 {
+		d.SimDelta, d.SimFuture = res.Series[n-1].NetDelta, res.Series[n-1].Future
+	}
 	if res.Error != "" {
 		simDrive.mu.Unlock()
 		return

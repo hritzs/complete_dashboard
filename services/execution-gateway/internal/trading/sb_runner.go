@@ -53,6 +53,8 @@ type SBConfig struct {
 	StraddleDiv    float64 `json:"straddle_div"`     // default 3
 	HedgeDiv       float64 `json:"hedge_div"`        // default 38
 	HedgeLeavePct  float64 `json:"hedge_leave_pct"`  // minute end: hedge until points out = this % of allowed, default 50
+	IntraMult      float64 `json:"intra_mult"`       // after the hand-off: intra-minute line, x allowed, default 1.2
+	IntraLeavePct  float64 `json:"intra_leave_pct"`  // after the hand-off: that hedge stops at this % of allowed; 0 = the complete delta
 	HedgeMinBps    float64 `json:"hedge_min_bps"`    // default 8
 	MaxDepthAgeMs  int64   `json:"max_depth_age_ms"` // default 1500
 	// WingPct: margin wings % OTM (0 = none), LIVE runs only. Fixed when a
@@ -325,6 +327,9 @@ func sbDefaults(c SBConfig) SBConfig {
 	}
 	if c.HedgeLeavePct > 100 {
 		c.HedgeLeavePct = 100
+	}
+	if c.IntraMult <= 0 {
+		c.IntraMult = hedgeIntraMult
 	}
 	if c.StraddleDiv <= 0 {
 		c.StraddleDiv = 3

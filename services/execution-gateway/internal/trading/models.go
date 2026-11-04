@@ -267,6 +267,8 @@ type MonitorConfig struct {
 	StraddleDiv              float64   `json:"straddle_div"`
 	HedgeDiv                 float64   `json:"hedge_div"`
 	HedgeLeavePct            float64   `json:"hedge_leave_pct,omitempty"` // Straddle Build, minute end: hedge until points out = this % of allowed; 0 = the driving rule
+	IntraMult                float64   `json:"intra_mult,omitempty"`      // intra-minute line, x allowed; 0 = the standard 1.2
+	IntraLeavePct            float64   `json:"intra_leave_pct,omitempty"` // intra-minute hedge stops at this % of allowed; 0 = the complete delta
 	RollTimeThreshold        float64   `json:"roll_time_threshold"`
 	SquareOffTime            time.Time `json:"square_off_time,omitempty"`
 	ForceOneLotHedgeTest     bool      `json:"force_one_lot_hedge_test,omitempty"`
@@ -461,7 +463,11 @@ type TradeSnapshot struct {
 	PointsAllowedStraddle float64 `json:"points_allowed_straddle"` // straddle / straddle_div
 	PointsAllowedIV       float64 `json:"points_allowed_iv"`       // spot * IV / hedge_div
 	// HedgeRule: the hedging rule this trade is on, for its details.
-	HedgeRule     string  `json:"hedge_rule,omitempty"`
+	HedgeRule string `json:"hedge_rule,omitempty"`
+	// SimDelta / SimGapLots: a sim-driven trade\'s simulation delta at the live
+	// future and the live trade\'s gap to it in lots.
+	SimDelta      float64 `json:"sim_delta,omitempty"`
+	SimGapLots    float64 `json:"sim_gap_lots,omitempty"`
 	AllowedStrike float64 `json:"allowed_strike"`
 
 	// BuildOrdersSubmitted/BuildOrdersTotal drive a live "Building X/Y

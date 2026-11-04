@@ -28,7 +28,7 @@ const S = {
 const phaseColor = { BUILDING: '#1e6fd0', PAUSED: '#f9a825', HANDED_OFF: '#00897b', COMPLETE: '#2e7d32', EXITING: '#ef6c00', EXITED: '#7b1fa2', HALTED: '#c62828', STOPPED: '#5d4037', IDLE: '#455a64' };
 const kindColor = { PLAN: '#64b5f6', TRANCHE: '#81c784', HEDGE: '#ffb74d', RISK: '#90a4ae', EXIT: '#e57373', RULE: '#ba68c8', ATM: '#4dd0e1', RESUME: '#fff176', FILL: '#a5d6a7', COMPLETE: '#4db6ac', HANDOFF: '#80cbc4', ORDER: '#ef9a9a', LIVE: '#ff8a65', HALT: '#ff5252', INFO: '#b0bec5' };
 const SYMBOLS = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'];
-const FIELDS = ['name', 'symbol', 'expiry', 'target_straddle', 'straddles', 'sl_bps', 'tp_bps', 'exit_time', 'straddle_div', 'hedge_div', 'hedge_leave_pct', 'hedge_min_bps', 'tranche_gap_ms', 'participation', 'wing_pct'];
+const FIELDS = ['name', 'symbol', 'expiry', 'target_straddle', 'straddles', 'sl_bps', 'tp_bps', 'exit_time', 'straddle_div', 'hedge_div', 'hedge_leave_pct', 'intra_mult', 'intra_leave_pct', 'hedge_min_bps', 'tranche_gap_ms', 'participation', 'wing_pct'];
 const TEXT_FIELDS = ['name', 'symbol', 'expiry', 'exit_time'];
 const isRunning = (s) => ['BUILDING', 'PAUSED', 'COMPLETE', 'EXITING', 'HALTED'].includes(s?.phase);
 const isLive = (s) => s?.mode === 'LIVE';
@@ -421,6 +421,8 @@ export default function StraddleBuildTab() {
                 <In label="Straddle ÷" k="straddle_div" />
                 <In label="IV ÷" k="hedge_div" />
                 <In label="Leave % of allowed" title="Hedge at minute end until points out is this % of points allowed, 1 to 100" k="hedge_leave_pct" />
+                <In label="Intra-minute trigger × allowed" title="After the hand-off: points out past this × allowed hedges within the minute. At least 1" k="intra_mult" />
+                <In label="Intra-minute leave % of allowed" title="After the hand-off: that hedge stops at this % of allowed. 0 = full delta" k="intra_leave_pct" />
                 <In label="Min bps" title="Floor on points allowed, in bps of spot" k="hedge_min_bps" />
                 <In label="Wings % OTM" title="0 = none. LIVE only, fixed when the run starts: bought after each confirmed sell, sold on buy-backs, closed at exit. Margin only: not in PnL, delta or hedges" k="wing_pct" ph="0" />
               </Group>

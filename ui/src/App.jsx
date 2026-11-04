@@ -314,6 +314,8 @@ function App() {
     straddle_div: "4",
     hedge_div: "57",
     hedge_leave_pct: "",
+    intra_mult: "",
+    intra_leave_pct: "",
     hedge_threshold_delta: "",
     hedge_min_threshold_bps: "8"
   });
@@ -1106,6 +1108,9 @@ function App() {
             ceQty: 0,
             peQty: 0,
             // For a closed trade the "LTP" columns show the average exit price.
+            soldCE: t.sold_ce_avg ?? 0,
+            soldPE: t.sold_pe_avg ?? 0,
+            soldStraddle: t.sold_straddle ?? 0,
             ceEntry: t.ce?.sold_avg ?? 0,
             ceLtp: t.ce?.bought_avg ?? 0,
             peEntry: t.pe?.sold_avg ?? 0,
@@ -1161,6 +1166,9 @@ function App() {
           peToken: tr.pe_token,
           ceQty: tr.ce_quantity || tr.ceQty,
           peQty: tr.pe_quantity || tr.peQty,
+          soldCE: summaryByUid[tr.trade_uid]?.sold_ce_avg ?? 0,
+          soldPE: summaryByUid[tr.trade_uid]?.sold_pe_avg ?? 0,
+          soldStraddle: summaryByUid[tr.trade_uid]?.sold_straddle ?? 0,
           ceEntry: tr.ce_entry_price ?? 0,
           ceLtp: tr.ce_ltp ?? 0,
           peEntry: tr.pe_entry_price ?? 0,
@@ -1391,6 +1399,34 @@ function App() {
       await refreshPortfolio();
     };
 
+    // Closes the gap between a sim-driven trade's live delta and its simulation.
+    // The server sizes it and re-checks it when confirmed.
+    const handleMatchSimDelta = async (item) => {
+      const tradeUid = item.tradeUid || item.id;
+      if (!tradeUid) return;
+      const n = (v, d = 1) => Number(v || 0).toFixed(d);
+      const url = `/api/trade/${encodeURIComponent(tradeUid)}/match-sim`;
+      try {
+        const m = (await safeFetchJson(url)).match || {};
+        const gap = `Live delta ${n(m.live_delta)} | Sim delta ${n(m.sim_delta)} | Gap ${n(m.gap)} (${n(m.gap_lots, 2)} lots)`;
+        if (!(Number(m.lots) > 0)) {
+          alert(`Live already matches the sim to the nearest lot.\n${gap}`);
+          return;
+        }
+        if (!confirm(`Match sim delta: ${tradeUid}\n\n${gap}\n\nREAL ORDER: ${m.ce_side} CE ${m.qty} / ${m.pe_side} PE ${m.qty} (${m.lots} lots) at ATM ${n(m.strike, 0)}\nAfter: delta about ${n(m.delta_after)}, points out about ${n(m.points_out_after)} / ${n(m.points_allowed)}\n\nSend it?`)) return;
+        const done = await safeFetchJson(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ lots: m.lots, ce_side: m.ce_side, confirm: "MATCH" })
+        });
+        appendEventLog("success", `Match sim delta ${tradeUid}: ${done.message}`);
+        alert(done.message);
+      } catch (err) {
+        appendEventLog("error", `Match sim delta ${tradeUid}: ${err.message}`);
+        alert(`Match sim delta: ${err.message}`);
+      }
+    };
+
     const handlePortfolioHedge = async (item) => {
       if (isTradeClosed(item)) {
         appendEventLog("warn", `Hedge ignored for closed trade ${item.tradeUid || item.id}`);
@@ -1521,6 +1557,10 @@ function App() {
 
         hedge_leave_pct: cfg.hedge_leave_pct ?? "",
 
+        intra_mult: cfg.intra_mult ?? "",
+
+        intra_leave_pct: cfg.intra_leave_pct ?? "",
+
         hedge_threshold_delta: cfg.hedge_threshold_delta ?? cfg.hedgeThresholdDelta ?? String(item.lotSize || ""),
 
         hedge_min_threshold_bps: cfg.hedge_min_threshold_bps ?? "8",
@@ -1579,6 +1619,10 @@ function App() {
         "hedge_div",
 
         "hedge_leave_pct",
+
+        "intra_mult",
+
+        "intra_leave_pct",
 
         "hedge_threshold_delta",
 
@@ -2606,6 +2650,28 @@ function App() {
                   />
                 </label>
 
+                <label style={formLabel}>
+                  Intra-minute trigger (× allowed)
+                  <input
+                    type="text" inputmode="decimal"
+                    placeholder="1.2"
+                    value={modifyTradeForm().intra_mult}
+                    onInput={(event) => setModifyTradeForm((form) => ({ ...form, intra_mult: event.currentTarget.value }))}
+                    style={formInput}
+                  />
+                </label>
+
+                <label style={formLabel}>
+                  Intra-minute leave % of allowed
+                  <input
+                    type="text" inputmode="decimal"
+                    placeholder="full delta"
+                    value={modifyTradeForm().intra_leave_pct}
+                    onInput={(event) => setModifyTradeForm((form) => ({ ...form, intra_leave_pct: event.currentTarget.value }))}
+                    style={formInput}
+                  />
+                </label>
+
                 <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px", "grid-column": "1 / -1" }}>
                   Exit Time (HH:MM or HH:MM:SS) -- squares off the trade at this time
                   <input
@@ -3083,7 +3149,7 @@ function App() {
                                           <strong>{fmt(live().points_allowed_straddle ?? 0, 2)}</strong>
                                         </div>
                                         <div class="trade-metric-row">
-                                          <span>&nbsp;&nbsp;Spot × IV ÷ H-Div</span>
+                                          <span>&nbsp;&nbsp;Spot × IV ÷ IV divisor</span>
                                           <strong>{fmt(live().points_allowed_iv ?? 0, 2)}</strong>
                                         </div>
                                         <div class="trade-metric-row" title="Points Allowed never goes below this floor -- the same rule the hedge decisions and the Paper Sim use">
@@ -3121,6 +3187,10 @@ function App() {
                                           </strong>
                                         </div>
 
+                                        <div class="trade-metric-row">
+                                          <span>Sold straddle</span>
+                                          <strong>{item.soldStraddle > 0 ? `₹${fmt(item.soldStraddle, 2)} (CE ${fmt(item.soldCE, 2)} + PE ${fmt(item.soldPE, 2)})` : "—"}</strong>
+                                        </div>
                                         <div class="trade-metric-row">
                                           <span>Underlying</span>
                                           <strong>{fmt(live().underlying ?? 0, 2)}</strong>
@@ -3247,7 +3317,9 @@ function App() {
                                           </strong>
                                         </div>
                                         <div class="monitor-row"><span>Leave % of allowed</span><strong>{item.config?.hedge_leave_pct > 0 ? `${item.config.hedge_leave_pct}%` : "standard"}</strong></div>
-                                        <div class="monitor-row"><span>Hedging rule</span><strong>{live().hedge_rule || "—"}</strong></div>
+                                        <div class="monitor-row"><span>Intra-minute</span><strong>{`past ${item.config?.intra_mult > 0 ? item.config.intra_mult : 1.2} × allowed: ${item.config?.intra_leave_pct > 0 ? `leave ${item.config.intra_leave_pct}%` : "full delta"}`}</strong></div>
+                                        {String(live().hedge_rule || "").startsWith("LUT sim") ? <div class="monitor-row"><span>Live vs sim delta</span><strong>{`${Number(live().net_delta || 0).toFixed(0)} vs ${Number(live().sim_delta || 0).toFixed(0)} (gap ${Number(live().sim_gap_lots || 0).toFixed(1)} lots)`}</strong></div> : null}
+                                        <div class="monitor-row"><span>Hedging rule</span><strong style={{ "white-space": "normal" }}>{live().hedge_rule || "—"}</strong></div>
 
                                         <div class="monitor-row">
                                           <span>Delta Threshold</span>
@@ -3363,6 +3435,7 @@ function App() {
                                           >
                                             Hedge Now
                                           </button>
+                                          {String(live().hedge_rule || "").startsWith("LUT sim") ? <button class="dashboard-btn cyan" title="Close the gap between live delta and the Paper Sim. Shows the order first" onClick={(event) => { event.stopPropagation(); handleMatchSimDelta(item); }}>Match Sim Delta</button> : null}
 
                                           <button
                                             class="dashboard-btn purple"

@@ -2,6 +2,7 @@ package trading
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -313,5 +314,256 @@ func TestLoadSBRules_MovesOldRuleOnce(t *testing.T) {
 	rules := LoadSBRules()
 	if len(rules) != 1 || rules[0].StraddleDiv != 3 || rules[0].HedgeDiv != 38 || rules[0].HedgeLeavePct != 50 {
 		t.Fatalf("rules %+v", rules)
+	}
+}
+
+func TestWithIntra_ZeroLeavesEveryRuleUnchanged(t *testing.T) {
+	for _, rule := range []hedgeRule{hedgeRuleOld, hedgeRuleNew} {
+		if r := rule.withIntra(0, 0); r != rule {
+			t.Fatalf("%s rule changed: %+v", rule.Key, r)
+		}
+		if rule.intraTrigger() != 1.2 || rule.intraFrac(150, 100) != 1 {
+			t.Fatalf("%s default line %g share %g", rule.Key, rule.intraTrigger(), rule.intraFrac(150, 100))
+		}
+	}
+	r := hedgeRuleOld.withIntra(1.5, 25)
+	if !r.Intra || r.intraTrigger() != 1.5 || math.Abs(r.intraFrac(200, 100)-0.875) > 1e-12 {
+		t.Fatalf("own line: %+v share %g", r, r.intraFrac(200, 100))
+	}
+	if c := simDriveConfigOf(LUTBuildRun{TradeUID: "T", Minute: "09:18"}, 23800, "new"); c.IntraMult != 0 || c.IntraLeavePct != 0 {
+		t.Fatalf("LUT sim config changed: %+v", c)
+	}
+}
+
+func TestCheckIntraSettings(t *testing.T) {
+	for _, ok := range [][2]float64{{0, 0}, {1, 0}, {1.2, 50}, {1.5, 100}, {3, 99}} {
+		if err := checkIntraSettings(ok[0], ok[1]); err != nil {
+			t.Fatalf("%v: %v", ok, err)
+		}
+	}
+	for _, bad := range [][2]float64{{0.9, 0}, {-1, 0}, {1.2, -5}, {1.2, 101}, {1, 100}} {
+		if err := checkIntraSettings(bad[0], bad[1]); err == nil {
+			t.Fatalf("%v must be refused", bad)
+		}
+	}
+}
+
+func TestSBDefaults_IntraStaysAsItWas(t *testing.T) {
+	if c := sbDefaults(SBConfig{}); c.IntraMult != 1.2 || c.IntraLeavePct != 0 {
+		t.Fatalf("new rule: %g %g", c.IntraMult, c.IntraLeavePct)
+	}
+	if c := sbDefaults(SBConfig{IntraMult: 1.6, IntraLeavePct: 30, HedgeLeavePct: 50}); c.IntraMult != 1.6 || c.IntraLeavePct != 30 {
+		t.Fatalf("set values changed: %g %g", c.IntraMult, c.IntraLeavePct)
+	}
+}
+
+func TestSBHandOff_CarriesIntra(t *testing.T) {
+	s, r := handoffRunner(t)
+	r.cfg.IntraMult, r.cfg.IntraLeavePct = 1.5, 30
+	r.pms.ApplyFill(PMSFill{Token: 44620, Strike: 22700, OptionType: "CE", Side: "SELL", Qty: 130, Price: 168.3, Role: "BUILD"})
+	r.pms.ApplyFill(PMSFill{Token: 44621, Strike: 22700, OptionType: "PE", Side: "SELL", Qty: 130, Price: 146.8, Role: "BUILD"})
+	if !s.sbHandOffLocked(r) {
+		t.Fatal("expected hand-off")
+	}
+	defer stopRuntime(s, "SB-T-1")
+	tr, _ := s.Store.LoadTrade("SB-T-1")
+	if tr.Config.IntraMult != 1.5 || tr.Config.IntraLeavePct != 30 {
+		t.Fatalf("not carried: %g %g", tr.Config.IntraMult, tr.Config.IntraLeavePct)
+	}
+}
+
+// The real monitor: the minute-end check, then the intra-minute line on the
+// next cycles (three, in case the minute rolls between two of them).
+func monitorIntraLog(t *testing.T, cfg MonitorConfig) (string, TradeSnapshot) {
+	t.Helper()
+	store := NewMemoryStore()
+	tr := newTestSquareOffTrade("SB-INTRA")
+	tr.CEQty, tr.PEQty, tr.Lots, tr.CELtp, tr.PELtp = 5005, 5005, 77, 195, 195
+	tr.Config = cfg
+	tr.Config.SquareOffHardTime = time.Now().Add(time.Hour)
+	store.SaveTrade(tr)
+	store.SaveRuntime(&RuntimeTrade{Trade: tr, StopCh: make(chan struct{}), DoneCh: make(chan struct{})})
+	svc := &Service{Store: store, Snapshot: hedgeRuleChain{}, BrokerFactory: &fakeBrokerFactory{executor: &fakeSLExecutor{}}}
+	out := captureLog(t, func() {
+		for i := 0; i < 3; i++ {
+			svc.runMonitorCycle(tr.TradeUID)
+		}
+	})
+	snap, _ := store.LoadSnapshot(tr.TradeUID)
+	return out, snap
+}
+
+func TestMonitorCycle_IntraMinuteRule(t *testing.T) {
+	was, _ := lutDrivingTables.Load().(string)
+	lutDrivingTables.Store("old")
+	defer lutDrivingTables.Store(was)
+	base := MonitorConfig{StraddleDiv: 3, HedgeDiv: 38, HedgeLeavePct: 50} // allowed 100.63, 120 points out, delta -1,201
+
+	// Standard line, 1.2 x allowed = 120.76: not crossed.
+	if out, _ := monitorIntraLog(t, base); strings.Contains(out, "INTRA-MINUTE") {
+		t.Fatalf("1.2 must not fire at 120 points\n%s", out)
+	}
+	// Line at 1.1 = 110.7: fires, complete delta: 1,201 / 65 = 18 lots.
+	c := base
+	c.IntraMult = 1.1
+	out, snap := monitorIntraLog(t, c)
+	if !strings.Contains(out, "INTRA-MINUTE points_out=120.") || !strings.Contains(out, "> 1.1 x") || !strings.Contains(out, "hedge_lots=18 (complete delta)") {
+		t.Fatalf("1.1, complete delta\n%s", out)
+	}
+	if !strings.Contains(snap.HedgeRule, "past 1.1 x allowed: full delta") {
+		t.Fatalf("rule text %q", snap.HedgeRule)
+	}
+	// The same line, stop at 25 % of allowed: 79 % of 1,201 = 949, 14 lots.
+	c.IntraLeavePct = 25
+	out, snap = monitorIntraLog(t, c)
+	if !strings.Contains(out, "hedge_lots=14 (to 25% of allowed)") {
+		t.Fatalf("1.1, leave 25%%\n%s", out)
+	}
+	if !strings.Contains(snap.HedgeRule, "past 1.1 x allowed: leave 25% of allowed") {
+		t.Fatalf("rule text %q", snap.HedgeRule)
+	}
+	// With old tables driving and no setting there is no intra-minute hedge at all.
+	if out, _ := monitorIntraLog(t, MonitorConfig{StraddleDiv: 3, HedgeDiv: 38}); strings.Contains(out, "INTRA-MINUTE") {
+		t.Fatalf("no intra-minute hedge expected\n%s", out)
+	}
+}
+
+func TestModifyTrade_IntraSettings(t *testing.T) {
+	store := NewMemoryStore()
+	tr := newTestSquareOffTrade("SB-RMW1LJ6RU2-261104093759")
+	store.SaveTrade(tr)
+	h := &Handlers{Store: store, Service: &Service{Store: store}}
+	post := func(uid, body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		h.ModifyTrade(w, httptest.NewRequest(http.MethodPost, "/api/trade/"+uid+"/modify", strings.NewReader(body)))
+		return w
+	}
+	if w := post(tr.TradeUID, `{"intra_mult":1.5,"intra_leave_pct":25}`); w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	got, _ := store.LoadTrade(tr.TradeUID)
+	if got.Config.IntraMult != 1.5 || got.Config.IntraLeavePct != 25 {
+		t.Fatalf("stored %+v", got.Config)
+	}
+	for _, bad := range []string{`{"intra_mult":0.9}`, `{"intra_leave_pct":150}`, `{"intra_mult":1,"intra_leave_pct":100}`} {
+		if w := post(tr.TradeUID, bad); w.Code != http.StatusBadRequest {
+			t.Fatalf("%s must be refused: %d", bad, w.Code)
+		}
+	}
+	if got, _ := store.LoadTrade(tr.TradeUID); got.Config.IntraMult != 1.5 || got.Config.IntraLeavePct != 25 {
+		t.Fatalf("a refused change was stored: %+v", got.Config)
+	}
+	if w := post(tr.TradeUID, `{"intra_mult":0,"intra_leave_pct":0}`); w.Code != http.StatusOK {
+		t.Fatalf("back to the standard: %d", w.Code)
+	}
+	if got, _ := store.LoadTrade(tr.TradeUID); got.Config.IntraMult != 0 || got.Config.IntraLeavePct != 0 {
+		t.Fatalf("not cleared: %+v", got.Config)
+	}
+
+	lut := newTestSquareOffTrade("TRD_LUT")
+	store.SaveTrade(lut)
+	simDrive.mu.Lock()
+	d := simDrive.d
+	simDrive.d = &simDriver{TradeUID: "TRD_LUT"}
+	simDrive.mu.Unlock()
+	defer func() {
+		simDrive.mu.Lock()
+		simDrive.d = d
+		simDrive.mu.Unlock()
+	}()
+	for _, body := range []string{`{"intra_mult":1.5}`, `{"intra_leave_pct":25}`} {
+		if w := post("TRD_LUT", body); w.Code != http.StatusBadRequest {
+			t.Fatalf("LUT trade must refuse %s: %d", body, w.Code)
+		}
+	}
+	if got, _ := store.LoadTrade("TRD_LUT"); got.Config.IntraMult != 0 || got.Config.IntraLeavePct != 0 {
+		t.Fatalf("LUT trade changed: %+v", got.Config)
+	}
+}
+
+// The simulation with a jump inside a minute: the line and the size are the
+// trade's own, and without them it is the 1.2 / complete delta it always was.
+func TestPaperSim_IntraSettings(t *testing.T) {
+	intra := func(c PaperSimConfig, jump float64) []PaperSimHedge {
+		mins := mkMinutes(5, func(i int) float64 { return 22600 })
+		for s := 1; s < 60; s++ {
+			f := 22600.0
+			if s >= 30 {
+				f = 22600 + jump
+			}
+			mins[1].secs = append(mins[1].secs, simSec{T: fmt.Sprintf("09:17:%02d", s), F: f})
+		}
+		c.Entry, c.Lots, c.HedgeMode, c.SLBps, c.HedgeRule = "09:16", 10, "synthetic", 500, "new"
+		var out []PaperSimHedge
+		for _, h := range RunPaperSim(mins, c, 65, nil).Hedges {
+			if h.Kind == "INTRA_MINUTE" {
+				out = append(out, h)
+			}
+		}
+		return out
+	}
+	std := intra(PaperSimConfig{}, 150)
+	if len(std) != 1 || math.Abs(std[0].DeltaAfter) > 1e-6 {
+		t.Fatalf("standard must take the complete delta: %+v", std)
+	}
+	// The move that crosses 1.2 x allowed stays under a much higher line.
+	ratio := std[0].PointsOut / std[0].Allowed
+	if h := intra(PaperSimConfig{IntraMult: ratio + 1}, 150); len(h) != 0 {
+		t.Fatalf("line %.2f x allowed must not fire at %.2f x: %+v", ratio+1, ratio, h)
+	}
+	own := intra(PaperSimConfig{IntraLeavePct: 25}, 150)
+	if len(own) != 1 {
+		t.Fatalf("own size: %+v", own)
+	}
+	if left := (own[0].DeltaAfter / own[0].DeltaBefore) * own[0].PointsOut / own[0].Allowed; math.Abs(left-0.25) > 1e-3 {
+		t.Fatalf("leaves %.3f of allowed", left)
+	}
+}
+
+func TestSaveSBRule_RefusesBadIntra(t *testing.T) {
+	t.Setenv("SBUILD_RULES_PATH", filepath.Join(t.TempDir(), "rules.json"))
+	s := &Service{Store: NewMemoryStore()}
+	for _, c := range []SBConfig{
+		{Symbol: "NIFTY", TargetStraddle: 388, Straddles: 65, IntraMult: 0.9},
+		{Symbol: "NIFTY", TargetStraddle: 388, Straddles: 65, IntraLeavePct: 150},
+	} {
+		if _, _, err := s.SaveSBRule(c); err == nil || !strings.Contains(err.Error(), "intra-minute") {
+			t.Fatalf("%+v: %v", c, err)
+		}
+	}
+}
+
+// 4 Nov: the LUT build, then a hedge selling more CE on the same strike.
+func TestSoldStraddleOf_BuildFillsOnly(t *testing.T) {
+	execs := []OrderExecution{
+		{Kind: "ENTRY", Leg: "CE", Side: "SELL", FilledQty: 3965, AvgPrice: 203.7336},
+		{Kind: "ENTRY", Leg: "PE", Side: "SELL", FilledQty: 4355, AvgPrice: 181.0254},
+		{Kind: "HEDGE", Leg: "CE", Side: "SELL", FilledQty: 260, AvgPrice: 187.80},
+		{Kind: "HEDGE", Leg: "PE", Side: "BUY", FilledQty: 260, AvgPrice: 181.60},
+		{Kind: "EXIT", Leg: "CE", Side: "BUY", FilledQty: 65, AvgPrice: 150},
+	}
+	ce, pe, sum := soldStraddleOf(execs)
+	if ce != 203.73 || pe != 181.03 || sum != 384.76 {
+		t.Fatalf("CE %g PE %g sum %g", ce, pe, sum)
+	}
+	// Two tranches at different prices: averaged by quantity.
+	ce, pe, sum = soldStraddleOf([]OrderExecution{
+		{Kind: "ENTRY", Leg: "CE", Side: "SELL", FilledQty: 65, AvgPrice: 100},
+		{Kind: "ENTRY", Leg: "CE", Side: "SELL", FilledQty: 195, AvgPrice: 104},
+		{Kind: "ENTRY", Leg: "PE", Side: "SELL", FilledQty: 260, AvgPrice: 90},
+	})
+	if ce != 103 || pe != 90 || sum != 193 {
+		t.Fatalf("CE %g PE %g sum %g", ce, pe, sum)
+	}
+	// The sum adds up to the two averages shown, whatever their rounding.
+	if ce, pe, sum := soldStraddleOf([]OrderExecution{
+		{Kind: "ENTRY", Leg: "CE", Side: "SELL", FilledQty: 1, AvgPrice: 194.204},
+		{Kind: "ENTRY", Leg: "PE", Side: "SELL", FilledQty: 1, AvgPrice: 195.524},
+	}); ce != 194.2 || pe != 195.52 || sum != 389.72 {
+		t.Fatalf("CE %g PE %g sum %g", ce, pe, sum)
+	}
+	// One side only so far: no sum yet.
+	if _, _, sum := soldStraddleOf([]OrderExecution{{Kind: "ENTRY", Leg: "CE", Side: "SELL", FilledQty: 65, AvgPrice: 100}}); sum != 0 {
+		t.Fatalf("one side only: %g", sum)
 	}
 }

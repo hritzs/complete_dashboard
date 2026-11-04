@@ -103,6 +103,8 @@ func sbRuleChanges(a, b SBConfig) []string {
 	add("straddle div", g(a.StraddleDiv), g(b.StraddleDiv))
 	add("hedge div", g(a.HedgeDiv), g(b.HedgeDiv))
 	add("leave % of allowed", g(a.HedgeLeavePct), g(b.HedgeLeavePct))
+	add("intra-minute trigger", g(a.IntraMult), g(b.IntraMult))
+	add("intra-minute leave %", g(a.IntraLeavePct), g(b.IntraLeavePct))
 	add("hedge min bps", g(a.HedgeMinBps), g(b.HedgeMinBps))
 	add("wings %", g(a.WingPct), g(b.WingPct))
 	return out
@@ -114,6 +116,9 @@ func (s *Service) SaveSBRule(c SBConfig) (SBConfig, []string, error) {
 	c = sbDefaults(c)
 	if c.TargetStraddle <= 0 || c.Straddles <= 0 {
 		return c, nil, fmt.Errorf("target straddle and straddle quantity are required")
+	}
+	if err := checkIntraSettings(c.IntraMult, c.IntraLeavePct); err != nil {
+		return c, nil, err
 	}
 	if c.WingPct < 0 || c.WingPct > maxWingPct {
 		return c, nil, fmt.Errorf("wings %% must be 0 (none) to %.0f", maxWingPct)

@@ -96,6 +96,11 @@ type hedgeRule struct {
 	Key       string
 	LeaveBand float64 // 0 = the complete delta at minute end
 	Intra     bool
+	// IntraMult: the intra-minute line, x effective allowed (0 = hedgeIntraMult).
+	// IntraLeave: an intra-minute hedge stops at this share of allowed (0 = the
+	// complete delta).
+	IntraMult  float64
+	IntraLeave float64
 }
 
 var (
@@ -129,6 +134,72 @@ func (r hedgeRule) withHedgeLeavePct(pct float64) hedgeRule {
 	return r
 }
 
+// withIntra: a Straddle Build rule or trade's own intra-minute line and how far
+// that hedge goes (owner, 2026-11-04). 0 = unchanged. The LUT keeps its own.
+func (r hedgeRule) withIntra(mult, leavePct float64) hedgeRule {
+	if mult > 0 {
+		r.IntraMult, r.Intra = mult, true
+	}
+	if leavePct > 0 {
+		r.IntraLeave, r.Intra = math.Min(leavePct, 100)/100, true
+	}
+	return r
+}
+
+// intraTrigger: points out above this x effective allowed hedges within the minute.
+func (r hedgeRule) intraTrigger() float64 {
+	if r.IntraMult > 0 {
+		return r.IntraMult
+	}
+	return hedgeIntraMult
+}
+
+// intraFrac: the share of the net delta an intra-minute hedge takes.
+func (r hedgeRule) intraFrac(pointsOut, effAllowed float64) float64 {
+	if r.IntraLeave <= 0 {
+		return hedgeIntraFrac
+	}
+	if pointsOut <= 0 || effAllowed <= 0 {
+		return 0
+	}
+	return math.Min(1, math.Max(0, 1-r.IntraLeave*effAllowed/pointsOut))
+}
+
+// checkIntraSettings: the line is at least 1 x allowed, and a hedge past it must
+// leave less than the line itself or it would never send anything.
+func checkIntraSettings(mult, leavePct float64) error {
+	if mult != 0 && mult < 1 {
+		return fmt.Errorf("intra-minute trigger must be at least 1 x allowed")
+	}
+	if leavePct < 0 || leavePct > 100 {
+		return fmt.Errorf("intra-minute leave %% must be 0 to 100")
+	}
+	if trigger := (hedgeRule{IntraMult: mult}).intraTrigger(); leavePct > 0 && leavePct/100 >= trigger {
+		return fmt.Errorf("intra-minute leave %.4g%% must be below the trigger, %.4g x allowed", leavePct, trigger)
+	}
+	return nil
+}
+
+// applyTradeIntra sets an open trade's intra-minute line and hedge size (nil =
+// unchanged, 0 = back to the standard). A sim-driven LUT trade refuses them.
+func applyTradeIntra(tr *StoredTrade, mult, leavePct *float64) error {
+	m, l := tr.Config.IntraMult, tr.Config.IntraLeavePct
+	if mult != nil {
+		m = *mult
+	}
+	if leavePct != nil {
+		l = *leavePct
+	}
+	if err := checkIntraSettings(m, l); err != nil {
+		return err
+	}
+	if owned, _ := simDriveOwns(tr.TradeUID); owned && (m > 0 || l > 0) {
+		return fmt.Errorf("intra-minute settings do not apply to %s: its hedges come from its simulation", tr.TradeUID)
+	}
+	tr.Config.IntraMult, tr.Config.IntraLeavePct = m, l
+	return nil
+}
+
 // applyTradeHedgeLeavePct sets an open trade's Leave % (0 = back to the
 // standard rule). A sim-driven LUT trade takes its hedges from its simulation,
 // so it refuses one.
@@ -146,11 +217,11 @@ func applyTradeHedgeLeavePct(tr *StoredTrade, pct float64) error {
 // tradeHedgeRuleText says which hedging rule a trade is on, as its monitor or
 // simulation applies it.
 func tradeHedgeRuleText(tr StoredTrade, straddleDiv, ivDiv float64) string {
-	rule := lutDrivingRule().withHedgeLeavePct(tr.Config.HedgeLeavePct)
+	rule := lutDrivingRule().withHedgeLeavePct(tr.Config.HedgeLeavePct).withIntra(tr.Config.IntraMult, tr.Config.IntraLeavePct)
 	name := "Standard"
 	if owned, _ := simDriveOwns(tr.TradeUID); owned {
 		name = "LUT sim"
-	} else if tr.Config.HedgeLeavePct > 0 {
+	} else if tr.Config.HedgeLeavePct > 0 || tr.Config.IntraMult > 0 || tr.Config.IntraLeavePct > 0 {
 		name = "Own rule"
 	}
 	minute := "full delta"
@@ -159,7 +230,10 @@ func tradeHedgeRuleText(tr StoredTrade, straddleDiv, ivDiv float64) string {
 	}
 	intra := "no intra-minute hedge"
 	if rule.Intra {
-		intra = fmt.Sprintf("past %.4g x allowed: full delta", hedgeIntraMult)
+		intra = fmt.Sprintf("past %.4g x allowed: full delta", rule.intraTrigger())
+		if rule.IntraLeave > 0 {
+			intra = fmt.Sprintf("past %.4g x allowed: leave %.4g%% of allowed", rule.intraTrigger(), rule.IntraLeave*100)
+		}
 	}
 	return fmt.Sprintf("%s: min(straddle / %.4g, IV / %.4g), minute end %s, %s", name, straddleDiv, ivDiv, minute, intra)
 }

@@ -194,6 +194,7 @@ function SBRow(props) {
                   <Metric k="IV ÷ / Straddle ÷" v={`${cfg().hedge_div || '—'} / ${cfg().straddle_div || '—'}`} />
                   <Metric k="Leave % of allowed" v={cfg().hedge_leave_pct > 0 ? `${cfg().hedge_leave_pct}%` : 'standard'} />
                   <Metric k="Hedging rule" v={`Build: min(straddle / ${cfg().straddle_div || '—'}, IV / ${cfg().hedge_div || '—'}), minute end leave ${cfg().hedge_leave_pct || '—'}% of allowed`} />
+                  <Metric k="Intra-minute after hand-off" v={`past ${cfg().intra_mult || 1.2} × allowed: ${cfg().intra_leave_pct > 0 ? `leave ${cfg().intra_leave_pct}%` : 'full delta'}`} />
                   <Metric k="Minimum Hedge" v={cfg().hedge_min_bps ? `${cfg().hedge_min_bps} bps` : 'default'} />
                 </section>
 

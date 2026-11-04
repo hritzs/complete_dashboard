@@ -77,6 +77,8 @@ type PaperSimConfig struct {
 	HedgeRule string `json:"hedge_rule,omitempty"`
 	// HedgeLeavePct > 0: a Straddle Build trade's Leave % (hedgeRule.withHedgeLeavePct).
 	HedgeLeavePct float64 `json:"hedge_leave_pct,omitempty"`
+	IntraMult     float64 `json:"intra_mult,omitempty"`
+	IntraLeavePct float64 `json:"intra_leave_pct,omitempty"`
 	CreatedAt     string  `json:"created_at,omitempty"`
 
 	// MTM square-off (its own exit type, separate from SL/TP/time): once
@@ -805,7 +807,7 @@ func (b *simBook) value(m simMinute, q int64) PaperSimPoint {
 func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMinute) PaperSimResult {
 	slGiven := c.SLBps > 0
 	c = paperDefaults(c)
-	rule := hedgeRuleFor(c.HedgeRule).withHedgeLeavePct(c.HedgeLeavePct)
+	rule := hedgeRuleFor(c.HedgeRule).withHedgeLeavePct(c.HedgeLeavePct).withIntra(c.IntraMult, c.IntraLeavePct)
 	newLogic := rule.Key == "new" // the new tables' exits and expiry-day rules (backtest)
 	res := PaperSimResult{Config: c, Status: "NO DATA"}
 	entry := lutHHMM(c.Entry)
@@ -964,8 +966,8 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 		}
 		pt.PointsOut, pt.PointsAllowed, pt.HedgeCheck = outAfter, allowed, "INTRA_HEDGE"
 		pt.HedgeTarget = book.futQty / float64(q)
-		pt.Event = fmt.Sprintf("INTRA-MINUTE HEDGE %s @ fut %.2f: out %.1f > %.1f x %.1f -> %.1f · delta %+.4f -> %+.4f per qty · hedge %+.4f -> %+.4f per qty",
-			what, s.F, outBefore, hedgeIntraMult, allowed, outAfter, ndBefore/float64(q), ndAfter/float64(q), hedgeBefore/float64(q), book.futQty/float64(q))
+		pt.Event = fmt.Sprintf("INTRA-MINUTE HEDGE %s @ fut %.2f: out %.1f > %.4g x %.1f -> %.1f · delta %+.4f -> %+.4f per qty · hedge %+.4f -> %+.4f per qty",
+			what, s.F, outBefore, rule.intraTrigger(), allowed, outAfter, ndBefore/float64(q), ndAfter/float64(q), hedgeBefore/float64(q), book.futQty/float64(q))
 		res.Series = append(res.Series, pt)
 	}
 	intraMinute := func(m simMinute) {
@@ -1010,14 +1012,14 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 				allowed = deltaBand * float64(q) / math.Abs(ng) // delta band at this tick's gamma
 			}
 			d := decideHedge(hedgeDecisionInput{PointsOut: out, PointsAllowed: allowed, Spot: s.F, NetDelta: nd,
-				LotSize: lotSize, TradeLots: int64(c.Lots), MinThresholdBps: simMinBpsFor(c, deltaBand), Mult: hedgeIntraMult, Frac: hedgeIntraFrac})
+				LotSize: lotSize, TradeLots: int64(c.Lots), MinThresholdBps: simMinBpsFor(c, deltaBand), Mult: rule.intraTrigger(), Frac: hedgeIntraFrac, LeaveBand: rule.IntraLeave})
 			if c.HedgeMode != "lots" {
-				if (!force && out <= hedgeIntraMult*d.EffectiveAllowed) || math.Abs(nd) < 1e-9 {
+				if (!force && out <= rule.intraTrigger()*d.EffectiveAllowed) || math.Abs(nd) < 1e-9 {
 					continue
 				}
 				old := book.futQty
 				pre := tickPoint(m, s)
-				frac, src := 1.0, "seconds"
+				frac, src := rule.intraFrac(out, d.EffectiveAllowed), "seconds"
 				if force {
 					src = "seconds (executed live)"
 					if !ex.Own {
@@ -1046,7 +1048,7 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 				d.Lots = int64(math.Round(ex.Frac * math.Abs(nd) / float64(lotSize)))
 				d.Hedge = d.Lots > 0
 			} else if force && !d.Hedge { // kept at its tick, the simulation's own size
-				d.Lots = int64(math.Round(hedgeIntraFrac * math.Abs(nd) / float64(lotSize)))
+				d.Lots = int64(math.Round(rule.intraFrac(out, d.EffectiveAllowed) * math.Abs(nd) / float64(lotSize)))
 				d.Hedge = d.Lots > 0
 			}
 			if !d.Hedge || d.Lots <= 0 {
@@ -1365,9 +1367,11 @@ type PaperActual struct {
 	ExitTime    string           `json:"exit_time,omitempty"`   // HH:MM of the last exit fill (closed trades)
 	ExitReason  string           `json:"exit_reason,omitempty"` // from the closed status
 	// A Straddle Build trade's own hedge, for its simulation (0 = the defaults).
-	LeavePct    float64 `json:"hedge_leave_pct,omitempty"`
-	StraddleDiv float64 `json:"straddle_div,omitempty"`
-	HedgeDiv    float64 `json:"hedge_div,omitempty"`
+	LeavePct      float64 `json:"hedge_leave_pct,omitempty"`
+	IntraMult     float64 `json:"intra_mult,omitempty"`
+	IntraLeavePct float64 `json:"intra_leave_pct,omitempty"`
+	StraddleDiv   float64 `json:"straddle_div,omitempty"`
+	HedgeDiv      float64 `json:"hedge_div,omitempty"`
 }
 
 // paperSameExpiry: a trade sold on tradeExp belongs to the view showing
@@ -1423,8 +1427,8 @@ func (s *Service) paperActuals(ctx context.Context, day string) []PaperActual {
 	for _, t := range sums {
 		a := PaperActual{TradeUID: t.TradeUID, Status: t.Status, Expiry: t.Expiry, Strike: t.Strike, RealizedPnL: t.RealizedPnL}
 		if s.Store != nil {
-			if tr, ok := s.Store.LoadTrade(t.TradeUID); ok && tr.Config.HedgeLeavePct > 0 {
-				a.LeavePct, a.StraddleDiv, a.HedgeDiv = tr.Config.HedgeLeavePct, tr.Config.StraddleDiv, tr.Config.HedgeDiv
+			if tr, ok := s.Store.LoadTrade(t.TradeUID); ok && (tr.Config.HedgeLeavePct > 0 || tr.Config.IntraMult > 0 || tr.Config.IntraLeavePct > 0) {
+				a.LeavePct, a.IntraMult, a.IntraLeavePct, a.StraddleDiv, a.HedgeDiv = tr.Config.HedgeLeavePct, tr.Config.IntraMult, tr.Config.IntraLeavePct, tr.Config.StraddleDiv, tr.Config.HedgeDiv
 			}
 		}
 		var ceV, peV float64
@@ -1503,7 +1507,7 @@ func sameSimAs(done []PaperSimResult, c PaperSimConfig, unit bool) string {
 			want.TPBps > 0 && r.TPBps != want.TPBps,
 			hhmm(lc.ExitTime) != hhmm(want.ExitTime),
 			hedgeRuleFor(lc.HedgeRule).Key != hedgeRuleFor(want.HedgeRule).Key,
-			lc.HedgeLeavePct != want.HedgeLeavePct,
+			lc.HedgeLeavePct != want.HedgeLeavePct || lc.IntraMult != want.IntraMult || lc.IntraLeavePct != want.IntraLeavePct,
 			lc.PointsAllowed != want.PointsAllowed,
 			lc.HedgeMode != want.HedgeMode,
 			lc.StraddleDiv != want.StraddleDiv || lc.HedgeDiv != want.HedgeDiv || lc.HedgeMinBps != want.HedgeMinBps,
@@ -1632,7 +1636,7 @@ func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		c := PaperSimConfig{ID: id, Source: "actual trade " + actual[i].TradeUID, Entry: actual[i].EntryTime, Lots: l, Hedge: hedge, HedgeMode: hedgeMode,
 			ActualExit: actual[i].ExitTime, ActualReason: actual[i].ExitReason, Strike: actual[i].Strike,
-			HedgeLeavePct: actual[i].LeavePct, StraddleDiv: actual[i].StraddleDiv, HedgeDiv: actual[i].HedgeDiv}
+			HedgeLeavePct: actual[i].LeavePct, IntraMult: actual[i].IntraMult, IntraLeavePct: actual[i].IntraLeavePct, StraddleDiv: actual[i].StraddleDiv, HedgeDiv: actual[i].HedgeDiv}
 		if run, ok := simDrivenRun(day, actual[i].TradeUID); ok {
 			// A sim-driven LUT trade shows the very simulation that drove
 			// it (sim_drive.go): same band, strike, SL / TP, exit time.

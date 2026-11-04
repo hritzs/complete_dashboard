@@ -678,6 +678,8 @@ type ModifyTradeRequest struct {
 	StraddleDiv                  *float64 `json:"straddle_div,omitempty"`
 	HedgeDiv                     *float64 `json:"hedge_div,omitempty"`
 	HedgeLeavePct                *float64 `json:"hedge_leave_pct,omitempty"` // minute end: hedge until points out = this % of allowed; 0 = off
+	IntraMult                    *float64 `json:"intra_mult,omitempty"`      // intra-minute line, x allowed; 0 = the standard
+	IntraLeavePct                *float64 `json:"intra_leave_pct,omitempty"` // intra-minute hedge stops at this % of allowed; 0 = the complete delta
 	HedgeThresholdDelta          *float64 `json:"hedge_threshold_delta,omitempty"`
 	SquareOffTime                *string  `json:"square_off_time,omitempty"` // "15:37:00"
 	ForceOneLotHedgeTest         *bool    `json:"force_one_lot_hedge_test,omitempty"`
@@ -861,6 +863,12 @@ func (h *Handlers) ModifyTrade(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.HedgeLeavePct != nil {
 		if err := applyTradeHedgeLeavePct(&tr, *req.HedgeLeavePct); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if req.IntraMult != nil || req.IntraLeavePct != nil {
+		if err := applyTradeIntra(&tr, req.IntraMult, req.IntraLeavePct); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}

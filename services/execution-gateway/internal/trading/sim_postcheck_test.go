@@ -31,9 +31,17 @@ func TestSimPostCheck_SimDeltaIsPerLot(t *testing.T) {
 		store.SaveTrade(tr)
 		store.SaveSnapshot(TradeSnapshot{TradeUID: tr.TradeUID, NetDelta: liveDelta, NetGamma: -6.58, Underlying: 23895.75})
 		s := &Service{Store: store}
-		return captureLog(t, func() {
+		out := captureLog(t, func() {
 			s.simPostCheck(tr, "RISK_BREACH 09:27", PaperSimHedge{DeltaAfter: -1.7311, Future: 23893.8})
 		})
+		// Only this trade's lines: another test's delayed check may log meanwhile.
+		var own []string
+		for _, l := range strings.Split(out, "\n") {
+			if strings.Contains(l, tr.TradeUID) {
+				own = append(own, l)
+			}
+		}
+		return strings.Join(own, "\n")
 	}
 	if out := check(-156); !strings.Contains(out, " MATCH") || strings.Contains(out, "SIM_MISMATCH") {
 		t.Fatalf("a 0.5-lot gap must match:\n%s", out)

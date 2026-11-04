@@ -46,6 +46,13 @@ type TradeSummary struct {
 	OpenPEQty  int64            `json:"open_pe_qty"`
 	Executions []OrderExecution `json:"executions"`
 
+	// What the straddle was actually sold at: the average of the build's own
+	// sell fills per side and their sum. Hedges never change it, unlike the leg
+	// average, which moves when a hedge trades the same strike.
+	SoldCEAvg    float64 `json:"sold_ce_avg,omitempty"`
+	SoldPEAvg    float64 `json:"sold_pe_avg,omitempty"`
+	SoldStraddle float64 `json:"sold_straddle,omitempty"`
+
 	// LastReject: the trade's latest broker-rejected order with the
 	// broker's own reason; RejectCount: all rejected orders of the trade.
 	LastReject  *TradeReject `json:"last_reject,omitempty"`
@@ -270,6 +277,7 @@ func (s *PostgresBackedStore) TradeSummaries(ctx context.Context, from, to time.
 		if sum.Executions == nil {
 			sum.Executions = []OrderExecution{}
 		}
+		sum.SoldCEAvg, sum.SoldPEAvg, sum.SoldStraddle = soldStraddleOf(sum.Executions)
 		if sum.CE != nil {
 			sum.OpenCEQty = sum.CE.NetShortQty
 		}
@@ -360,4 +368,32 @@ func (s *PostgresBackedStore) TradeOpenQuantities(ctx context.Context, tradeUID 
 		return 0, 0, err
 	}
 	return max(net["CE"], 0), max(net["PE"], 0), nil
+}
+
+// soldStraddleOf: the build's own sell fills, averaged per side, and their sum.
+// The sum is 0 until both sides have a fill.
+func soldStraddleOf(execs []OrderExecution) (ceAvg, peAvg, straddle float64) {
+	var ceV, peV float64
+	var ceQ, peQ int64
+	for _, e := range execs {
+		if e.Kind != "ENTRY" || e.FilledQty <= 0 || e.AvgPrice <= 0 || !strings.EqualFold(e.Side, "SELL") {
+			continue
+		}
+		switch e.Leg {
+		case "CE":
+			ceV, ceQ = ceV+e.AvgPrice*float64(e.FilledQty), ceQ+e.FilledQty
+		case "PE":
+			peV, peQ = peV+e.AvgPrice*float64(e.FilledQty), peQ+e.FilledQty
+		}
+	}
+	if ceQ > 0 {
+		ceAvg = round2(ceV / float64(ceQ))
+	}
+	if peQ > 0 {
+		peAvg = round2(peV / float64(peQ))
+	}
+	if ceQ > 0 && peQ > 0 {
+		straddle = round2(ceAvg + peAvg) // adds up to the two averages shown
+	}
+	return ceAvg, peAvg, straddle
 }

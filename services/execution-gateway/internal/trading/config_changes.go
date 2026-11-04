@@ -69,6 +69,8 @@ func diffMonitorConfig(a, b MonitorConfig) []ConfigChange {
 		{"Straddle divisor", cfgNum(a.StraddleDiv), cfgNum(b.StraddleDiv)},
 		{"Hedge divisor", cfgNum(a.HedgeDiv), cfgNum(b.HedgeDiv)},
 		{"Leave % of allowed", cfgNum(a.HedgeLeavePct), cfgNum(b.HedgeLeavePct)},
+		{"Intra-minute trigger", cfgNum(a.IntraMult), cfgNum(b.IntraMult)},
+		{"Intra-minute leave %", cfgNum(a.IntraLeavePct), cfgNum(b.IntraLeavePct)},
 		{"Hedge min (bps)", cfgPtr(a.HedgeMinThresholdBps), cfgPtr(b.HedgeMinThresholdBps)},
 		{"Hedge delta threshold", cfgNum(a.HedgeThresholdDelta), cfgNum(b.HedgeThresholdDelta)},
 		{"Hedge points floor", cfgNum(a.HedgePointsFloor), cfgNum(b.HedgePointsFloor)},

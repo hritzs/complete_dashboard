@@ -1705,6 +1705,9 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 		WingNetPE:     wingNetPE,
 	}
 
+	if simDelta, gapLots, ok := simGapFor(trade, snapshot); ok {
+		snapshot.SimDelta, snapshot.SimGapLots = simDelta, gapLots
+	}
 	s.Store.SaveSnapshot(snapshot)
 
 	if s.Snapshot != nil {
@@ -1745,7 +1748,7 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 	// minute-end check with fresh positions. Not in the hedge test modes.
 	// A simulation-driven trade (sim_drive.go) takes its hedges and exits
 	// from the simulation; the monitor's own checks stand aside while it runs.
-	sizing := lutDrivingRule().withHedgeLeavePct(trade.Config.HedgeLeavePct)
+	sizing := lutDrivingRule().withHedgeLeavePct(trade.Config.HedgeLeavePct).withIntra(trade.Config.IntraMult, trade.Config.IntraLeavePct)
 	simDriven, simFresh := simDriveOwns(tradeUID)
 	if simDriven && !simFresh && now.Second() == 0 {
 		log.Printf("[SIM-DRIVE][%s] ⚠ simulation not updating -- no hedge / SL / TP is being taken for this trade (hard exit time still applies)", tradeUID)
@@ -1761,12 +1764,16 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 			PointsOut: pointsOut, PointsAllowed: pointsAllowed, Spot: spot, NetDelta: netDelta,
 			LotSize: lotSize, TradeLots: int64(trade.Lots),
 			MinThresholdBps: resolveHedgeMinThresholdBps(trade.Config.HedgeMinThresholdBps),
-			Mult:            hedgeIntraMult, Frac: hedgeIntraFrac,
+			Mult:            sizing.intraTrigger(), Frac: hedgeIntraFrac, LeaveBand: sizing.IntraLeave,
 		})
 		if d.Hedge {
 			rt.LastIntraHedge = currentMinute
-			reason := fmt.Sprintf("INTRA-MINUTE points_out=%.2f > %.1f x effective_allowed=%.2f net_delta=%.4f lot_size=%d hedge_lots=%d (complete delta)",
-				pointsOut, hedgeIntraMult, d.EffectiveAllowed, netDelta, lotSize, d.Lots)
+			how := "complete delta"
+			if sizing.IntraLeave > 0 {
+				how = fmt.Sprintf("to %.4g%% of allowed", sizing.IntraLeave*100)
+			}
+			reason := fmt.Sprintf("INTRA-MINUTE points_out=%.2f > %.4g x effective_allowed=%.2f net_delta=%.4f lot_size=%d hedge_lots=%d (%s)",
+				pointsOut, sizing.intraTrigger(), d.EffectiveAllowed, netDelta, lotSize, d.Lots, how)
 			log.Printf("[MONITOR][%s] %s invoking trade-scoped hedge %s", tradeUID, now.Format("15:04:05"), reason)
 			if err := s.ManualHedgeLots(context.WithValue(context.Background(), hedgeTriggerKey{}, reason), tradeUID, int(d.Lots)); err != nil {
 				log.Printf("[MONITOR][%s] intra-minute hedge failed: %v", tradeUID, err)
@@ -3746,6 +3753,10 @@ func (s *Service) ManualHedgeLots(ctx context.Context, tradeUID string, lots int
 		return fmt.Errorf("snapshot not found")
 	}
 	ceSide, peSide, needed := hedgeSidesFromSignedDelta(snap.NetDelta)
+	if forced, ok := ctx.Value(hedgeSidesKey{}).(hedgeSides); ok {
+		ceSide, peSide, needed = forced.CE, forced.PE, true
+		ev.Trigger, ev.Reason = "MATCH_SIM", forced.Reason
+	}
 	if !needed {
 		return nil
 	}

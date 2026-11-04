@@ -112,6 +112,7 @@ func (s *Service) sbHandOffLocked(r *sbRunner) bool {
 		tr.Config.HedgeDiv = 38
 	}
 	tr.Config.HedgeLeavePct = cfg.HedgeLeavePct
+	tr.Config.IntraMult, tr.Config.IntraLeavePct = cfg.IntraMult, cfg.IntraLeavePct
 	if cfg.HedgeMinBps > 0 {
 		hm := cfg.HedgeMinBps
 		tr.Config.HedgeMinThresholdBps = &hm
