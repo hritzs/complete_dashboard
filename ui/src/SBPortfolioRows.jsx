@@ -123,6 +123,8 @@ function SBRow(props) {
         <td style={td}>{uid().slice(-8)}</td>
         <td style={td}>{cfg().symbol}</td>
         <td style={td}>{(s().strikes || []).map((k) => fmt(k, 0)).join(', ') || fmt(s().atm, 0)}</td>
+        <td style={{ ...td, 'white-space': 'nowrap' }} title="CE + PE average of the build's sell fills so far">{Number(p().build_straddle) > 0 ? `₹${fmt(p().build_straddle)}` : '—'}</td>
+        <td style={{ ...td, 'white-space': 'nowrap' }} title="Strike + CE - PE of the build's sell fills so far">{(s().strikes || []).length === 1 && Number(p().build_avg_ce) > 0 && Number(p().build_avg_pe) > 0 ? fmt(Number(s().strikes[0]) + Number(p().build_avg_ce) - Number(p().build_avg_pe)) : '—'}</td>
         <td style={td}>
           <span class={`status-badge ${String(s().phase || '').toLowerCase()}`}>{s().mode === 'LIVE' ? 'SBUILD' : 'SBUILD SHADOW'} · {s().phase}</span>
           <Show when={s().phase === 'BUILDING' || s().phase === 'PAUSED'}>
@@ -153,7 +155,7 @@ function SBRow(props) {
       </tr>
       <Show when={open()}>
         <tr class="details-row">
-          <td colSpan="19" style={{ padding: '16px', background: '#101a33' }}>
+          <td colSpan="21" style={{ padding: '16px', background: '#101a33' }}>
             <div class="trade-dashboard">
               <div class="trade-dashboard-header">
                 <div>

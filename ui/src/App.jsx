@@ -2798,6 +2798,8 @@ function App() {
                       <th style={{ padding: "10px" }} title="Last 8 characters of the trade id -- click a row for full details">UID</th>
                       <th style={{ padding: "10px" }}>Symbol</th>
                       <th style={{ padding: "10px" }} title="Strike of the sold straddle">Strike</th>
+                      <th style={{ padding: "10px" }} title="CE + PE average of the build's own sell fills; hedges do not change it">Sold Straddle</th>
+                      <th style={{ padding: "10px" }} title="Synthetic the straddle was sold at: strike + CE - PE of the build's sell fills">Entry Syn</th>
                       <th style={{ padding: "10px" }} title="ACTIVE = monitored; PARTIAL = built less than requested; CLOSED_* = how it was closed">Status</th>
                       <th style={{ padding: "10px" }} title="Net CE contracts sold across every leg held; only wings excluded">CE Qty</th>
                       <th style={{ padding: "10px" }} title="Last traded price of the CE leg (avg exit price once closed)">CE LTP</th>
@@ -3004,6 +3006,8 @@ function App() {
                               <td style={{ padding: "10px" }}>{uid.slice(-8)}</td>
                               <td style={{ padding: "10px" }}>{item.symbol}</td>
                               <td style={{ padding: "10px" }}>{item.strike || metrics().strike || "—"}</td>
+                              <td style={{ padding: "10px", "white-space": "nowrap" }}>{item.soldStraddle > 0 ? `₹${fmt(item.soldStraddle, 2)}` : "—"}</td>
+                              <td style={{ padding: "10px", "white-space": "nowrap" }}>{buildSynthetic(item.executions) > 0 ? fmt(buildSynthetic(item.executions), 2) : "—"}</td>
                               <td style={{ padding: "10px" }}>
                                 <span class={`status-badge ${(status()).toLowerCase()}`}>
                                   {status()}<Show when={isPartialFill()}><span title={partialTitle()}> · PARTIAL</span></Show>
@@ -3061,7 +3065,7 @@ function App() {
                             </tr>
                             <Show when={isExpanded()}>
                               <tr class="details-row">
-                                <td colSpan="19" style={{ padding: "16px", background: "#101a33" }}>
+                                <td colSpan="21" style={{ padding: "16px", background: "#101a33" }}>
                                   <div class="trade-dashboard">
 
                                     <div class="trade-dashboard-header">
