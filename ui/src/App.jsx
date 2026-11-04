@@ -5,6 +5,7 @@
   import MockTab from './MockTab.jsx';
   import MuhuratTab from './MuhuratTab.jsx';
   import SBPortfolioRows, { sbStore } from './SBPortfolioRows.jsx';
+  import { buildSynthetic, hedgeSynthetics } from './synthetics.js';
   import ManualLegPanel, { closeManualLeg, addManualLeg } from './ManualLegPanel.jsx';
   import BrokerRiskPanel from './BrokerRiskPanel.jsx';
   import ActionAlerts from './ActionAlerts.jsx';
@@ -3192,6 +3193,10 @@ function App() {
                                           <strong>{item.soldStraddle > 0 ? `₹${fmt(item.soldStraddle, 2)} (CE ${fmt(item.soldCE, 2)} + PE ${fmt(item.soldPE, 2)})` : "—"}</strong>
                                         </div>
                                         <div class="trade-metric-row">
+                                          <span>Build synthetic</span>
+                                          <strong>{buildSynthetic(item.executions) > 0 ? fmt(buildSynthetic(item.executions), 2) : "—"}</strong>
+                                        </div>
+                                        <div class="trade-metric-row">
                                           <span>Underlying</span>
                                           <strong>{fmt(live().underlying ?? 0, 2)}</strong>
                                         </div>
@@ -3477,22 +3482,26 @@ function App() {
                                           <div class="trade-card-title">Hedges — {item.config?.hedge_count || 0} filled · {(item.config?.hedge_events || []).length} attempt(s)</div>
                                           <div class="position-table-wrap">
                                             <table class="trade-position-table">
-                                              <thead><tr><th>Time</th><th>Trigger</th><th>Result</th><th>Lots / qty</th><th>CE</th><th>PE</th><th>Strike</th><th title="Net delta of the position before this hedge">Δ before</th><th>Tranches</th><th>Reason / error</th></tr></thead>
+                                              <thead><tr><th>Time</th><th>Trigger</th><th>Result</th><th>Lots / qty</th><th>CE</th><th>PE</th><th>Strike</th><th>Synthetic</th><th title="Net delta of the position before this hedge">Δ before</th><th>Tranches</th><th>Reason / error</th></tr></thead>
                                               <tbody>
-                                                <For each={[...(item.config?.hedge_events || [])].reverse()}>{(h) => (
+                                                <For each={[...(item.config?.hedge_events || [])].reverse()}>{(h) => {
+                                                  const fill = () => hedgeSynthetics(item.config?.hedge_events, item.executions)[`${h.time}|${h.strike}`] || {};
+                                                  return (
                                                   <tr>
                                                     <td>{h.time}</td>
                                                     <td>{h.trigger}</td>
                                                     <td class={h.result === 'FILLED' ? 'positive' : h.result === 'PARTIAL' ? 'yellow' : 'negative'}>{h.result}</td>
                                                     <td>{h.lots} / {h.qty}</td>
-                                                    <td>{h.ce_side} {h.ce_filled}</td>
-                                                    <td>{h.pe_side} {h.pe_filled}</td>
+                                                    <td>{h.ce_side} {h.ce_filled}{fill().ce > 0 ? ` @ ${fmt(fill().ce, 2)}` : ''}</td>
+                                                    <td>{h.pe_side} {h.pe_filled}{fill().pe > 0 ? ` @ ${fmt(fill().pe, 2)}` : ''}</td>
                                                     <td>{h.strike ? fmt(h.strike, 0) : '—'}</td>
+                                                    <td>{fill().synthetic > 0 ? fmt(fill().synthetic, 2) : '—'}</td>
                                                     <td>{fmt(h.delta_before, 2)}</td>
                                                     <td>{h.tranches}</td>
                                                     <td style={{ "white-space": "normal", "max-width": "380px", opacity: 0.8 }}>{h.error || h.reason || ''}</td>
                                                   </tr>
-                                                )}</For>
+                                                );
+                                                }}</For>
                                               </tbody>
                                             </table>
                                           </div>
