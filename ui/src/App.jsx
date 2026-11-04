@@ -313,6 +313,7 @@ function App() {
     square_off_hard_time: "",
     straddle_div: "4",
     hedge_div: "57",
+    hedge_pct: "",
     hedge_threshold_delta: "",
     hedge_min_threshold_bps: "8"
   });
@@ -1518,6 +1519,8 @@ function App() {
 
         hedge_div: cfg.hedge_div ?? cfg.hedgeDiv ?? "57",
 
+        hedge_pct: cfg.hedge_pct ?? "",
+
         hedge_threshold_delta: cfg.hedge_threshold_delta ?? cfg.hedgeThresholdDelta ?? String(item.lotSize || ""),
 
         hedge_min_threshold_bps: cfg.hedge_min_threshold_bps ?? "8",
@@ -1574,6 +1577,8 @@ function App() {
         "straddle_div",
 
         "hedge_div",
+
+        "hedge_pct",
 
         "hedge_threshold_delta",
 
@@ -2590,6 +2595,17 @@ function App() {
                   />
                 </label>
 
+                <label style={formLabel}>
+                  Minute-end Hedge %
+                  <input
+                    type="text" inputmode="decimal"
+                    placeholder="standard"
+                    value={modifyTradeForm().hedge_pct}
+                    onInput={(event) => setModifyTradeForm((form) => ({ ...form, hedge_pct: event.currentTarget.value }))}
+                    style={formInput}
+                  />
+                </label>
+
                 <label style={{ display: "flex", "flex-direction": "column", gap: "6px", "font-size": "13px", "grid-column": "1 / -1" }}>
                   Exit Time (HH:MM or HH:MM:SS) -- squares off the trade at this time
                   <input
@@ -3230,6 +3246,7 @@ function App() {
                                             {item.config?.straddle_div ?? item.config?.straddleDiv ?? 4}
                                           </strong>
                                         </div>
+                                        {item.config?.hedge_pct > 0 ? <div class="monitor-row"><span>Minute-end hedge</span><strong>{item.config.hedge_pct}%</strong></div> : null}
 
                                         <div class="monitor-row">
                                           <span>Delta Threshold</span>

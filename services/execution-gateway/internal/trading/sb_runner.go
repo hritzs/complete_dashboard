@@ -50,8 +50,9 @@ type SBConfig struct {
 	SLBps          float64 `json:"sl_bps"`           // 0 = off
 	TPBps          float64 `json:"tp_bps"`           // 0 = off
 	ExitTime       string  `json:"exit_time"`        // HH:MM[:SS], blank = none
-	StraddleDiv    float64 `json:"straddle_div"`     // default 4
-	HedgeDiv       float64 `json:"hedge_div"`        // default 57
+	StraddleDiv    float64 `json:"straddle_div"`     // default 3
+	HedgeDiv       float64 `json:"hedge_div"`        // default 38
+	HedgePct       float64 `json:"hedge_pct"`        // share of the net delta hedged at minute end, default 50
 	HedgeMinBps    float64 `json:"hedge_min_bps"`    // default 8
 	MaxDepthAgeMs  int64   `json:"max_depth_age_ms"` // default 1500
 	// WingPct: margin wings % OTM (0 = none), LIVE runs only. Fixed when a
@@ -310,11 +311,26 @@ func sbDefaults(c SBConfig) SBConfig {
 	if c.TrancheGapMs <= 0 || c.TrancheGapMs == 1000 || c.TrancheGapMs == 250 {
 		c.TrancheGapMs = 50
 	}
+	// Owner, 2026-11-04: straddle / 3, IV / 38, 50 % hedge. A rule saved before
+	// Hedge % existed moves over once if it still has the old 4 / 57; after
+	// that any value set on the rule stays.
+	if c.HedgePct <= 0 {
+		c.HedgePct = 50
+		if c.StraddleDiv == 4 {
+			c.StraddleDiv = 3
+		}
+		if c.HedgeDiv == 57 {
+			c.HedgeDiv = 38
+		}
+	}
+	if c.HedgePct > 100 {
+		c.HedgePct = 100
+	}
 	if c.StraddleDiv <= 0 {
-		c.StraddleDiv = 4
+		c.StraddleDiv = 3
 	}
 	if c.HedgeDiv <= 0 {
-		c.HedgeDiv = 57
+		c.HedgeDiv = 38
 	}
 	if c.HedgeMinBps <= 0 {
 		c.HedgeMinBps = defaultHedgeMinThresholdBps
@@ -949,10 +965,11 @@ func (s *Service) sbRiskLocked(r *sbRunner, chain *OptionChainSnapshot, now time
 			if view.NetGamma != 0 {
 				out = math.Abs(view.NetDelta / view.NetGamma)
 			}
+			rule := lutDrivingRule().withHedgePct(cfg.HedgePct)
 			d := decideHedge(hedgeDecisionInput{
 				PointsOut: out, PointsAllowed: allowed, Spot: spot, NetDelta: view.NetDelta,
 				LotSize: lot, TradeLots: int64(view.FilledStraddles) / lot, MinThresholdBps: cfg.HedgeMinBps,
-				LeaveBand: lutDrivingRule().LeaveBand,
+				Frac: rule.Frac, LeaveBand: rule.LeaveBand,
 			})
 			risk["HEDGE"] = fmt.Sprintf("%s: out %.2f / allowed %.2f (floor %.2f), net delta %+.2f", d.Action, out, d.EffectiveAllowed, d.Floor, view.NetDelta)
 			log.Printf("[MONITOR][%s] minute=%s action=%s points_out=%.4f points_allowed=%.4f min_points=%.4f net_delta=%.4f abs_delta=%.4f lot_size=%d syn_fut=%.2f syn_spot=%.2f",

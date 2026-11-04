@@ -1,6 +1,7 @@
 package trading
 
 import (
+	"fmt"
 	"math"
 	"sync/atomic"
 )
@@ -95,6 +96,7 @@ type hedgeRule struct {
 	Key       string
 	LeaveBand float64 // 0 = the complete delta at minute end
 	Intra     bool
+	Frac      float64 // > 0: a fixed share of the net delta at minute end (a Straddle Build rule's Hedge %)
 }
 
 var (
@@ -116,8 +118,36 @@ func lutDrivingRule() hedgeRule {
 	return hedgeRuleFor(k)
 }
 
+// withHedgePct: a Straddle Build rule's Hedge % replaces the rule's minute-end
+// sizing (owner, 2026-11-04: straddle / 3, IV / 38, 50 %; the LUT keeps its
+// own hedge). 0 = unchanged. The intra-minute line stays, on the complete delta.
+func (r hedgeRule) withHedgePct(pct float64) hedgeRule {
+	if pct <= 0 {
+		return r
+	}
+	r.Frac, r.LeaveBand, r.Intra = math.Min(pct, 100)/100, 0, true
+	return r
+}
+
+// applyTradeHedgePct sets an open trade's Hedge % (0 = back to the standard
+// rule). A sim-driven LUT trade takes its hedges from its simulation, so it
+// refuses one.
+func applyTradeHedgePct(tr *StoredTrade, pct float64) error {
+	if pct < 0 || pct > 100 {
+		return fmt.Errorf("hedge %% must be 0 to 100")
+	}
+	if owned, _ := simDriveOwns(tr.TradeUID); owned && pct > 0 {
+		return fmt.Errorf("hedge %% does not apply to %s: its hedges come from its simulation", tr.TradeUID)
+	}
+	tr.Config.HedgePct = pct
+	return nil
+}
+
 // minuteFrac: the share of the net delta a minute-end hedge takes.
 func (r hedgeRule) minuteFrac(pointsOut, effAllowed float64) float64 {
+	if r.Frac > 0 {
+		return r.Frac
+	}
 	if r.LeaveBand <= 0 {
 		return 1
 	}

@@ -106,11 +106,12 @@ func (s *Service) sbHandOffLocked(r *sbRunner) bool {
 	tr.Config.PollIntervalSec = 1
 	tr.Config.StraddleDiv, tr.Config.HedgeDiv = cfg.StraddleDiv, cfg.HedgeDiv
 	if tr.Config.StraddleDiv <= 0 {
-		tr.Config.StraddleDiv = 4
+		tr.Config.StraddleDiv = 3
 	}
 	if tr.Config.HedgeDiv <= 0 {
-		tr.Config.HedgeDiv = 57
+		tr.Config.HedgeDiv = 38
 	}
+	tr.Config.HedgePct = cfg.HedgePct
 	if cfg.HedgeMinBps > 0 {
 		hm := cfg.HedgeMinBps
 		tr.Config.HedgeMinThresholdBps = &hm

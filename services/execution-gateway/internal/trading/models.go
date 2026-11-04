@@ -266,6 +266,7 @@ type MonitorConfig struct {
 	PollIntervalSec          int       `json:"poll_interval_sec"`
 	StraddleDiv              float64   `json:"straddle_div"`
 	HedgeDiv                 float64   `json:"hedge_div"`
+	HedgePct                 float64   `json:"hedge_pct,omitempty"` // Straddle Build: share of the net delta hedged at minute end; 0 = the driving rule
 	RollTimeThreshold        float64   `json:"roll_time_threshold"`
 	SquareOffTime            time.Time `json:"square_off_time,omitempty"`
 	ForceOneLotHedgeTest     bool      `json:"force_one_lot_hedge_test,omitempty"`

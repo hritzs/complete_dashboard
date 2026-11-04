@@ -68,6 +68,7 @@ func diffMonitorConfig(a, b MonitorConfig) []ConfigChange {
 		{"Exit time", cfgClock(a.SquareOffHardTime), cfgClock(b.SquareOffHardTime)},
 		{"Straddle divisor", cfgNum(a.StraddleDiv), cfgNum(b.StraddleDiv)},
 		{"Hedge divisor", cfgNum(a.HedgeDiv), cfgNum(b.HedgeDiv)},
+		{"Hedge %", cfgNum(a.HedgePct), cfgNum(b.HedgePct)},
 		{"Hedge min (bps)", cfgPtr(a.HedgeMinThresholdBps), cfgPtr(b.HedgeMinThresholdBps)},
 		{"Hedge delta threshold", cfgNum(a.HedgeThresholdDelta), cfgNum(b.HedgeThresholdDelta)},
 		{"Hedge points floor", cfgNum(a.HedgePointsFloor), cfgNum(b.HedgePointsFloor)},

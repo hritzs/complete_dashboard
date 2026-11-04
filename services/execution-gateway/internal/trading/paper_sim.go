@@ -75,7 +75,9 @@ type PaperSimConfig struct {
 	// HedgeRule: "old" / "new" -- the hedge of that LUT table set
 	// (hedge_decision.go); "" = old.
 	HedgeRule string `json:"hedge_rule,omitempty"`
-	CreatedAt string `json:"created_at,omitempty"`
+	// HedgePct > 0: a Straddle Build trade's Hedge % (hedgeRule.withHedgePct).
+	HedgePct  float64 `json:"hedge_pct,omitempty"`
+	CreatedAt string  `json:"created_at,omitempty"`
 
 	// MTM square-off (its own exit type, separate from SL/TP/time): once
 	// the trade can be closed at executable prices (shorts at the ask,
@@ -803,7 +805,7 @@ func (b *simBook) value(m simMinute, q int64) PaperSimPoint {
 func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMinute) PaperSimResult {
 	slGiven := c.SLBps > 0
 	c = paperDefaults(c)
-	rule := hedgeRuleFor(c.HedgeRule)
+	rule := hedgeRuleFor(c.HedgeRule).withHedgePct(c.HedgePct)
 	newLogic := rule.Key == "new" // the new tables' exits and expiry-day rules (backtest)
 	res := PaperSimResult{Config: c, Status: "NO DATA"}
 	entry := lutHHMM(c.Entry)
@@ -904,7 +906,7 @@ func RunPaperSim(mins []simMinute, c PaperSimConfig, lotSize int64, live *simMin
 			out = math.Abs(pt.NetDelta / pt.NetGamma)
 		}
 		d := decideHedge(hedgeDecisionInput{PointsOut: out, PointsAllowed: allowed, Spot: m.Future, NetDelta: pt.NetDelta,
-			LotSize: lotSize, TradeLots: int64(c.Lots), MinThresholdBps: simMinBpsFor(c, deltaBand), LeaveBand: rule.LeaveBand})
+			LotSize: lotSize, TradeLots: int64(c.Lots), MinThresholdBps: simMinBpsFor(c, deltaBand), Frac: rule.Frac, LeaveBand: rule.LeaveBand})
 		pt.PointsOut, pt.PointsAllowed, pt.HedgeFloor, pt.HedgeCheck, pt.HedgeLotsNeeded = out, d.EffectiveAllowed, d.Floor, d.Action, d.Lots
 		if !d.Hedge {
 			pt.HedgeLotsNeeded = 0
@@ -1362,6 +1364,10 @@ type PaperActual struct {
 	SimID       string           `json:"sim_id"`
 	ExitTime    string           `json:"exit_time,omitempty"`   // HH:MM of the last exit fill (closed trades)
 	ExitReason  string           `json:"exit_reason,omitempty"` // from the closed status
+	// A Straddle Build trade's own hedge, for its simulation (0 = the defaults).
+	HedgePct    float64 `json:"hedge_pct,omitempty"`
+	StraddleDiv float64 `json:"straddle_div,omitempty"`
+	HedgeDiv    float64 `json:"hedge_div,omitempty"`
 }
 
 // paperSameExpiry: a trade sold on tradeExp belongs to the view showing
@@ -1416,6 +1422,11 @@ func (s *Service) paperActuals(ctx context.Context, day string) []PaperActual {
 	var out []PaperActual
 	for _, t := range sums {
 		a := PaperActual{TradeUID: t.TradeUID, Status: t.Status, Expiry: t.Expiry, Strike: t.Strike, RealizedPnL: t.RealizedPnL}
+		if s.Store != nil {
+			if tr, ok := s.Store.LoadTrade(t.TradeUID); ok && tr.Config.HedgePct > 0 {
+				a.HedgePct, a.StraddleDiv, a.HedgeDiv = tr.Config.HedgePct, tr.Config.StraddleDiv, tr.Config.HedgeDiv
+			}
+		}
 		var ceV, peV float64
 		var ceQ, peQ int64
 		for _, e := range t.Executions {
@@ -1492,6 +1503,7 @@ func sameSimAs(done []PaperSimResult, c PaperSimConfig, unit bool) string {
 			want.TPBps > 0 && r.TPBps != want.TPBps,
 			hhmm(lc.ExitTime) != hhmm(want.ExitTime),
 			hedgeRuleFor(lc.HedgeRule).Key != hedgeRuleFor(want.HedgeRule).Key,
+			lc.HedgePct != want.HedgePct,
 			lc.PointsAllowed != want.PointsAllowed,
 			lc.HedgeMode != want.HedgeMode,
 			lc.StraddleDiv != want.StraddleDiv || lc.HedgeDiv != want.HedgeDiv || lc.HedgeMinBps != want.HedgeMinBps,
@@ -1619,7 +1631,8 @@ func (h *Handlers) PaperSimHandler(w http.ResponseWriter, r *http.Request) {
 			l = int(actual[i].Qty / lotSize)
 		}
 		c := PaperSimConfig{ID: id, Source: "actual trade " + actual[i].TradeUID, Entry: actual[i].EntryTime, Lots: l, Hedge: hedge, HedgeMode: hedgeMode,
-			ActualExit: actual[i].ExitTime, ActualReason: actual[i].ExitReason, Strike: actual[i].Strike}
+			ActualExit: actual[i].ExitTime, ActualReason: actual[i].ExitReason, Strike: actual[i].Strike,
+			HedgePct: actual[i].HedgePct, StraddleDiv: actual[i].StraddleDiv, HedgeDiv: actual[i].HedgeDiv}
 		if run, ok := simDrivenRun(day, actual[i].TradeUID); ok {
 			// A sim-driven LUT trade shows the very simulation that drove
 			// it (sim_drive.go): same band, strike, SL / TP, exit time.
