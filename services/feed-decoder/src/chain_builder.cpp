@@ -401,12 +401,16 @@ void ChainBuilder::update_option_price(int token, double new_price, double bid, 
 
     auto& strike_row = chain.strikes[static_cast<size_t>(strike_index)];
 
+    // A tick with LTP 0 carries no trade price (BSE sends ~30% of SENSEX
+    // updates that way, 2026-11-05): keep the last real price, as bid / ask
+    // and the future already do -- a 0 here wiped the strike's price and with
+    // it the straddle, ATM and greeks built from it.
     if (strike_row.ce_token == static_cast<uint32_t>(token)) {
-        strike_row.ce_ltp = new_price;
+        if (new_price > 0.0) strike_row.ce_ltp = new_price;
         if (bid > 0.0) strike_row.ce_bid = bid;
         if (ask > 0.0) strike_row.ce_ask = ask;
     } else if (strike_row.pe_token == static_cast<uint32_t>(token)) {
-        strike_row.pe_ltp = new_price;
+        if (new_price > 0.0) strike_row.pe_ltp = new_price;
         if (bid > 0.0) strike_row.pe_bid = bid;
         if (ask > 0.0) strike_row.pe_ask = ask;
     } else {
