@@ -1727,12 +1727,17 @@ func (s *Service) runMonitorCycle(tradeUID string) {
 	// PollIntervalSec -- so PnL/greeks/LTP movement is visible between
 	// minute boundaries too, matching the reference system's per-tick
 	// snapshot cadence.
+	// tick= is when the line is written (kept HH:MM:SS: watch_logs.sh
+	// matches it); the prices are the chain's, so the line also carries the
+	// exchange time each LTP traded at and the plain strike + CE - PE
+	// synthetic (syn_fut is the chain's own synthetic, built differently).
 	now := time.Now()
 	log.Printf(
-		"[MONITOR][%s] tick=%s snapshot spot=%.2f syn_fut=%.2f fut_ltp=%.2f total_pnl=%.2f pnl_per_straddle=%.2f delta=%.4f gamma=%.6f theta=%.2f vega=%.2f ce_ltp=%.2f pe_ltp=%.2f strike=%.0f ce_qty=%d pe_qty=%d lot_size=%d",
+		"[MONITOR][%s] tick=%s snapshot spot=%.2f syn_fut=%.2f fut_ltp=%.2f total_pnl=%.2f pnl_per_straddle=%.2f delta=%.4f gamma=%.6f theta=%.2f vega=%.2f ce_ltp=%.2f pe_ltp=%.2f strike=%.0f ce_qty=%d pe_qty=%d lot_size=%d at=%s ce_trade=%s pe_trade=%s syn_ltp=%.2f",
 		tradeUID, now.Format("15:04:05"), spot, chain.SyntheticFuture, chain.FutureLtp, totalPNL, pnlPerStraddle,
 		netDelta, netGamma, netTheta, netVega, ceRow.CELtp, peRow.PELtp,
 		trade.Strike, trade.CEQty, trade.PEQty, trade.LotSize,
+		now.In(istLoc()).Format("15:04:05.000"), snapshotTradeTime(ceRow.CELTT), snapshotTradeTime(peRow.PELTT), snapshotSynLTP(ceRow, peRow),
 	)
 
 	// Minute-end hedge eligibility check
