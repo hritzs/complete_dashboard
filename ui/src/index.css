@@ -11,3 +11,22 @@ body {
   -moz-osx-font-smoothing: grayscale;
   padding: 14px;
 }
+/* Portfolio table: its own scroll box so the sideways scrollbar is always in
+   view, a header that stays on top, and an opened trade's details pinned to
+   the visible width while the wide table slides sideways. */
+.portfolio-scroll {
+  overflow: auto;
+  max-height: 78vh;
+}
+.portfolio-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #202020;
+}
+.portfolio-scroll .details-row > td > .trade-dashboard {
+  position: sticky;
+  left: 0;
+  width: var(--portfolio-view-w, calc(100vw - 120px));
+  white-space: normal;
+}

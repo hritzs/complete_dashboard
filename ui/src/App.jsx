@@ -2791,7 +2791,18 @@ function App() {
                 </div>
               }
             >
-              <div class="positions-table-wrapper" style={{ "margin-bottom": "24px", "overflow-x": "auto" }}>
+              {/* Its own scroll box (owner 2026-11-05): the sideways scrollbar stays at the
+                  bottom of what is on screen, the header stays on top, and an opened
+                  trade's details stay in view while the wide table slides (index.css). */}
+              <div
+                class="positions-table-wrapper portfolio-scroll"
+                style={{ "margin-bottom": "24px" }}
+                ref={(el) => {
+                  const ro = new ResizeObserver(() => el.style.setProperty("--portfolio-view-w", `${Math.max(320, el.clientWidth - 56)}px`));
+                  ro.observe(el);
+                  onCleanup(() => ro.disconnect());
+                }}
+              >
                 <table class="positions-table" style={{ width: "100%", "border-collapse": "collapse", "white-space": "nowrap" }}>
                   <thead>
                     <tr style={{ background: "#202020", "text-align": "left" }}>
