@@ -373,6 +373,23 @@ func main() {
 
 			executor := greeksoftbroker.NewExecutor(gsClient)
 
+			// BSE (SENSEX / BANKEX) orders and quotes need GreekSoft's own
+			// token, which only its contract master gives: load it in the
+			// background through this session (no login), from today's cache
+			// when there is one; retried every 5 minutes until it loads.
+			go func(c *gs.Client, account string) {
+				for {
+					ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+					err := greeksoftbroker.EnsureBSETokens(ctx, c, greeksoftbroker.BSECacheDir(), time.Now())
+					cancel()
+					if err == nil {
+						return
+					}
+					log.Printf("[GREEKSOFT TOKEN] ⚠️ account=%s BSE contract master not loaded: %v -- SENSEX/BANKEX orders are refused by GreekSoft until it loads; retrying in 5 min", account, err)
+					time.Sleep(5 * time.Minute)
+				}
+			}(gsClient, accountID)
+
 			// Fill verification tries the reconciler-persisted (Iris-sourced)
 			// Postgres path first, falling back to REST order-book polling
 			// automatically on any error -- see

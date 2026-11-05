@@ -17,6 +17,7 @@ var (
 	gtokenOnce         sync.Once
 	gtokenMap          map[int64]int64
 	shortTokenByGToken map[int64]int64
+	bseExchangeToken   map[int64]bool // BSE rows of BSEIndexTokens.csv: their exchange tokens
 )
 
 func MapOrderIntent(intent trading.OrderIntent) *broker.OrderIntent {
@@ -48,15 +49,29 @@ func MapOrderIntent(intent trading.OrderIntent) *broker.OrderIntent {
 	}
 }
 
-// bseFOGTokenBase: GreekSoft token of a BSE F&O contract = this + its exchange token.
-const bseFOGTokenBase = 202000000
-
 func resolveGreeksoftGToken(exchangeSegment string, token int64) int64 {
 	if token <= 0 {
 		return token
 	}
 
 	loadGreeksoftTokenMapOnce()
+
+	// BSE (SENSEX / BANKEX): GreekSoft's own token, from its contract master
+	// (bse_tokens.go). There is no formula for it.
+	seg := strings.ToUpper(exchangeSegment)
+	if strings.Contains(seg, "BSE") || (!strings.Contains(seg, "NSE") && bseExchangeToken[token]) {
+		g, ok, loaded := bseTokenFor(token)
+		switch {
+		case ok:
+			log.Printf("[GREEKSOFT TOKEN] BSE exchange_token=%d greek_gtoken=%d (GreekSoft contract master) exchange_segment=%s", token, g, exchangeSegment)
+			return g
+		case !loaded:
+			log.Printf("[GREEKSOFT TOKEN] ⚠️ BSE exchange_token=%d: GreekSoft's contract master is not loaded yet -- GreekSoft will refuse this token", token)
+		default:
+			log.Printf("[GREEKSOFT TOKEN] ⚠️ BSE exchange_token=%d is not in GreekSoft's contract master -- GreekSoft will refuse it", token)
+		}
+		return token
+	}
 
 	if gtokenMap != nil {
 		if mapped, ok := gtokenMap[token]; ok && mapped > 0 {
@@ -83,6 +98,7 @@ func loadGreeksoftTokenMapOnce() {
 	gtokenOnce.Do(func() {
 		gtokenMap = make(map[int64]int64)
 		shortTokenByGToken = make(map[int64]int64)
+		bseExchangeToken = make(map[int64]bool)
 
 		paths := candidateGreeksoftTokenCSVPaths()
 
@@ -156,11 +172,13 @@ func loadGreeksoftTokenCSV(path string) {
 		shortToken, err2 := parseInt64Cell(row[7])
 
 		// BSE rows carry the exchange token in the first column and "IO" in the
-		// eighth, with no GreekSoft token: it is bseFOGTokenBase + the exchange
-		// token (BSEGetsToken.xlsx: 203151294 <-> 1151294), as NSE F&O is 102000000 +.
-		if err1 == nil && err2 != nil && strings.EqualFold(strings.Trim(strings.TrimSpace(row[1]), "\""), "BSE") && fullToken > 0 && fullToken < bseFOGTokenBase {
-			shortToken, fullToken = fullToken, bseFOGTokenBase+fullToken
-			err2 = nil
+		// eighth, with no GreekSoft token. GreekSoft's token for them is NOT a
+		// formula of the exchange token (202000000 + it matched 0 of 38,499 BSEFO
+		// rows on 2026-11-03): it is looked up in GreekSoft's contract master
+		// (bse_tokens.go). Here they are only marked as BSE.
+		if err1 == nil && err2 != nil && strings.EqualFold(strings.Trim(strings.TrimSpace(row[1]), "\""), "BSE") && fullToken > 0 {
+			bseExchangeToken[fullToken] = true
+			continue
 		}
 
 		if err1 != nil || err2 != nil {
@@ -215,6 +233,9 @@ func resolveGreeksoftShortToken(brokerToken int64) int64 {
 		if shortToken, ok := shortTokenByGToken[brokerToken]; ok && shortToken > 0 {
 			return shortToken
 		}
+	}
+	if e, ok := bseExchangeTokenFor(brokerToken); ok && e > 0 { // BSE: from GreekSoft's contract master
+		return e
 	}
 
 	// Preserve the original value when no mapping exists; do not invent a token.

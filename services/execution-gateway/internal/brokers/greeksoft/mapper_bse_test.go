@@ -7,7 +7,7 @@ import (
 )
 
 func TestLoadTokenCSVMapsBSERows(t *testing.T) {
-	gtokenMap, shortTokenByGToken = map[int64]int64{}, map[int64]int64{}
+	gtokenMap, shortTokenByGToken, bseExchangeToken = map[int64]int64{}, map[int64]int64{}, map[int64]bool{}
 	f := filepath.Join(t.TempDir(), "tokens.csv")
 	body := `"xx.Token","Exchange","Type","Symbol","Expiry","Strike","OpType","Token","Blank"
 1134374,"BSE","OPTION","SENSEX","05-NOV-2026",75400,"CE","IO",NA
@@ -17,11 +17,16 @@ func TestLoadTokenCSVMapsBSERows(t *testing.T) {
 		t.Fatal(err)
 	}
 	loadGreeksoftTokenCSV(f)
-	if got := gtokenMap[1134374]; got != 203134374 {
-		t.Errorf("BSE token mapped to %d, want 203134374", got)
+	// BSE rows are only marked as BSE: GreekSoft's token comes from its
+	// contract master (bse_tokens.go), never from the old 202000000 + formula.
+	if got, ok := gtokenMap[1134374]; ok {
+		t.Errorf("BSE token must not be mapped by formula, got %d", got)
 	}
-	if got := shortTokenByGToken[203134374]; got != 1134374 {
-		t.Errorf("BSE reverse map %d, want 1134374", got)
+	if _, ok := shortTokenByGToken[203134374]; ok {
+		t.Error("the formula's 203134374 must not be in the reverse map")
+	}
+	if !bseExchangeToken[1134374] {
+		t.Error("BSE row not marked as BSE")
 	}
 	if got := gtokenMap[39913]; got != 102039913 {
 		t.Errorf("NSE token mapped to %d, want 102039913", got)

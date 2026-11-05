@@ -1,6 +1,7 @@
 package greeksoft
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/url"
@@ -54,6 +55,29 @@ func (c *Client) GetAllContract(ctx context.Context) ([]ContractDetail, error) {
 	}
 
 	return resBody.Data, nil
+}
+
+// GetAllContractCSV returns GreekSoft's contract master as it is actually
+// served: a CSV whose header starts "GreekToken,ExchangeToken,ExchangeSegMent"
+// (seen 2026-11-03, 38,499 BSEFO rows), which GetAllContract cannot decode as
+// JSON. It uses the client's existing session -- no login. Large (tens of MB):
+// callers fetch it once a day and cache what they need.
+func (c *Client) GetAllContractCSV(ctx context.Context) ([]byte, error) {
+	if c.Session == nil || c.Session.AuthToken == "" {
+		return nil, fmt.Errorf("greeksoft session is nil; login first")
+	}
+	_, raw, err := c.getRaw(ctx, fmt.Sprintf("%s/getAllContract", c.RestAPIBaseURL), c.Session.AuthToken)
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.HasPrefix(bytes.TrimSpace(raw), []byte("GreekToken")) {
+		head := raw
+		if len(head) > 160 {
+			head = head[:160]
+		}
+		return nil, fmt.Errorf("greeksoft getAllContract did not return the CSV contract master (starts %q)", head)
+	}
+	return raw, nil
 }
 
 // GetFullScripDetails looks up contract details for a single symbol/code.
