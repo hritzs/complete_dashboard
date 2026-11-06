@@ -16,6 +16,7 @@
   import { formInput, formLabel } from "./styles.js";
   import './App.css';
   import LatencyDashboard from './LatencyDashboard.jsx';
+  import TradeClockCompare from './TradeClockCompare.jsx';
 
 
   const normalize = (s) => (s || '').toString().trim().toUpperCase();
@@ -3218,6 +3219,10 @@ function App() {
                                           <strong>{fmt(live().underlying ?? 0, 2)}</strong>
                                         </div>
                                       </section>
+
+                                      <TradeClockCompare symbol={item.symbol} expiry={item.expiry} underlying={live().underlying} legs={livePositions()}
+                                        hedgeDiv={item.config?.hedge_div ?? item.config?.hedgeDiv} straddleDiv={item.config?.straddle_div ?? item.config?.straddleDiv}
+                                        minBps={item.config?.hedge_min_threshold_bps} />
 
                                       <section class="trade-card">
                                         <div class="trade-card-title">Net Greeks</div>
