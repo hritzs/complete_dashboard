@@ -22,6 +22,8 @@ func withSpecialSessions(t *testing.T, list []SpecialSession) {
 
 var muhurat2026 = SpecialSession{Date: "2026-11-08", Name: "Diwali Muhurat", PreOpen: "14:05", Open: "14:20", Close: "15:30"}
 
+// Owner 2026-11-06: the Muhurat session is the whole trading day -- its
+// remaining minutes / its own length (1 at the open, 0 at the close).
 func TestLutRawDTEMuhuratCountsOnlyItsTradingMinutes(t *testing.T) {
 	withSpecialSessions(t, []SpecialSession{muhurat2026})
 	ist := lutIST()
@@ -31,9 +33,9 @@ func TestLutRawDTEMuhuratCountsOnlyItsTradingMinutes(t *testing.T) {
 		h, m int
 		want float64
 	}{
-		{13, 0, 1 + 70.0/385},  // before the open: the whole 70-minute session ahead
-		{14, 20, 1 + 70.0/385}, // the open
-		{15, 0, 1 + 30.0/385},
+		{13, 0, 2},  // before the open: the whole session (= a whole day) ahead
+		{14, 20, 2}, // the open
+		{15, 0, 1 + 30.0/70},
 		{15, 30, 1}, // the close
 		{16, 0, 1},
 	} {

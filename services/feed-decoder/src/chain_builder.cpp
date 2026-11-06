@@ -130,7 +130,7 @@ static double calculate_dte(const std::string& expiry) {
         tm_now.tm_sec / 60.0;
 
     const double start_minutes = 9.0 * 60.0 + 15.0;   // 09:15
-    const double end_minutes   = 15.0 * 60.0 + 30.0;  // 15:30
+    const double end_minutes   = 15.0 * 60.0 + 40.0;  // 15:40 (owner, 2026-11-06: one 09:15-15:40 day everywhere, as the LUT)
     const double total_trading_minutes = end_minutes - start_minutes;
 
     double fraction = 0.0;
@@ -138,11 +138,13 @@ static double calculate_dte(const std::string& expiry) {
     std::strftime(ymd, sizeof(ymd), "%Y-%m-%d", &tm_now);
     SpecialSessionWindow sp;
     if (special_session_for(ymd, sp)) {
-        // Special session (Muhurat): only its own remaining trading minutes,
-        // as a share of a normal day.
+        // Special session (Muhurat): the session IS the whole trading day
+        // (owner, 2026-11-06: 14:20-15:40 there is what 09:15-15:40 is on a
+        // normal day): today's part = minutes left to its close / its length,
+        // 1 at the open, 0 at the close.
         double rem = sp.close_min - current_minutes;
         double len = sp.close_min - sp.open_min;
-        fraction = std::max(0.0, std::min(rem, len)) / total_trading_minutes;
+        fraction = len > 0 ? std::max(0.0, std::min(rem, len)) / len : 0.0;
     } else if (current_minutes < start_minutes) {
         fraction = 1.0;
     } else if (current_minutes >= end_minutes) {

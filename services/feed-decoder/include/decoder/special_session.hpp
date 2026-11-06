@@ -4,8 +4,9 @@
 // gateway (internal/trading/special_session.go): a JSON list of
 //   {"date":"YYYY-MM-DD","name":"...","pre_open":"HH:MM","open":"HH:MM","close":"HH:MM"}
 // at $SPECIAL_SESSIONS_FILE or ~/.trading-platform/special_sessions.json.
-// On a listed date the DTE fraction counts only that session's remaining
-// trading minutes; on every other date nothing changes. Re-read at most
+// On a listed date the session is the whole trading day: the DTE fraction is
+// that session's remaining minutes / its length (1 at its open, 0 at its
+// close); on every other date nothing changes. Re-read at most
 // once a minute.
 
 #include <cstdlib>

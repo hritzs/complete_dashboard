@@ -164,7 +164,8 @@ type MuhuratLive struct {
 	PE       float64 `json:"pe"`
 	Straddle float64 `json:"straddle"`
 	DTE      float64 `json:"dte"`        // calendar days + session trading minutes
-	DTENorm  float64 `json:"dte_normal"` // what a normal 09:15-15:40 day would give
+	DTENorm  float64 `json:"dte_normal"` // the same clock time on a normal day (feed clock)
+	LUTDTE   float64 `json:"lut_dte"`    // the LUT's own DTE (385-minute day to 15:40)
 	IV       float64 `json:"iv"`
 	CEDelta  float64 `json:"ce_delta"`
 	PEDelta  float64 `json:"pe_delta"`
@@ -234,8 +235,14 @@ func (s *Service) muhuratLive(now time.Time) *MuhuratLive {
 	if F <= 0 || perr != nil {
 		return nil
 	}
-	l := &MuhuratLive{Expiry: c.Expiry, Future: F, ATM: math.Round(F/lutStrikeStep) * lutStrikeStep, DTE: lutRawDTE(now, exp)}
-	l.DTENorm = lutRawDTENormal(now, exp)
+	// IV and greeks on the feed's clock -- the one the chain greeks and every hedge
+	// use (feedDTEDays, 375-minute day) -- not the LUT's (owner, 2026-11-06).
+	fd, _, _, _, _ := feedDTEDays(now, exp)
+	l := &MuhuratLive{Expiry: c.Expiry, Future: F, ATM: math.Round(F/lutStrikeStep) * lutStrikeStep, DTE: fd}
+	if r, ok := expiryClockRow(now, c.Expiry); ok {
+		l.DTENorm = r.NormalDTE
+	}
+	l.LUTDTE = lutRawDTE(now, exp)
 	if r, ferr := FindRowByStrike(*c, int(l.ATM)); ferr == nil && r != nil {
 		l.CE, l.PE, l.Straddle = r.CELtp, r.PELtp, r.CELtp+r.PELtp
 		T := math.Max(l.DTE/365.0, 1e-5)

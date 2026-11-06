@@ -11,6 +11,7 @@
   import ActionAlerts from './ActionAlerts.jsx';
   import NiftyEq from './niftyEquiv.jsx';
   import PortfolioMTMPanel from './PortfolioMTMPanel.jsx';
+  import ExpiryClock from './ExpiryClock.jsx';
   import { postJSON, safeFetchJson, postJSONStrict } from "./api.js";
   import { formInput, formLabel } from "./styles.js";
   import './App.css';
@@ -2766,6 +2767,7 @@ function App() {
               </div>
             </Show>
 
+            <ExpiryClock />
             <PortfolioMTMPanel />
 
 

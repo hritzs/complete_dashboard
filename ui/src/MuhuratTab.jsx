@@ -2,6 +2,7 @@ import { createSignal, onCleanup, onMount, Show, For } from 'solid-js';
 import { postJSON } from './api.js';
 import { box, muted } from './styles.js';
 import StraddleBuildTab from './StraddleBuildTab.jsx';
+import ExpiryClock from './ExpiryClock.jsx';
 
 // MUHURAT -- a special trading session (NSE Diwali Muhurat, 2026: Sun 8 Nov,
 // timings per the NSE circular). The LUT does NOT sell here (paper entry and
@@ -76,7 +77,7 @@ export default function MuhuratTab() {
         <strong>Session calendar</strong>
         <div style={muted}>
           A listed date is the only thing that switches Muhurat behaviour on. NSE confirmed Sunday 8 Nov 2026; enter the timings from the NSE circular once published.
-          Time to expiry on that date = calendar days + only the session's remaining trading minutes (of a normal 385-minute day); the date counts as a trading day.
+          On that date the session is the whole trading day: time to expiry = calendar days + the session's minutes left / its length (1 at its open, 0 at its close), as 09:15–15:40 is on a normal day. The feed's greeks (hedging), the LUT and the panels below all use it; the date counts as a trading day.
         </div>
         <Show when={(st()?.sessions || []).length} fallback={<div style={{ ...muted, 'margin-top': '6px' }}>no special session listed — every day runs on the normal 09:15-15:40 clock</div>}>
           <table style={{ width: '100%', 'border-collapse': 'collapse', 'margin-top': '6px' }}>
@@ -108,13 +109,15 @@ export default function MuhuratTab() {
         </div>
       </div>
 
+      <ExpiryClock />
+
       <Show when={live()}>
         <div style={box}>
           <strong>Now on the session clock — NIFTY {live().expiry}</strong>
           <table style={{ width: '100%', 'border-collapse': 'collapse', 'margin-top': '6px' }}>
             <thead><tr>
               <th style={th}>Future</th><th style={th}>ATM</th><th style={th}>CE</th><th style={th}>PE</th><th style={th}>Straddle</th>
-              <th style={th}>DTE (session)</th><th style={th}>DTE (if a normal day)</th><th style={th}>IV (OTM leg)</th><th style={th}>CE Δ</th><th style={th}>PE Δ</th><th style={th}>Γ / option</th>
+              <th style={th}>DTE used (session = whole day)</th><th style={th}>DTE on a normal-day clock</th><th style={th}>IV (OTM leg)</th><th style={th}>CE Δ</th><th style={th}>PE Δ</th><th style={th}>Γ / option</th>
             </tr></thead>
             <tbody><tr>
               <td style={td}>{n2(live().future)}</td><td style={td}>{live().atm}</td><td style={td}>{n2(live().ce)}</td><td style={td}>{n2(live().pe)}</td><td style={td}>{n2(live().straddle)}</td>
