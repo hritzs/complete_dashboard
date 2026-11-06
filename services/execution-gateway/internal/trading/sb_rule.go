@@ -114,6 +114,12 @@ func sbRuleChanges(a, b SBConfig) []string {
 // it to that rule's running build at once.
 func (s *Service) SaveSBRule(c SBConfig) (SBConfig, []string, error) {
 	c = sbDefaults(c)
+	if c.Session != "" && c.Session != sbSessionMuhurat {
+		return c, nil, fmt.Errorf("unknown session %q (blank = normal rule, %q = Muhurat tab)", c.Session, sbSessionMuhurat)
+	}
+	if c.Session == sbSessionMuhurat {
+		c.ExitTime = "" // set at the start: muhuratExitBefore ahead of the session's close
+	}
 	if c.TargetStraddle <= 0 || c.Straddles <= 0 {
 		return c, nil, fmt.Errorf("target straddle and straddle quantity are required")
 	}
@@ -135,6 +141,9 @@ func (s *Service) SaveSBRule(c SBConfig) (SBConfig, []string, error) {
 	}
 	if strings.TrimSpace(c.ID) == "" {
 		c.ID = newSBRuleID()
+		if c.Session == sbSessionMuhurat {
+			c.ID = "MUH" + strings.TrimPrefix(c.ID, "R") // trade id SB-MUH...: marked on the Portfolio tab
+		}
 		sbEng.add(newSBRunner(c))
 		if err := saveSBRules(sbEng.configs()); err != nil {
 			return c, nil, fmt.Errorf("save rules: %w", err)
@@ -154,6 +163,13 @@ func (s *Service) SaveSBRule(c SBConfig) (SBConfig, []string, error) {
 	if live && c.Expiry != r.cfg.Expiry {
 		r.mu.Unlock()
 		return c, nil, fmt.Errorf("expiry cannot change while this rule's build is running (position is in %s)", r.expiry)
+	}
+	if c.Session != r.cfg.Session {
+		r.mu.Unlock()
+		return c, nil, fmt.Errorf("a rule cannot move between the Straddle Build and Muhurat tabs; make a new rule there")
+	}
+	if c.Session == sbSessionMuhurat {
+		c.ExitTime = r.cfg.ExitTime // the session exit set at the start stays (blank when not started)
 	}
 	changes := sbRuleChanges(r.cfg, c)
 	r.cfg = c

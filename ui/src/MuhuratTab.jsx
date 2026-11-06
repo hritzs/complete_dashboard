@@ -1,6 +1,7 @@
 import { createSignal, onCleanup, onMount, Show, For } from 'solid-js';
 import { postJSON } from './api.js';
 import { box, muted } from './styles.js';
+import StraddleBuildTab from './StraddleBuildTab.jsx';
 
 // MUHURAT -- a special trading session (NSE Diwali Muhurat, 2026: Sun 8 Nov,
 // timings per the NSE circular). The LUT does NOT sell here (paper entry and
@@ -133,6 +134,12 @@ export default function MuhuratTab() {
           </span>
           <span style={muted}>the LUT never sells in this session, even if armed on the LUT tab: minute checks and the paper entry only. It stays armed for the next normal day. Manual orders still work.</span>
         </div>
+        <div style={{ ...muted, 'margin-top': '8px' }}>
+          <strong>Muhurat sell (below)</strong> — your own straddle-sell rule for the session, on the Straddle Build engine: press Start and it sells one-lot IOC clips while the bid straddle is at or above your target.
+          LIVE starts only inside a listed session (from its open until 3 min before its close) and is always closed 3 min before the close; SL / TP in bps as you set them.
+          Greeks and hedging use the session clock (time to expiry = calendar days + the session's remaining minutes). The trade shows on the Portfolio tab as SB-MUH….
+          These rules never appear on the Straddle Build tab, and normal rules never appear here. SHADOW runs any day for a dry run.
+        </div>
         <Show when={st()?.build}>
           <div style={{ 'margin-top': '8px', 'font-size': '13px' }}>
             <span style={{ padding: '1px 8px', 'border-radius': '8px', background: BUILD_BG[st().build.status] || '#455a64', 'margin-right': '8px' }}>{st().build.status}</span>
@@ -140,6 +147,10 @@ export default function MuhuratTab() {
             {st().build.trade_uid ? ` · trade ${st().build.trade_uid}` : ''}{st().build.error ? ` · ${st().build.error}` : ''}
           </div>
         </Show>
+      </div>
+
+      <div style={box}>
+        <StraddleBuildTab session="muhurat" />
       </div>
 
       <Show when={st()?.today}>

@@ -62,6 +62,12 @@ type SBConfig struct {
 	// confirmed build / hedge sell, sold after a buy-back, all closed at the
 	// exit, and the standard monitor keeps them after the hand-off.
 	WingPct float64 `json:"wing_pct"`
+	// Session: "" = a normal Straddle Build rule; "muhurat" = a Muhurat-tab rule
+	// (owner, 2026-11-06). A Muhurat rule is shown only on the Muhurat tab, starts
+	// LIVE only inside a listed special session (special_sessions.json) and is
+	// always closed muhuratExitBefore ahead of that session's close; its trade id
+	// is SB-MUH... so the Portfolio tab marks it. Normal rules are unchanged.
+	Session string `json:"session,omitempty"`
 }
 
 // SBLive is the real-time straddle check for a rule (always computed, even
@@ -361,6 +367,15 @@ func (s *Service) StartStraddleBuild(id string, live bool, confirm string) error
 	r.mu.Unlock()
 	if c.TargetStraddle <= 0 || c.Straddles <= 0 {
 		return fmt.Errorf("target straddle and straddle quantity are required")
+	}
+	if c.Session == sbSessionMuhurat {
+		exit, err := muhuratSellCheck(time.Now(), live)
+		if err != nil {
+			return err
+		}
+		if !exit.IsZero() {
+			c.ExitTime = exit.In(lutIST()).Format("15:04:05") // always out before the session close
+		}
 	}
 	lot, err := s.sbLotSize(c.Symbol, c.Expiry)
 	if err != nil {

@@ -79,8 +79,15 @@ const toForm = (c) => {
   return r;
 };
 
-export default function StraddleBuildTab() {
-  const [runs, setRuns] = createSignal([]);
+// props.session: '' = the Straddle Build tab (normal rules only); 'muhurat' = the
+// Muhurat tab's own panel (Muhurat rules only: LIVE only inside the listed session,
+// always out 3 min before its close). The two tabs never show each other's rules.
+export default function StraddleBuildTab(props) {
+  const session = () => props?.session || '';
+  const muhurat = () => session() === 'muhurat';
+  const mine = (list) => (list || []).filter((r) => ((r.config ? r.config.session : r.session) || '') === session());
+  const [runs, setRunsAll] = createSignal([]);
+  const setRuns = (list) => setRunsAll(mine(list));
   const [selected, setSelected] = createSignal(''); // rule id, '' = new rule
   const [saved, setSaved] = createSignal(null); // form as last saved
   const [rule, setRule] = createSignal({});
@@ -113,7 +120,7 @@ export default function StraddleBuildTab() {
     setMsg('');
     loadExpiries(f.symbol);
   };
-  const newRule = () => selectRule('', { ...defaults(), id: '', name: '' });
+  const newRule = () => selectRule('', { ...defaults(), id: '', name: muhurat() ? 'Muhurat sell' : '', ...(muhurat() ? { exit_time: '' } : {}) });
 
   const loadState = async () => {
     try {
@@ -125,7 +132,7 @@ export default function StraddleBuildTab() {
     try {
       const d = await (await fetch('/api/sbuild/rule')).json();
       if (d.default) setDefaults(d.default);
-      return d.rules || [];
+      return mine(d.rules);
     } catch (_) { return []; }
   };
 
@@ -155,6 +162,8 @@ export default function StraddleBuildTab() {
   const body = () => {
     const b = { id: rule().id || '' };
     for (const k of FIELDS) b[k] = TEXT_FIELDS.includes(k) ? String(rule()[k] || '').trim() : Number(rule()[k]) || 0;
+    b.session = session();
+    if (muhurat()) b.exit_time = ''; // set by the gateway at the start: 3 min before the session close
     return b;
   };
   const call = async (url, payload) => {
@@ -192,7 +201,7 @@ export default function StraddleBuildTab() {
     const c = s?.config || {};
     if (!window.confirm(
       `REAL ORDERS on the broker account.\n\n${c.symbol} sell ATM straddle strictly ABOVE ₹${c.target_straddle} (avg CE + avg PE sold always > target), ` +
-      `${2 * (c.straddles || 0)} contracts in total (CE + PE), split DELTA-NEUTRAL by the live deltas (not ${c.straddles}/${c.straddles}), multi-lot IOC limit orders (up to the freeze qty each). Hedge / SL / TP / exit ${c.exit_time || '—'} with MARKET orders.\n${Number(c.wing_pct) > 0 ? `Wings ${c.wing_pct}% OTM bought with every confirmed sell (MARKET).` : 'No wings.'}\n\n` +
+      `${2 * (c.straddles || 0)} contracts in total (CE + PE), split DELTA-NEUTRAL by the live deltas (not ${c.straddles}/${c.straddles}), multi-lot IOC limit orders (up to the freeze qty each). Hedge / SL / TP / exit ${muhurat() ? '3 min before the Muhurat session close' : (c.exit_time || '—')} with MARKET orders.\n${Number(c.wing_pct) > 0 ? `Wings ${c.wing_pct}% OTM bought with every confirmed sell (MARKET).` : 'No wings.'}\n\n` +
       'Sell?')) return;
     if (await call('/api/sbuild/shadow/start', { id: rid, mode: 'LIVE', confirm: 'SELL LIVE' })) { setMsg(`LIVE build started (${rid}) — real orders`); loadState(); }
   };
@@ -305,8 +314,8 @@ export default function StraddleBuildTab() {
     <section class="tab-panel">
       <div class="panel-header" style={{ 'align-items': 'center' }}>
         <div class="panel-title">
-          Straddle Build
-          <span style={{ ...S.chip('rgba(255,255,255,0.08)'), 'margin-left': '10px' }}>SHADOW simulated · LIVE real orders</span>
+          {muhurat() ? 'Muhurat sell' : 'Straddle Build'}
+          <span style={{ ...S.chip('rgba(255,255,255,0.08)'), 'margin-left': '10px' }}>SHADOW simulated · LIVE real orders{muhurat() ? ' · LIVE only in the listed session' : ''}</span>
         </div>
         <div style={{ display: 'flex', gap: '18px', 'align-items': 'baseline' }}>
           <span style={S.muted}>{totals().active} active · {totals().filled} contracts</span>
@@ -415,7 +424,9 @@ export default function StraddleBuildTab() {
               <Group title="Risk" cols={3}>
                 <In label="SL (bps)" k="sl_bps" />
                 <In label="TP (bps)" k="tp_bps" />
-                <In label="Exit time" k="exit_time" type="text" ph="15:37:00" />
+                <Show when={!muhurat()} fallback={<In label="Exit time" k="exit_time" type="text" ph="3 min before close" disabled hint="Muhurat: always 3 min before the session close" />}>
+                  <In label="Exit time" k="exit_time" type="text" ph="15:37:00" />
+                </Show>
               </Group>
               <Group title="Hedge & wings">
                 <In label="Straddle ÷" k="straddle_div" />
